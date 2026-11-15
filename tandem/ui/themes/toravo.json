@@ -1,0 +1,8 @@
+{
+  "name": "Toravo",
+  "colors": {"bg": "#0a0c13", "panel": "#141824", "raised": "#1e2434", "line": "#2c3449", "text": "#eef0f6", "muted": "#8d94aa", "accent": "#ffb23e", "live": "#39d0b8", "warn": "#ff7a66"},
+  "fonts": {"display": ["Barlow Condensed", "Nimbus Sans Narrow"], "body": ["Barlow", "Noto Sans"]},
+  "radius": 1.0,
+  "glow": 1.0,
+  "gameAccent": true
+}

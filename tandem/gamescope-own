@@ -1,0 +1,15 @@
+#!/bin/bash
+# The game-mode compositor without its Steam mode. In Steam mode gamescope only shows windows Steam has announced;
+# without Steam running nothing would ever appear. Without the flag it shows the newest window, which is what a
+# launcher and its emulators need.
+args=()
+skip=
+for a in "$@"; do
+    if [ -n "$skip" ]; then skip=; continue; fi
+    # One X server for everything: with a second one for games (Steam's way) Tandem could not see or hide a Steam game's window.
+    if [ "$a" = "--xwayland-count" ]; then skip=1; continue; fi
+    [ "$a" = "--steam" ] || args+=("$a")
+done
+# ArmadaOS keeps the bottom screen dark until Steam reports itself unlocked. No Steam here, so do not wait for it.
+unset GAMESCOPE_COMPANION_WAIT_FOR_LOCK
+exec /usr/bin/gamescope "${args[@]}" --force-windows-fullscreen

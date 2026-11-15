@@ -1,0 +1,18 @@
+# InputPlumber profile for Toravo Tandem on the AYN Thor: the two extra buttons become keys the Tandem service listens for.
+# (Under Steam they open its menus; without Steam they would do nothing.)
+version: 1
+kind: DeviceProfile
+name: Toravo Tandem
+mapping:
+  - name: Back button
+    source_event:
+      gamepad:
+        button: QuickAccess
+    target_events:
+      - keyboard: KeyF14
+  - name: Home button
+    source_event:
+      gamepad:
+        button: QuickAccess2
+    target_events:
+      - keyboard: KeyF15

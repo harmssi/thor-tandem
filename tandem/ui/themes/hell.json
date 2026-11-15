@@ -1,0 +1,7 @@
+{
+  "name": "Hell",
+  "colors": {"bg": "#f3f4f8", "panel": "#ffffff", "raised": "#e6e8f0", "line": "#c9cddb", "text": "#161a26", "muted": "#5c6478", "accent": "#b86a00", "live": "#0b8a78", "warn": "#c8402c"},
+  "radius": 1.0,
+  "glow": 0.6,
+  "gameAccent": true
+}

@@ -1,0 +1,80 @@
+diff --git a/src/platform/libretro/libretro.c b/src/platform/libretro/libretro.c
+index abed4cc7c..1070a7b59 100644
+--- a/src/platform/libretro/libretro.c
++++ b/src/platform/libretro/libretro.c
+@@ -43,6 +43,7 @@ FS_Archive sdmcArchive;
+ #endif
+ 
+ #include "libretro_core_options.h"
++#include "tandem_wide.h"
+ 
+ #define GBA_AUDIO_CHUNK_FRAMES 1024
+ #define GB_SAMPLES 512
+@@ -1342,15 +1343,19 @@ void retro_get_system_info(struct retro_system_info* info) {
+ 	info->block_extract = false;
+ }
+ 
++static unsigned shownWidth; /* the width the frontend was last told */
++
+ void retro_get_system_av_info(struct retro_system_av_info* info) {
+ 	unsigned width, height;
+ 	core->currentVideoSize(core, &width, &height);
++	width = tandemWideWidth(width);
++	shownWidth = width;
+ 	info->geometry.base_width = width;
+ 	info->geometry.base_height = height;
+ 	info->geometry.aspect_ratio = width / (double) height;
+ 
+ 	core->baseVideoSize(core, &width, &height);
+-	info->geometry.max_width = width;
++	info->geometry.max_width = width > TANDEM_WIDE_W ? width : TANDEM_WIDE_W;
+ 	info->geometry.max_height = height;
+ 
+ 	info->timing.fps = core->frequency(core) / (float) core->frameCycles(core);
+@@ -1692,17 +1697,22 @@ void retro_run(void) {
+ 		}
+ 	}
+ 
+-	if (!skipFrame) {
++	const mColor* frame = outputBuffer;
++	size_t pitch = VIDEO_WIDTH_MAX * sizeof(mColor);
+ #if defined(COLOR_16_BIT) && defined(COLOR_5_6_5)
+-		if (videoPostProcess) {
+-			videoPostProcess(width, height);
+-			videoCallback(ppOutputBuffer, width, height, VIDEO_WIDTH_MAX * sizeof(mColor));
+-		} else
++	if (!skipFrame && videoPostProcess) {
++		videoPostProcess(width, height);
++		frame = ppOutputBuffer;
++	}
+ #endif
+-			videoCallback(outputBuffer, width, height, VIDEO_WIDTH_MAX * sizeof(mColor));
+-	} else {
+-		videoCallback(NULL, width, height, VIDEO_WIDTH_MAX * sizeof(mColor));
++	frame = tandemWideFrame(skipFrame ? NULL : outputBuffer, frame, VIDEO_WIDTH_MAX, &width, height, &pitch);
++	if (width != shownWidth) {
++		/* wide view was switched: the picture has another shape now */
++		struct retro_system_av_info info;
++		retro_get_system_av_info(&info);
++		environCallback(RETRO_ENVIRONMENT_SET_GEOMETRY, &info.geometry);
+ 	}
++	videoCallback(skipFrame ? NULL : frame, width, height, pitch);
+ 
+ 	/* Check whether audio sample rate has changed */
+ 	if (updateAudioRate) {
+@@ -2061,6 +2071,7 @@ bool retro_load_game(const struct retro_game_info* game) {
+ 	const char* biosName = 0;
+ 	char biosPath[PATH_MAX];
+ 	environCallback(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &sysDir);
++	tandemWideLoad(core, sysDir);
+ 
+ #ifdef M_CORE_GBA
+ 	if (core->platform(core) == mPLATFORM_GBA) {
+@@ -2124,6 +2135,7 @@ void retro_unload_game(void) {
+ 	if (!core) {
+ 		return;
+ 	}
++	tandemWideUnload();
+ 	mCoreConfigDeinit(&core->config);
+ 	core->deinit(core);
+ 	mappedMemoryFree(data, dataSize);

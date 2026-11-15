@@ -1,0 +1,14 @@
+# Toravo Tandem instead of Steam as the client of ArmadaOS's game-mode session.
+# Lives in ~/.config/gamescope-session-plus/sessions.d/steam and is sourced after ArmadaOS's own "steam" definition.
+#   ~/.config/tandem/own-session   exists -> the session starts Tandem
+#   ~/.config/tandem/steam-once    exists -> this one start runs Steam (for PC games or system updates), then Tandem again
+# Back to stock: delete this file.
+if [ -e "$HOME/.config/tandem/own-session" ]; then
+    if [ -e "$HOME/.config/tandem/steam-once" ]; then
+        rm -f "$HOME/.config/tandem/steam-once"
+    else
+        CLIENTCMD="$HOME/.local/share/tandem/tandem-launch"
+        GAMESCOPE_BIN="$HOME/.local/share/tandem/gamescope-own"
+        unset STEAMCMD
+    fi
+fi

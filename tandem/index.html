@@ -1,0 +1,370 @@
+<title>Toravo Tandem</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;700&family=Barlow:wght@400;500;600&display=swap">
+<style>
+/* Layout: two handheld screens stacked like the Thor (top 16:9, bottom 1240:1080 at 62 % width); everything inside a
+   screen is sized in cqw so the same markup fills a real display in #top / #bottom mode. Single dark look on purpose:
+   it is an OLED handheld UI. */
+:root{color-scheme:dark;--ink:#0a0c13;--panel:#141824;--raised:#1e2434;--line:#2c3449;--text:#eef0f6;--muted:#8d94aa;
+ --focus:#ffb23e;--live:#39d0b8;--warn:#ff7a66;--display:"Barlow Condensed","Arial Narrow",sans-serif;--body:"Barlow",system-ui,sans-serif}
+html,body{height:100%}
+body{background:var(--ink);color:var(--text);font-family:var(--body);padding-block:18px;
+ padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:980px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+.head{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 16px}
+.head h1{font:700 26px/1 var(--display);letter-spacing:.04em;text-transform:uppercase;margin:0}
+.head p{margin:0;color:var(--muted);font-size:14px;min-width:0}
+.stage{display:flex;flex-direction:column;align-items:center;gap:10px}
+.screen{container-type:inline-size;position:relative;overflow:hidden;background:#000;border:1px solid var(--line);border-radius:10px;max-width:100%}
+.top{width:100%;aspect-ratio:16/9}
+.bot{width:62%;aspect-ratio:1240/1080}
+.keys{display:flex;flex-wrap:wrap;gap:6px 14px;color:var(--muted);font-size:13px}
+.keys b{color:var(--text);font-weight:600;border:1px solid var(--line);border-radius:5px;padding:0 6px;margin-right:4px;background:var(--panel)}
+.note{color:var(--muted);font-size:13px;line-height:1.5;max-width:70ch}
+body.solo{padding:0}body.solo .wrap{max-width:none;height:100%}
+body.solo .head,body.solo .keys,body.solo .note{display:none}
+body.solo .stage{height:100%}body.solo .screen{width:100%;height:100%;aspect-ratio:auto;border:0;border-radius:0}
+body.only-top .bot,body.only-bottom .top{display:none}
+
+/* top screen */
+.hero{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:flex-end;padding:4cqw}
+.art{position:absolute;inset:0;background-size:cover;background-position:center}
+.art::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(10,12,19,.92) 0,rgba(10,12,19,.55) 45%,rgba(10,12,19,0) 80%),linear-gradient(0deg,rgba(10,12,19,.85),rgba(10,12,19,0) 55%)}
+.glyph{position:absolute;right:3cqw;top:50%;translate:0 -50%;font:700 30cqw/1 var(--display);color:rgba(255,255,255,.13);letter-spacing:-.02em}
+.status{position:absolute;top:2.2cqw;right:3cqw;display:flex;gap:2cqw;font:500 1.7cqw var(--body);color:var(--text);font-variant-numeric:tabular-nums}
+.status i{font-style:normal;color:var(--muted)}
+.hero>:not(.art,.glyph,.status){position:relative}
+.sys{font:700 1.9cqw var(--display);letter-spacing:.14em;text-transform:uppercase;color:var(--focus)}
+.name{font:700 6.2cqw/1.02 var(--display);text-transform:uppercase;margin:.6cqw 0 1.2cqw;max-width:62cqw;text-wrap:balance}
+.meta{display:flex;flex-wrap:wrap;gap:1cqw 2.4cqw;font-size:1.8cqw;color:var(--muted)}
+.meta span b{color:var(--text);font-weight:500}
+.hint{margin-top:2.2cqw;display:flex;gap:2.4cqw;font-size:1.7cqw;color:var(--muted)}
+.pad{display:inline-grid;place-items:center;width:2.6cqw;height:2.6cqw;border-radius:50%;background:var(--text);color:var(--ink);font:700 1.5cqw var(--display);margin-right:.7cqw}
+.run .sys{color:var(--live)}
+.cmd{margin-top:1.6cqw;font:500 1.45cqw ui-monospace,Menlo,monospace;color:var(--live);background:rgba(10,12,19,.7);border:1px solid var(--line);border-radius:.8cqw;padding:.9cqw 1.2cqw;max-width:74cqw;overflow-wrap:anywhere}
+.cmd.open{color:var(--warn)}
+
+/* bottom screen */
+.shell{position:absolute;inset:0;display:flex;flex-direction:column;background:var(--ink);padding:2.6cqw;gap:2.2cqw}
+.tabs{display:flex;gap:1cqw;align-items:center}
+.tab{font:700 3cqw var(--display);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);background:none;border:0;padding:.8cqw 1.6cqw;border-radius:1cqw;cursor:pointer}
+.tab.on{color:var(--ink);background:var(--text)}
+.crumb{margin-left:auto;font-size:2.3cqw;color:var(--muted)}
+.grid{flex:1;min-height:0;padding:.8cqw;margin:-.8cqw;display:grid;grid-template-columns:repeat(5,1fr);grid-auto-rows:min-content;gap:1.8cqw;overflow:hidden;align-content:start}
+.tile.off img{opacity:.4;filter:saturate(.3)}
+.tile{position:relative;aspect-ratio:1;border-radius:1.6cqw;border:.35cqw solid transparent;overflow:hidden;cursor:pointer;padding:0;color:var(--text);text-align:left;font-family:var(--body)}
+.tile.on{border-color:var(--focus);box-shadow:0 0 0 .35cqw rgba(255,178,62,.25);scale:1.04;z-index:1}
+.tile:focus-visible{outline:.4cqw solid var(--live)}
+.tile img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.tile .star{position:absolute;right:1cqw;top:1cqw;font-size:2.4cqw;color:var(--focus);text-shadow:0 0 .6cqw #000}
+.empty{grid-column:1/-1;color:var(--muted);font-size:2.4cqw;line-height:1.5;padding:4cqw 1cqw}
+.toast{position:absolute;left:50%;bottom:4cqw;translate:-50% 0;max-width:80cqw;background:var(--raised);border:1px solid var(--warn);border-radius:1.2cqw;padding:1.2cqw 2cqw;font-size:1.9cqw;line-height:1.35;z-index:5}
+.bot .toast{font-size:2.6cqw}
+.demo{color:var(--focus)}
+.tile .ini{position:absolute;left:1.2cqw;top:.4cqw;font:700 7cqw/1 var(--display);color:rgba(255,255,255,.28)}
+.tile .lab{position:absolute;inset:auto 0 0 0;padding:3cqw 1.1cqw 0;border-bottom:.9cqw solid transparent;font-size:1.75cqw;line-height:1.15;font-weight:500;background:linear-gradient(0deg,rgba(0,0,0,.78),rgba(0,0,0,0));display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.tile .cnt{position:absolute;right:1cqw;top:1cqw;font:700 1.9cqw var(--display);background:rgba(0,0,0,.55);border-radius:.8cqw;padding:.1cqw .8cqw;font-variant-numeric:tabular-nums}
+.panel{flex:1;display:flex;flex-direction:column;gap:1.8cqw;min-height:0}
+.panel h2{font:700 4.4cqw/1 var(--display);text-transform:uppercase;margin:0}
+.panel h2 small{display:block;font:500 2.2cqw var(--body);color:var(--live);text-transform:none;margin-top:.8cqw}
+.facts{display:grid;grid-template-columns:auto 1fr;gap:1.6cqw 3cqw;font-size:2.6cqw;color:var(--muted)}
+.facts b{color:var(--text);font-weight:500;font-variant-numeric:tabular-nums}
+.tip{font-size:2.2cqw;line-height:1.45;color:var(--muted)}
+.row{display:grid;grid-template-columns:25cqw 1fr 9cqw;align-items:center;gap:2cqw;font-size:2.5cqw;color:var(--muted)}
+.row output{text-align:right;color:var(--text);font-variant-numeric:tabular-nums}
+input[type=range]{width:100%;height:5cqw;accent-color:var(--focus)}
+.tip b{color:var(--text);font-weight:500}
+.acct{display:grid;grid-template-columns:25cqw 1fr 1fr;gap:1.4cqw;align-items:center;font-size:2.5cqw;color:var(--muted)}
+.acct input{min-width:0;font:inherit;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:1.2cqw;padding:1.4cqw 1.6cqw}
+.acct label{grid-row:span 2}.acct button{font:700 2.4cqw var(--display);letter-spacing:.06em;text-transform:uppercase;padding:1.5cqw 2cqw;border-radius:1.2cqw;border:1px solid var(--line);background:var(--raised);color:var(--text)}
+.ach{flex:1;min-height:18cqw;overflow-y:auto;display:flex;flex-direction:column;gap:1cqw;font-size:2.1cqw;color:var(--muted)}
+.ach div{background:var(--panel);border-radius:1cqw;padding:1cqw 1.4cqw}.ach div b{color:var(--text);font-weight:500}.ach div.got b{color:var(--live)}
+.ach i{font-style:normal;float:right;color:var(--focus)}.ach span{display:block}.ach .tip b{color:var(--text)}
+.kb{flex:1;display:flex;flex-direction:column;gap:1.1cqw;min-height:0}.kb div{flex:1;display:flex;gap:1cqw}
+.kb button{flex:1;min-width:0;font:600 3.4cqw var(--body);color:var(--text);background:var(--raised);border:1px solid var(--line);border-radius:1.2cqw;cursor:pointer;padding:0}
+.kb button.wide{flex:5}.kb button.on{background:var(--focus);color:var(--ink);border-color:var(--focus)}.kb button:active{background:var(--line)}
+.line{display:grid;grid-template-columns:25cqw 1fr auto auto auto;align-items:center;gap:1.4cqw;font-size:2.5cqw;color:var(--muted)}
+.line b{color:var(--text);font-weight:500;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.line button,.list button{font:700 2.3cqw var(--display);letter-spacing:.06em;text-transform:uppercase;padding:1.4cqw 1.8cqw;border-radius:1.2cqw;border:1px solid var(--line);background:var(--raised);color:var(--text);cursor:pointer}
+.list{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:1cqw}
+.list button{display:flex;justify-content:space-between;text-transform:none;font:500 2.6cqw var(--body);letter-spacing:0}.list i{font-style:normal;color:var(--muted)}
+.field{font:500 4cqw var(--body);background:var(--panel);border:1px solid var(--focus);border-radius:1.4cqw;padding:2cqw;min-height:5cqw;overflow-wrap:anywhere}
+.field i{display:inline-block;width:.4cqw;height:4cqw;background:var(--focus);vertical-align:middle;margin-left:.4cqw}
+.tile .ico{position:absolute;inset:14% 22% 30% 22%;width:56%;height:56%;color:rgba(255,255,255,.85)}
+.held{display:flex;align-items:center;gap:1.4cqw;background:var(--raised);border:1px solid var(--live);border-radius:1.4cqw;padding:1.2cqw 1.6cqw;font-size:2.5cqw;color:var(--muted)}
+.held span{flex:1;min-width:0}.held b{color:var(--text);font-weight:500}
+.held button{font:700 2.4cqw var(--display);letter-spacing:.06em;text-transform:uppercase;padding:1.3cqw 2cqw;border-radius:1.1cqw;border:1px solid var(--line);background:var(--panel);color:var(--text);cursor:pointer}
+.held button:first-of-type{background:var(--live);color:var(--ink);border-color:var(--live)}
+.osd{position:absolute;left:50%;bottom:6cqw;translate:-50% 0;display:flex;align-items:center;gap:1.6cqw;width:44cqw;background:rgba(20,24,36,.94);border:1px solid var(--line);border-radius:5cqw;padding:1.4cqw 2.4cqw;z-index:6;color:var(--text)}
+.osd svg{width:3.4cqw;height:3.4cqw;flex:none}.osd .bar{flex:1;height:1cqw;background:var(--line);border-radius:1cqw;overflow:hidden}
+.osd .bar i{display:block;height:100%;background:var(--focus);border-radius:1cqw}.osd b{font:700 2.4cqw var(--display);min-width:4cqw;text-align:right;font-variant-numeric:tabular-nums}
+.bot .osd{width:70cqw;bottom:8cqw}.bot .osd svg{width:5cqw;height:5cqw}.bot .osd b{font-size:3.6cqw;min-width:6cqw}.bot .osd .bar{height:1.6cqw}
+.ask{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2.4cqw;background:rgba(10,12,19,.88);z-index:4;padding:6cqw;text-align:center}
+.ask p{font:700 3.6cqw/1.2 var(--display);text-transform:uppercase;margin:0;max-width:70cqw;text-wrap:balance}
+.ask div{display:flex;gap:3cqw;font-size:2cqw;color:var(--muted)}
+.pads{display:grid;grid-template-columns:repeat(4,1fr);gap:1.2cqw}
+.pads button,.act button{flex:1;font:700 2.6cqw var(--display);letter-spacing:.06em;text-transform:uppercase;padding:1.6cqw 1cqw;border-radius:1.4cqw;border:1px solid var(--line);background:var(--panel);color:var(--muted);cursor:pointer}
+.act{display:flex;gap:1.4cqw;margin-top:auto}
+.pads button:active,.act button:active{background:var(--line);color:var(--text)}
+.act .quit{background:var(--warn);color:var(--ink);border-color:var(--warn)}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+@media (max-width:560px){.bot{width:86%}.head h1{font-size:22px}}
+</style>
+
+<div class="wrap">
+ <div class="head"><h1>Toravo Tandem</h1><p>Dual-Screen-Oberfläche für ArmadaOS auf dem AYN Thor.</p></div>
+ <div class="stage">
+  <div class="screen top" id="st" aria-live="polite"></div>
+  <div class="screen bot" id="sb"></div>
+ </div>
+ <div class="keys"><span><b>← ↑ ↓ →</b>bewegen</span><span><b>Enter</b>A · starten</span><span><b>Esc</b>B · zurück / beenden</span><span><b>Q</b><b>E</b>LB / RB · Reiter</span><span><b>F</b>Y · Favorit</span></div>
+ <p class="note" id="note">Oben steht, was ausgewählt ist oder läuft, unten wird bedient – per Controller, Tastatur oder Tippen.</p>
+</div>
+
+<script>
+// Demo data (names from a real Thor library) is used only when no Tandem server answers, e.g. in the published preview.
+const DEMO={"gb":{"n":31,"g":["Blaster Master Jr","Bubble Bobble","Dr. Mario","Dragonborne-german","DuckTales","Kid Icarus - Of Myths and Monsters","Kirby's Dream Land","Legend of Zelda, The - Link's Awakening DX","Mario's Picross","Mega Man - Dr. Wily's Revenge"]},"gbc":{"n":9,"g":["Azure Dreams","Legend of Zelda, The - Oracle of Ages","Legend of Zelda, The - Oracle of Seasons","Lufia - The Legend Returns","Pokemon - Goldene Edition","Pokemon - Kristall-Edition","Pokemon - Silberne Edition","Wario Land 3"]},"gba":{"n":25,"g":["F-Zero - GP Legend","Golden Sun","Golden Sun - Die Vergessene Epoche","Legend of Zelda, The - A Link to the Past & ","Legend of Zelda, The - The Minish Cap","Mario & Luigi - Superstar Saga","Mario Golf - Advance Tour","Mario Kart - Super Circuit","Mario Party Advance","Metroid - Zero Mission"]},"nes":{"n":148,"g":["Adventure Island","Adventure Island 3","Adventure Island II","Adventures of Lolo","Adventures of Lolo 2","Adventures of Lolo 3","Asterix","Balloon Fight","Banana Prince","Bard's Tale II, The - The Destiny Knight"]},"snes":{"n":60,"g":["Aladdin","Asterix & Obelix","Asterix","Axelay","Chrono Trigger","Donkey Kong Country","Donkey Kong Country 2 - Diddy's Kong Quest","Donkey Kong Country 3 - Dixie Kong's Double ","EarthBound","F-Zero"]},"n64":{"n":59,"g":["1080 Snowboarding","Aidyn Chronicles - The First Mage","Banjo-Kazooie","Banjo-Tooie","Beetle Adventure Racing!","Blast Corps","Body Harvest","Bomberman 64","Bomberman Hero","Castlevania"]},"nds":{"n":1,"g":[]},"n3ds":{"n":13,"g":["Animal Crossing - New Leaf","Attack of the Friday Monsters! A Tokyo Tale-","Attack of the Friday Monsters! A Tokyo Tale","Legend of Zelda, The - A Link Between Worlds","Mario & Luigi - Paper Jam Bros","Metroid - Samus Returns","New Super Mario Bros. 2","Paper Mario - Star Haven","Paper Mario - Sticker Star","Pokemon Alpha Sapphire"]},"gc":{"n":8,"g":["Animal Crossing","Luigi's Mansion","Mario Kart - Double Dash!!","Mario Party 7","Paper Mario - The Thousand-Year Door","Super Mario Sunshine","Super Smash Bros. Melee"]},"wii":{"n":12,"g":["Donkey Kong Country Returns","LEGO Harry Potter - Years 1-4","LEGO Harry Potter - Years 5-7","New Super Mario Bros. Wii","Resident Evil - The Darkside Chronicles","Resident Evil - The Umbrella Chronicles","Super Mario Galaxy","Super Mario Galaxy 2","Super Paper Mario","WarioWare - Smooth Moves"]},"psx":{"n":24,"g":["Baphomets Fluch","Baphomets Fluch II - Die Spiegel der Finster","Breath of Fire III","Crash Bandicoot","Creatures","Dune 2000","Final Fantasy IX","Frontschweine","Hugo","Hugo 2"]},"ps2":{"n":2,"g":["Crash Bandicoot - The Wrath of Cortex"]},"psp":{"n":2,"g":["Crisis Core - Final Fantasy VII"]},"switch":{"n":9,"g":["Diablo III Eternal Collection","Final Fantasy Resonance","Pokemon Lets Go Evoli","Sonic_Mania_Plus","Super Mario Bros. Wonder","Super Mario Odyssey","The Legend of Zelda Link’s Awakening","Tomodachi Life Living the Dream"]},"dreamcast":{"n":9,"g":["Bust-A-Move 4","ChuChu Rocket!","Crazy Taxi","Mr. Driller","Pro Pinball Trilogy","Ready 2 Rumble Boxing","Soul Calibur","Street Fighter III - 3rd Strike"]},"genesis":{"n":1,"g":[]},"megadrive":{"n":4,"g":["Sonic The Hedgehog","Sonic The Hedgehog 2","Sonic The Hedgehog 3"]},"saturn":{"n":1,"g":[]}};
+const DEMO_SYS={gb:['Game Boy',40,'RetroArch'],gbc:['Game Boy Color',275,'RetroArch'],gba:['Game Boy Advance',255,'RetroArch'],nes:['NES',0,'RetroArch'],
+ snes:['Super Nintendo',285,'RetroArch'],n64:['Nintendo 64',130,'RetroArch'],nds:['Nintendo DS',200,'melonDS'],n3ds:['Nintendo 3DS',350,'Azahar'],
+ gc:['GameCube',265,'Dolphin'],wii:['Wii',190,'Dolphin'],psx:['PlayStation',220,'DuckStation'],ps2:['PlayStation 2',235,'ARMSX2'],psp:['PSP',205,'PPSSPP'],
+ switch:['Switch',355,null],dreamcast:['Dreamcast',20,'Flycast'],genesis:['Genesis',215,'RetroArch'],megadrive:['Mega Drive',215,'RetroArch'],saturn:['Saturn',300,'Ymir']};
+const TABS=['Start','Systeme','Steam','Apps','System'],COLS=5;
+const st=document.getElementById('st'),sb=document.getElementById('sb'),ME=Math.random().toString(36).slice(2);
+const hash=s=>[...s].reduce((h,c)=>(h*31+c.charCodeAt(0))>>>0,7);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let L={systems:{},games:[],apps:[],fav:[],played:{}},S={tab:0,sys:null,i:0},RUN=null,LIVE=false,BATT=null,TOAST='',shown='',SET={bt:null,bb:null,vol:null},DRAG=false,CFG={ra_user:'',ra_key_set:false,ra_login:false},ACH=null,PAIR=null,SYS=null,SUB='',PROMPT=null,CONFIRM=null;
+
+function demoLibrary(){
+ const systems={},games=[];
+ for(const [s,v] of Object.entries(DEMO)){const d=DEMO_SYS[s];if(!v.g.length)continue;
+  systems[s]={name:d[0],hue:d[1],n:v.n,emu:d[2],missing:d[2]?null:'Für dieses System bietet der Armada Store keinen Emulator.'};
+  v.g.forEach(t=>games.push({id:s+hash(t),t,s}))}
+ ['Hades','Stardew Valley','Hollow Knight','Balatro','Celeste','Slay the Spire'].forEach(t=>games.push({id:'steam'+hash(t),t,s:'steam'}));
+ const played={};games.filter(g=>hash(g.t)%5==0).slice(0,9).forEach((g,i)=>played[g.id]={last:1794600000-i*86400,secs:(1+hash(g.t)%30)*3600});
+ return {systems,games,apps:['Steam-Bibliothek','Desktop-Modus','Firefox'].map((t,i)=>({id:'app'+i,t,s:'app'})),fav:games.filter(g=>hash(g.t)%9==0).map(g=>g.id),played};
+}
+function items(){
+ if(S.sys)return L.games.filter(g=>g.s==S.sys);
+ if(S.tab==0){const last=g=>(L.played[g.id]||{}).last||0;
+  const held=RUN&&RUN.paused?L.games.find(g=>g.id==RUN.id):null;  // like the Switch: the suspended game stands in front
+  const rest=L.games.filter(g=>(last(g)||L.fav.includes(g.id))&&g!=held).sort((a,b)=>last(b)-last(a)||a.t.localeCompare(b.t)).slice(0,30);
+  return held?[held,...rest]:rest}
+ if(S.tab==1)return Object.entries(L.systems).map(([s,v])=>({id:'sys:'+s,t:v.name,s,kind:'sys',n:v.n,cover:v.cover,hero:v.hero}));
+ if(S.tab==2)return L.games.filter(g=>g.s=='steam').sort((a,b)=>(a.inst=='no')-(b.inst=='no')||(a.inst!='load')-(b.inst!='load'));  // loading first, then installed, then the rest of the library
+ if(S.tab==4)return [];
+ return [{id:'term',t:'Terminal',s:'app'},...L.apps,...(L.extras||[]).map(e=>({id:'upd:'+e.id,t:e.name+(e.installed?' aktualisieren':' installieren'),s:'app'})),{id:'act:steam',t:'Steam starten',s:'app'},{id:'rescan',t:'Bibliothek neu einlesen',s:'app'},{id:'act:desktop',t:'Zum Desktop',s:'app'}];
+}
+const hue=it=>it.s=='steam'?212:it.s=='app'?160:(L.systems[it.s]||{hue:200}).hue;
+const ICONS={term:'<path d="M4 5h16v14H4z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M7 9l3 3-3 3M12 15h5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>',
+ web:'<circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M4 12h16M12 4c3 3 3 13 0 16M12 4c-3 3-3 13 0 16" fill="none" stroke="currentColor" stroke-width="1.6"/>',
+ get:'<path d="M12 4v10m0 0l-4-4m4 4l4-4M5 19h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
+ scan:'<path d="M19 12a7 7 0 1 1-2-5M19 5v4h-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
+ play:'<circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 8.5l6 3.5-6 3.5z" fill="currentColor"/>',
+ desk:'<path d="M4 5h16v11H4zM9 20h6M12 16v4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
+ pad:'<path d="M6 8h12a4 4 0 0 1 4 4v1a3 3 0 0 1-5.5 1.7L15 13H9l-1.5 1.7A3 3 0 0 1 2 13v-1a4 4 0 0 1 4-4z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M7 10v3M5.5 11.5h3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>'};
+const iconFor=it=>it.s!='app'?null:it.id=='act:desktop'?'desk':it.id=='term'?'term':it.id=='rescan'?'scan':it.id=='act:steam'?'play':it.id.startsWith('upd:')?'get':/firefox|browser/i.test(it.t)?'web':'pad';
+const paint=it=>{const h=hue(it),k=hash(it.t)%50;return `background:linear-gradient(${120+k}deg,hsl(${h} 62% ${24+k%14}%),hsl(${(h+38+k)%360} 58% ${12+k%9}%))`};
+const sysName=it=>it.s=='steam'?'Steam':it.s=='app'?'App':it.s=='term'?'Linux-Shell':(L.systems[it.s]||{name:it.s}).name;
+const hours=s=>s>=3600?Math.round(s/360)/10+' Std.':Math.max(1,Math.round(s/60))+' Min.';
+const ago=t=>{const d=Math.floor((Date.now()/1000-t)/86400);return d<1?'heute':d==1?'gestern':'vor '+d+' Tagen'};
+const clock=()=>new Date().toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'});
+
+function drawTop(list){
+ const it=(playing()?RUN:null)||list[S.i],toast=TOAST?`<div class="toast" role="status">${esc(TOAST)}</div>`:'';
+ const status=`<div class="status">${LIVE?'':'<span class="demo">Vorschau mit Beispieldaten</span>'}${BATT?`<span><i>Akku</i> ${BATT.level} %${BATT.charging?' ⚡':''}</span>`:''}<span>${clock()}</span></div>`;
+ if(!it){st.innerHTML=`<div class="hero"><div class="art" style="background:var(--ink)"></div>${status}<div class="sys">Toravo Tandem</div><div class="name">Noch nichts hier</div><div class="meta"><span>Mit RB zu den Systemen wechseln.</span></div></div>${toast}`;return}
+ const sys=L.systems[it.s],p=L.played[it.id],art=it.hero?`background-image:linear-gradient(rgba(10,12,19,.25),rgba(10,12,19,.25)),url(${it.hero})`:paint(it);
+ let meta;
+ const P=playing();
+ if(P)meta=`<span>Emulator <b>${esc(RUN.emu)}</b></span><span>Läuft seit <b>${hours(Date.now()/1000-RUN.since)}</b></span>`;
+ else if(it.kind=='sys')meta=`<span><b>${it.n}</b> Spiele</span><span>Emulator <b>${esc(sys.emu||'fehlt')}</b></span>`;
+ else meta=(p&&p.last?`<span>Zuletzt <b>${ago(p.last)}</b></span>`:'')+(p&&p.secs?`<span>Spielzeit <b>${hours(p.secs)}</b></span>`:'')+(sys?`<span>Emulator <b>${esc(sys.emu||'fehlt')}</b></span>`:'')+(L.fav.includes(it.id)?'<span><b>★ Favorit</b></span>':'');
+ const held=RUN&&RUN.paused&&it.id==RUN.id;
+ const miss=!P&&sys&&sys.missing?`<div class="cmd open">${esc(sys.missing)}</div>`:'';
+ st.innerHTML=`<div class="hero ${P?'run':''}"><div class="art" style="${art}"></div>${it.hero?'':`<div class="glyph">${esc(it.t.slice(0,2))}</div>`}${status}
+  <div class="sys">${P?'Läuft · ':held?'Pausiert · ':''}${esc(sysName(it))}</div><div class="name">${esc(it.t)}</div><div class="meta">${meta}</div>${miss}
+  <div class="hint">${P?'<span><span class="pad">B</span>Beenden (unten bestätigen)</span>':`<span><span class="pad">A</span>${it.kind=='sys'?'Öffnen':held?'Fortsetzen':it.inst=='no'?'Installieren':it.inst=='load'?'Lädt noch':'Starten'}</span>${held?'<span><span class="pad">X</span>Beenden</span>':''}<span><span class="pad">B</span>Zurück</span>${it.kind||it.s=='app'?'':'<span><span class="pad">Y</span>Favorit</span>'}`}</div></div>${CONFIRM?`<div class="ask" role="alertdialog"><p>${esc(CONFIRM.text)}</p><div><span><span class="pad">A</span>${esc(CONFIRM.yes)}</span><span><span class="pad">B</span>Abbrechen</span></div></div>`:''}${toast}`;
+}
+const slider=(key,label)=>SET[key]==null?'':`<div class="row"><label for="s-${key}">${label}</label><input type="range" id="s-${key}" data-set="${key}" min="${key=='vol'?0:5}" max="100" value="${SET[key]}"><output>${SET[key]} %</output></div>`;
+const sliders=()=>slider('bt','Helligkeit oben')+slider('bb','Helligkeit unten')+slider('vol','Lautstärke');
+const RA=[['save','Speichern'],['load','Laden'],['slot-','Slot −'],['slot+','Slot +'],['ff','Vorspulen'],['pause','Pause'],['menu','Menü'],['shot','Foto']];
+// On-screen keyboard for the terminal tile: physical keys (evdev codes) in ISO order; the labels follow the layout the
+// service set for the region, the system's keymap does the actual translation.
+const KB_CODES=[[41,2,3,4,5,6,7,8,9,10,11,12,13,14],[15,16,17,18,19,20,21,22,23,24,25,26,27],[58,30,31,32,33,34,35,36,37,38,39,40,43,28],[42,86,44,45,46,47,48,49,50,51,52,53,103],[29,56,57,100,1,105,108,106]];
+const KB_NAME={14:'⌫',15:'Tab',28:'↵',42:'⇧',58:'⇪',29:'Strg',56:'Alt',57:' ',100:'AltGr',1:'Esc',103:'↑',105:'←',108:'↓',106:'→'};
+const KB={us:['`1234567890-=','qwertyuiop[]',"asdfghjkl;'\\",'zxcvbnm,./','~!@#$%^&*()_+','QWERTYUIOP{}','ASDFGHJKL:"|','ZXCVBNM<>?'],
+ de:['^1234567890ß´','qwertzuiopü+','asdfghjklöä#','yxcvbnm,.-','°!"§$%&/()=?`','QWERTZUIOPÜ*',"ASDFGHJKLÖÄ'",'YXCVBNM;:_']};
+const KB_ALTGR={de:{16:'@',18:'€',8:'{',9:'[',10:']',11:'}',12:'\\',27:'~',86:'|'}};
+let KM={shift:false,ctrl:false,alt:false,altgr:false};
+function keyLabel(code,layout){
+ if(KB_NAME[code])return KB_NAME[code];
+ if(code==86)return layout=='de'?(KM.altgr?'|':KM.shift?'>':'<'):'\\';
+ const rows=[[41,2,3,4,5,6,7,8,9,10,11,12,13],[16,17,18,19,20,21,22,23,24,25,26,27],[30,31,32,33,34,35,36,37,38,39,40,43],[44,45,46,47,48,49,50,51,52,53]];
+ if(KM.altgr&&(KB_ALTGR[layout]||{})[code])return KB_ALTGR[layout][code];
+ for(let r=0;r<4;r++){const i=rows[r].indexOf(code);if(i>=0)return KB[layout][r+(KM.shift?4:0)][i]||''}
+ return ''}
+// Text entry without a real keyboard: the same key grid, but the keys fill a field on this screen instead of typing into a program.
+function ask(title,secret,done){PROMPT={title,secret,done,value:''};KM={shift:false,ctrl:false,alt:false,altgr:false};render()}
+function drawPrompt(){const layout=CFG.kb_layout=='us'?'us':'de';
+ sb.innerHTML=`<div class="shell"><div class="tabs"><span class="crumb" style="margin:0">${esc(PROMPT.title)}</span><button class="tab" data-prompt="cancel" style="margin-left:auto">Abbrechen</button><button class="tab on" data-prompt="ok">Fertig</button></div>
+  <div class="field">${esc(PROMPT.secret?'•'.repeat(PROMPT.value.length):PROMPT.value)}<i></i></div>
+  <div class="kb">${KB_CODES.map(row=>`<div>${row.filter(c=>![29,56,1,103,105,108,106,15,58].includes(c)).map(c=>`<button data-pkey="${c}" class="${c==57?'wide':''} ${Object.entries({shift:42,altgr:100}).some(([m,k])=>k==c&&KM[m])?'on':''}">${esc(keyLabel(c,layout))}</button>`).join('')}</div>`).join('')}</div></div>`}
+function promptKey(c){const layout=CFG.kb_layout=='us'?'us':'de';
+ if(c==42||c==100){const m=c==42?'shift':'altgr';KM[m]=!KM[m]}
+ else if(c==14)PROMPT.value=PROMPT.value.slice(0,-1);
+ else if(c==28){const p=PROMPT;PROMPT=null;p.done(p.value);return render()}
+ else{PROMPT.value+=c==57?' ':keyLabel(c,layout);KM.shift=KM.altgr=false}
+ render()}
+function drawKeyboard(){const layout=KB[RUN.layout]?RUN.layout:'us';
+ sb.innerHTML=`<div class="shell"><div class="tabs"><span class="crumb" style="margin:0">Linux-Shell</span><button class="tab" data-layout="${layout=='de'?'us':'de'}" style="margin-left:auto">Tastatur: ${layout=='de'?'Deutsch':'Englisch'}</button><button class="tab" data-act="quit">Schließen</button></div>
+  <div class="kb">${KB_CODES.map(row=>`<div>${row.map(c=>`<button data-key="${c}" class="${c==57?'wide':''} ${Object.entries({shift:42,ctrl:29,alt:56,altgr:100}).some(([m,k])=>k==c&&KM[m])?'on':''}">${esc(keyLabel(c,layout))}</button>`).join('')}</div>`).join('')}</div></div>`}
+function drawBottom(list){
+ const el=document.activeElement;
+ if(DRAG||(el&&el.tagName=='INPUT'&&sb.contains(el)&&el.type!='range'))return;  // a slider or text field is in use: do not rebuild it
+ const toast=TOAST?`<div class="toast" role="status">${esc(TOAST)}</div>`:'';
+ if(PROMPT){shown='';return drawPrompt()}
+ if(CONFIRM){shown='';sb.innerHTML=`<div class="shell"><div class="panel"><h2>${esc(CONFIRM.text)}</h2><div class="act"><button data-confirm="no">Abbrechen</button><button data-confirm="yes" class="quit">${esc(CONFIRM.yes)}</button></div></div></div>`;return}
+ if(playing()&&RUN.s=='term'){shown='';return drawKeyboard()}
+ if(playing()&&RUN.deck){if(shown!='deck:'+RUN.deck){shown='deck:'+RUN.deck;sb.innerHTML=`<iframe src="${esc(RUN.deck)}" title="Begleiter" style="position:fixed;inset:0;width:100%;height:100%;border:0;background:#05060a"></iframe>`}return}
+ if(playing()){shown='';sb.innerHTML=`<div class="shell"><div class="panel"><h2>${esc(RUN.t)}<small>läuft auf dem oberen Bildschirm</small></h2>
+   <p class="tip">${esc(sysName(RUN))} · ${esc(RUN.emu)} · seit ${hours(Date.now()/1000-RUN.since)} · ${clock()}${BATT?` · Akku ${BATT.level} %${BATT.charging?' (lädt)':''}`:''}</p>
+   ${sliders()}${RUN.emu=='RetroArch'?`<div class="pads">${RA.map(([k,l])=>`<button data-ra="${k}">${l}</button>`).join('')}</div>`:''}
+   <div class="ach">${ACH?(ACH.note?`<p class="tip">${esc(ACH.note)}</p>`:`<p class="tip"><b>Erfolge ${ACH.earned} / ${ACH.total}</b> · ${ACH.points} Punkte</p>${ACH.list.map(a=>`<div class="${a.e?'got':''}"><b>${a.e?'✓ ':''}${esc(a.t)}</b> <i>${a.p}</i><span>${esc(a.d)}</span></div>`).join('')}`):''}</div>
+   <div class="act"><button data-act="quit" class="quit">Spiel beenden</button></div></div></div>${toast}`;return}
+ if(S.tab==4&&!S.sys){shown='';if(!SYS&&LIVE&&!drawBottom.asked){drawBottom.asked=true;loadSys()}sb.innerHTML=`<div class="shell"><div class="tabs">${TABS.map((t,i)=>`<button class="tab ${i==4?'on':''}" data-tab="${i}">${t}</button>`).join('')}</div>
+   <div class="panel">${sliders()||'<p class="tip">In der Vorschau gibt es keine Geräte-Einstellungen.</p>'}
+   ${SUB=='wifi'?`<div class="list">${(SYS&&SYS.networks||[]).map(n=>`<button data-wifi="${esc(n.ssid)}" data-secure="${n.secure&&!n.known?1:''}">${esc(n.ssid)}<i>${n.active?'verbunden · ':''}${n.signal} %${n.secure?' · geschützt':''}</i></button>`).join('')||'<p class="tip">Keine Netze gefunden.</p>'}<button data-sub="">Zurück</button></div>`
+   :`<div class="line"><span>WLAN</span><b>${SYS?esc(SYS.ssid||'nicht verbunden'):'…'}</b><button data-sub="wifi">Netze</button></div>
+   <div class="line"><span>Speicher</span><b>${SYS?SYS.storage.map(s=>`${esc(s.name)} ${Math.round(s.free/1e9)} von ${Math.round(s.total/1e9)} GB frei`).join(' · '):'…'}</b></div>
+   <div class="line"><span>Erfolge</span><b>${esc(CFG.ra_user||'kein Konto')}${CFG.ra_login?' · angemeldet':''}</b><button data-ask="ra_user">Name</button><button data-ask="ra_password">Passwort</button><button data-ask="ra_key">Schlüssel${CFG.ra_key_set?' ✓':''}</button></div>
+   ${PAIR&&PAIR.url?`<p class="tip">Bequemer vom Handy oder PC${PAIR.own?'':' im selben WLAN'}: <b>${esc(PAIR.own||PAIR.url)}</b> · PIN <b>${esc(PAIR.pin)}</b><br>${PAIR.own?'Im Heimnetz auch: '+esc(PAIR.url)+' · '+esc(PAIR.ip_url):'Falls der Name nicht gefunden wird: '+esc(PAIR.ip_url)}</p>`:''}`}
+   <div class="pads" style="margin-top:auto"><button data-action="suspend">Standby</button><button data-action="reboot">Neu starten</button><button data-action="poweroff">Ausschalten</button><button data-action="desktop">Desktop</button></div></div></div>${toast}`;return}
+ const key=[S.tab,S.sys,list.length,L.fav.length,L.games.length,RUN&&RUN.paused?RUN.id:''].join();
+ if(key!=shown){shown=key;
+  sb.innerHTML=`<div class="shell"><div class="tabs">${TABS.map((t,i)=>`<button class="tab" data-tab="${i}">${t}</button>`).join('')}<span class="crumb"></span></div>
+   ${RUN&&RUN.paused?`<div class="held"><span>⏸ <b>${esc(RUN.t)}</b> ist pausiert</span><button data-act="resume">Fortsetzen</button><button data-act="quit">Beenden</button></div>`:''}
+   <div class="grid">${list.length?list.map((x,i)=>`<button class="tile${x.inst?' off':''}" data-i="${i}" style="${paint(x)}" aria-label="${esc(x.t)}">${x.cover?`<img loading="${i<25?'eager':'lazy'}" alt="" src="${x.cover}">`:iconFor(x)?`<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">${ICONS[iconFor(x)]}</svg>`:`<span class="ini">${esc(x.t.slice(0,2))}</span>`}${x.kind=='sys'?`<span class="cnt">${x.n}</span>`:x.inst?`<span class="cnt">${x.inst=='no'?'↓':x.pct==null?'…':x.pct+' %'}</span>`:''}${RUN&&RUN.paused&&x.id==RUN.id?'<span class="star">⏸</span>':L.fav.includes(x.id)?'<span class="star">★</span>':''}<span class="lab">${esc(x.t)}</span></button>`).join('')
+    :`<div class="empty">${S.tab==0?'Hier erscheinen zuletzt gespielte Spiele und Favoriten. Wechsle mit RB zu den Systemen und starte etwas.':S.tab==2?'Keine installierten Steam-Spiele gefunden.':'Keine Spiele gefunden. Lege ROMs in ROMs/<System> ab und lies die Bibliothek unter Apps neu ein.'}</div>`}</div></div><div id="tb"></div>`}
+ sb.querySelectorAll('.tab').forEach((b,i)=>b.classList.toggle('on',i==S.tab&&!S.sys));
+ sb.querySelector('.crumb').textContent=S.sys?sysName({s:S.sys})+' · '+list.length+' Spiele':list.length+' Einträge';
+ sb.querySelectorAll('.tile').forEach((b,i)=>b.classList.toggle('on',i==S.i));
+ const on=sb.querySelector('.tile.on');if(on)on.scrollIntoView({block:'nearest'});
+ document.getElementById('tb').innerHTML=toast;
+}
+const playing=()=>RUN&&!RUN.paused;
+function render(){const list=items();S.i=Math.max(0,Math.min(S.i,list.length-1));drawTop(list);drawBottom(list)}
+// Volume indicator for the hardware keys, on whichever Tandem screen is visible.
+function osd(value){document.querySelectorAll('.osd').forEach(e=>e.remove());
+ for(const scr of [st,sb]){const e=document.createElement('div');e.className='osd';e.setAttribute('role','status');
+  e.innerHTML=`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9v6h4l5 4V5L7 9z" fill="currentColor"/>${value>0?'<path d="M15 9a4 4 0 0 1 0 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>':''}${value>50?'<path d="M17.5 6.5a8 8 0 0 1 0 11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>':''}</svg><div class="bar"><i style="width:${value}%"></i></div><b>${value}</b>`;scr.appendChild(e)}
+ clearTimeout(osd.t);osd.t=setTimeout(()=>document.querySelectorAll('.osd').forEach(e=>e.remove()),1600)}
+function toast(text){TOAST=text;render();clearTimeout(toast.t);toast.t=setTimeout(()=>{TOAST='';render()},6000)}
+
+const post=(path,data)=>fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data||{})}).then(r=>r.json());
+function push(){render();if(LIVE)post('api/ui',{...S,from:ME}).catch(()=>{})}
+// The question shows on the bottom screen, the controller answers on the top one: both pages hold it.
+function unconfirm(){CONFIRM=null;if(LIVE)post('api/confirm',{open:false,from:ME})}
+function confirmQuit(then,remote){const t=RUN.t;if(!remote&&LIVE)post('api/confirm',{open:true,then:then?then.id:null,from:ME});CONFIRM={text:then?`„${t}“ ist noch offen. Beenden und „${then.t}“ starten?`:`„${t}“ beenden?`,yes:then?'Beenden und starten':'Beenden',
+  run(){if(!LIVE){RUN=null;if(then)start(then);return render()}
+   post('api/quit').then(()=>{if(!then)return;const wait=n=>fetch('api/state').then(r=>r.json()).then(s=>!s.run?post('api/launch',{id:then.id}):n>0&&setTimeout(()=>wait(n-1),300));wait(20)}).catch(()=>{})}};render()}
+// Leaving for the desktop asks first, on both screens.
+function confirmDesktop(remote){if(!remote&&LIVE)post('api/confirm',{open:true,action:'desktop',from:ME});CONFIRM={text:'Zum Desktop wechseln?',yes:'Desktop',run(){if(LIVE)post('api/action',{name:'desktop'}).then(r=>r.error&&toast(r.error)).catch(()=>{});else toast('In der Vorschau gibt es keinen Desktop.')}};render()}
+function resume(){if(LIVE)post('api/resume').then(r=>r.error&&toast(r.error)).catch(()=>{});else{RUN.paused=false;render()}}
+function start(it){
+ if(it.id=='act:desktop')return confirmDesktop();
+ if(RUN&&RUN.paused&&it.kind!='sys'){if(it.id==RUN.id)return resume();if(it.id!='rescan'&&!it.id.startsWith('upd:')&&it.id!='act:steam')return confirmQuit(it)}
+ if(it.id.startsWith('upd:')){if(LIVE){toast('Lade … das kann eine Minute dauern.');post('api/update',{id:it.id.slice(4)})}else toast('In der Vorschau wird nichts installiert.');return}
+ if(it.id=='act:steam'){if(LIVE)post('api/action',{name:'steam'});else toast('In der Vorschau gibt es kein Steam.');return}
+ if(it.id=='rescan'){if(LIVE)post('api/rescan').then(r=>toast(r.games+' Spiele gefunden'+(r.covers?', '+r.covers+' Cover geladen.':'.')));else toast('In der Vorschau gibt es nichts einzulesen.');return}
+ if(LIVE){post('api/launch',{id:it.id}).catch(()=>toast('Tandem-Dienst antwortet nicht.'));return}
+ const sys=L.systems[it.s];
+ if(sys&&sys.missing)return toast(sys.missing);
+ if(it.s=='steam'||it.s=='app')return toast('Gestartet – zurück geht es über die Steam-Taste.');
+ RUN={id:it.id,t:it.t,s:it.s,emu:sys.emu,since:Date.now()/1000};render();
+}
+function quit(){if(LIVE)post('api/quit').catch(()=>{});else{RUN=null;render()}}
+function go(a){
+ const list=items(),n=list.length,it=list[S.i];
+ if(CONFIRM){const c=CONFIRM;if(a=='ok'){unconfirm();c.run()}else if(a=='back'){unconfirm();render()}return}
+ if(playing()){if(a=='back'&&RUN.s!='term')toast('Zum Beenden unten „Spiel beenden“ tippen.');return}
+ if(a=='left')S.i=Math.max(0,S.i-1);
+ else if(a=='right')S.i=Math.min(n-1,S.i+1);
+ else if(a=='up')S.i=S.i>=COLS?S.i-COLS:S.i;
+ else if(a=='down')S.i=S.i+COLS<n?S.i+COLS:S.i;
+ else if(a=='prev'||a=='next'){S.sys=null;S.tab=(S.tab+(a=='next'?1:TABS.length-1))%TABS.length;S.i=0}
+ else if(a=='ok'){if(!it)return;if(it.kind=='sys'){S.sys=it.s;S.i=0}else return start(it)}
+ else if(a=='close'){if(RUN&&RUN.paused)confirmQuit(null);return}
+ else if(a=='fav'){if(!it||it.kind||it.s=='app')return;
+  if(LIVE)post('api/fav',{id:it.id}).catch(()=>{});else{L.fav.includes(it.id)?L.fav.splice(L.fav.indexOf(it.id),1):L.fav.push(it.id);shown=''}}
+ else if(a=='back'&&S.sys){S.i=Object.keys(L.systems).indexOf(S.sys);S.sys=null;S.tab=1}
+ push();
+}
+addEventListener('keydown',e=>{if(playing()&&RUN.s=='term')return;  // keys belong to the terminal
+ if(e.target.tagName=='INPUT'&&e.target.type!='range')return;  // typing into a field
+ const a={ArrowLeft:'left',ArrowRight:'right',ArrowUp:'up',ArrowDown:'down',Enter:'ok',Escape:'back',q:'prev',e:'next',f:'fav',x:'close'}[e.key];
+ if(a){e.preventDefault();go(a)}});
+sb.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;const d=b.dataset;
+ if(d.i!=null){if(+d.i==S.i)go('ok');else{S.i=+d.i;push()}}
+ else if(d.tab!=null){S.tab=+d.tab;S.sys=null;S.i=0;SUB='';if(S.tab==4)loadSys();push()}
+ else if(d.key!=null){const c=+d.key,m={42:'shift',29:'ctrl',56:'alt',100:'altgr'}[c];
+  if(m){KM[m]=!KM[m];render()}else{const mods=Object.keys(KM).filter(k=>KM[k]);if(LIVE)post('api/key',{code:c,mods}).then(r=>r.error&&toast(r.error)).catch(()=>{});
+   if(mods.length){KM={shift:false,ctrl:false,alt:false,altgr:false};render()}}}
+ else if(d.pkey!=null)promptKey(+d.pkey)
+ else if(d.prompt){const p=PROMPT;PROMPT=null;if(d.prompt=='ok')p.done(p.value);render()}
+ else if(d.sub!=null){SUB=d.sub;if(SUB=='wifi'){toast('Suche Netze …');loadSys(true)}render()}
+ else if(d.ask){const k=d.ask;ask({ra_user:'Benutzername bei RetroAchievements',ra_password:'Passwort bei RetroAchievements',ra_key:'Web-API-Schlüssel'}[k],k!='ra_user',v=>{if(!v||!LIVE)return;
+   post('api/config',{[k]:v}).then(c=>{CFG=c;toast(c.error||(c.applied?'Angemeldet und eingetragen in: '+c.applied.join(', '):'Gespeichert.'))}).catch(()=>toast('Speichern fehlgeschlagen.'))})}
+ else if(d.wifi){const go=pw=>{toast('Verbinde mit '+d.wifi+' …');post('api/wifi',{ssid:d.wifi,password:pw||''}).then(r=>{toast(r.error||'Verbunden mit '+d.wifi+'.');SUB='';loadSys()}).catch(()=>toast('Verbinden fehlgeschlagen.'))};
+   if(d.secure)ask('Passwort für '+d.wifi,true,pw=>pw&&go(pw));else go('')}
+ else if(d.layout&&LIVE)post('api/layout',{layout:d.layout}).catch(()=>{})
+ else if(d.confirm){const c=CONFIRM;unconfirm();if(d.confirm=='yes')c.run();render()}
+ else if(d.act=='resume')resume()
+ else if(d.act=='quit')quit()
+ else if(d.ra&&LIVE)post('api/retroarch',{name:d.ra}).catch(()=>{})
+ else if(d.action&&LIVE)post('api/action',{name:d.action}).then(r=>r.error&&toast(r.error)).catch(()=>{})});
+sb.addEventListener('submit',e=>{e.preventDefault();if(e.target.id!='ra'||!LIVE)return;const f=new FormData(e.target);
+ post('api/config',{ra_user:f.get('ra_user'),ra_key:f.get('ra_key'),ra_password:f.get('ra_password')}).then(c=>{CFG=c;document.activeElement&&document.activeElement.blur();
+  toast(c.error||(c.applied?'Angemeldet und eingetragen in: '+c.applied.join(', '):'RetroAchievements gespeichert.'))}).catch(()=>toast('Speichern fehlgeschlagen.'))});
+let setTimer=null;
+sb.addEventListener('input',e=>{const k=e.target.dataset.set;if(!k)return;SET[k]=+e.target.value;e.target.nextElementSibling.value=SET[k]+' %';
+ clearTimeout(setTimer);setTimer=setTimeout(()=>LIVE&&post('api/set',{key:k,value:SET[k],from:ME}).catch(()=>{}),60)});
+sb.addEventListener('pointerdown',e=>{if(e.target.type=='range')DRAG=true});
+addEventListener('pointerup',()=>{DRAG=false});addEventListener('pointercancel',()=>{DRAG=false});
+// With the service running it reads the controller and sends 'key' events; the page reads it only in the preview.
+// The Thor's buttons are printed Nintendo-style: A is the right button (index 1), B the bottom one (0), X the top one (2), Y the left one (3).
+const PAD={12:'up',13:'down',14:'left',15:'right',1:'ok',0:'back',4:'prev',5:'next',3:'fav',2:'close'};let held={},axis='';
+(function poll(){if(!LIVE&&location.hash!='#bottom')for(const p of (navigator.getGamepads?navigator.getGamepads():[])){if(!p)continue;
+  for(const b in PAD){const d=p.buttons[b]&&p.buttons[b].pressed;if(d&&!held[b])go(PAD[b]);held[b]=d}
+  const x=p.axes[0]||0,y=p.axes[1]||0,dir=x<-.6?'left':x>.6?'right':y<-.6?'up':y>.6?'down':'';if(dir&&dir!=axis)go(dir);axis=dir;break}
+ requestAnimationFrame(poll)})();
+// A script error would otherwise leave a frozen screen with no hint: show it.
+addEventListener('error',e=>{TOAST='Fehler: '+e.message+' ('+e.lineno+')';try{render()}catch(x){document.title=TOAST}});
+addEventListener('unhandledrejection',e=>{TOAST='Fehler: '+(e.reason&&e.reason.message||e.reason);try{render()}catch(x){}});
+function mode(){const m=location.hash.slice(1);document.body.className=m=='top'||m=='bottom'?'solo only-'+m:''}
+addEventListener('hashchange',mode);mode();
+
+function listen(){
+ const es=new EventSource('api/events');
+ es.onmessage=e=>{const m=JSON.parse(e.data);
+  if(m.kind=='toast')return toast(m.text);
+  if(m.kind=='library')return load();
+  if(m.kind=='key'){if(location.hash!='#bottom'){if(m.a=='home'){S={tab:0,sys:null,i:0};SUB='';PROMPT=null;push()}else go(m.a)}return}
+  if(m.kind=='confirm'){if(m.from!=ME){if(m.open&&m.action=='desktop')confirmDesktop(true);else if(m.open&&RUN)confirmQuit(m.then?L.games.find(g=>g.id==m.then):null,true);else{CONFIRM=null;render()}}return}
+  if(m.kind=='config'){CFG=m.config;return pulse()}
+  if(m.kind=='settings'){if(m.from!=ME){SET=m.settings;render()}if(m.osd)osd(m.settings[m.osd]);return}
+  const was=RUN;RUN=m.run;if(m.from!=ME)S={...m.ui};
+  if(RUN&&(!was||was.id!=RUN.id)){ACH=null;loadAch()}if(!RUN)ACH=null;
+  if(was&&!RUN)load();else render()};
+}
+const loadSys=scan=>LIVE&&fetch('api/system'+(scan?'?scan':'')).then(r=>r.json()).then(s=>{SYS=s;render()}).catch(()=>{});
+const loadAch=()=>fetch('api/achievements').then(r=>r.json()).then(a=>{if(RUN){ACH=a;render()}}).catch(()=>{ACH={note:'Erfolge konnten nicht geladen werden.'};render()});
+const load=()=>fetch('api/library').then(r=>r.json()).then(l=>{L=l;shown='';render()});
+const pulse=()=>fetch('api/state').then(r=>r.json()).then(s=>{BATT=s.battery;PAIR=s.pair||null;CFG=s.config||CFG;if(!DRAG)SET=s.settings||SET;render()}).catch(()=>{});
+// The Tandem service writes the library and the current state into the page (window.BOOT), so the first frame is
+// already right; without the service (published preview, file opened directly) the page runs on demo data.
+/*BOOT*/
+if(window.BOOT){L=BOOT.library;S={...BOOT.ui};RUN=BOOT.run;BATT=BOOT.battery;SET=BOOT.settings||SET;CFG=BOOT.config||CFG;LIVE=true;if(RUN)loadAch();pulse();
+ listen();setInterval(pulse,30000)}
+else{L=demoLibrary();setInterval(render,30000)}
+render();
+</script>

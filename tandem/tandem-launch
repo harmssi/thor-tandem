@@ -1,0 +1,100 @@
+#!/bin/bash
+# Tandem starter. Steam runs this as a non-Steam shortcut, so everything started here (the service and through it the
+# emulators) stays inside that shortcut and gets the top screen. The bottom window goes through Armada's own
+# armada-run-bottom, which needs the bottom screen switched on in Armada Control.
+set -u
+DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+DATA="${XDG_DATA_HOME:-$HOME/.local/share}/tandem"
+PORT="${TANDEM_PORT:-8377}"
+URL="http://127.0.0.1:$PORT/"
+BROWSER="${TANDEM_BROWSER:-firefox}"
+
+profile() {  # a throw-away browser profile per screen: no first-run pages, no session restore, no update prompts
+    mkdir -p "$DATA/$1"
+    cat > "$DATA/$1/user.js" <<'EOF'
+user_pref("browser.shell.checkDefaultBrowser", false);
+user_pref("browser.aboutwelcome.enabled", false);
+user_pref("browser.startup.homepage_override.mstone", "ignore");
+user_pref("browser.sessionstore.resume_from_crash", false);
+user_pref("browser.tabs.warnOnClose", false);
+user_pref("datareporting.policy.dataSubmissionEnabled", false);
+user_pref("toolkit.telemetry.reporting.policy.firstRun", false);
+user_pref("app.update.auto", false);
+user_pref("browser.gesture.swipe.left", "");
+user_pref("browser.gesture.swipe.right", "");
+user_pref("apz.overscroll.enabled", false);
+EOF
+}
+
+# Steam hands its own runtime to everything it starts. Emulators must not inherit it: DuckStation refuses to run with
+# LD_LIBRARY_PATH set, and the overlay library cannot load into them anyway.
+unset LD_PRELOAD LD_LIBRARY_PATH
+# One X server only (see gamescope-own): Steam must not send its games to a second one that is not there.
+unset STEAM_MULTIPLE_XWAYLANDS
+: > "$DATA/tandem.log"
+python3 "$DIR/tandem.py" --port "$PORT" >> "$DATA/tandem.log" 2>&1 &
+SERVER=$!
+BOTTOM=
+TOPWIN=
+cleanup() { for p in $TOPWIN $BOTTOM $SERVER; do kill "$p" 2>/dev/null; done; }
+trap cleanup EXIT
+
+for _ in $(seq 100); do  # wait up to 10 s for the service
+    (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null && break
+    kill -0 "$SERVER" 2>/dev/null || { echo "Tandem-Dienst ist nicht gestartet, siehe $DATA/tandem.log" >&2; exit 1; }
+    sleep 0.1
+done
+
+# Without Steam nobody tells InputPlumber to present the built-in controller as a gamepad: it would only be a keyboard
+# and mouse, and neither Tandem nor the emulators would see a controller. Steam's own type (deck-uhid) is useless here.
+if command -v inputplumber >/dev/null; then
+    PADTYPE=$(/usr/libexec/armada/controller-type get 2>/dev/null)
+    case "$PADTYPE" in xbox-series|xb360|ds5) ;; *) PADTYPE=xb360 ;; esac
+    inputplumber device 0 targets set "$PADTYPE" keyboard mouse >/dev/null 2>&1
+    inputplumber device 0 profile load "$DIR/buttons-profile.yaml" >/dev/null 2>&1  # Back and Home buttons, see the file
+fi
+# Release the bottom screen in case the compositor still holds it back for Steam (see gamescope-own).
+command -v xprop >/dev/null && xprop -root -f GAMESCOPE_COMPANION_LOCKED 32c -set GAMESCOPE_COMPANION_LOCKED 0 2>/dev/null
+# As the session's own client Tandem starts together with the bottom screen: give that a moment to come up.
+BOTTOMENV="${XDG_RUNTIME_DIR:-/run/user/$UID}/armada-bottom-env"
+if systemctl --user cat armada-bottom-gamescope.service >/dev/null 2>&1; then
+    # ArmadaOS puts a Plasma Mobile shell on the bottom screen, and it would cover Tandem's window there. Tandem only
+    # needs the compositor underneath: stop the shell for this session, keep (or start) the compositor.
+    systemctl --user stop armada-bottom-screen.service 2>/dev/null
+    systemctl --user start armada-bottom-gamescope.service 2>/dev/null
+    for _ in $(seq 60); do [ -r "$BOTTOMENV" ] && break; sleep 0.25; done
+fi
+# The two windows. Default is the native program (ui/tandem_ui.py, about 50 MB per screen); TANDEM_UI=firefox brings the
+# browser back (about 700 MB per screen). Both run through X11: on the Thor (ArmadaOS 20261109) a Qt window on either
+# gamescope's Wayland socket never appears and Firefox crashes on the bottom one.
+UI="${TANDEM_UI:-native}"
+python3 -c 'import PySide6.QtGui' 2>/dev/null || UI=firefox
+TWO=
+[ -r "$BOTTOMENV" ] && command -v armada-run-bottom >/dev/null && TWO=1
+if [ -z "$TWO" ]; then
+    echo "Unterer Bildschirm ist aus (Armada Control > Settings): Tandem zeigt beide Ansichten oben." >> "$DATA/tandem.log"
+    UI=firefox  # only the page has the combined view
+fi
+windows() {  # windows <native|firefox>: start the bottom window (if there is a bottom screen) and the top one
+    if [ "$1" = native ]; then
+        [ -n "$TWO" ] && { armada-run-bottom --defaults -- env QT_QPA_PLATFORM=xcb python3 "$DIR/ui/tandem_ui.py" --screen bottom --url "${URL%/}" >> "$DATA/tandem.log" 2>&1 & BOTTOM=$!; }
+        QT_QPA_PLATFORM=xcb python3 "$DIR/ui/tandem_ui.py" --screen top --url "${URL%/}" >> "$DATA/tandem.log" 2>&1 &
+    else
+        if [ -n "$TWO" ]; then
+            profile ff-bottom
+            armada-run-bottom --defaults -- env MOZ_ENABLE_WAYLAND=0 GDK_BACKEND=x11 "$BROWSER" --kiosk --new-instance --profile "$DATA/ff-bottom" "${URL}#bottom" >> "$DATA/tandem.log" 2>&1 &
+            BOTTOM=$!
+        fi
+        profile ff-top
+        "$BROWSER" --kiosk --new-instance --profile "$DATA/ff-top" "$URL${TWO:+#top}" >> "$DATA/tandem.log" 2>&1 &
+    fi
+    TOPWIN=$!
+}
+windows "$UI"
+wait "$TOPWIN"
+if [ "$UI" = native ] && [ "$SECONDS" -lt 30 ] && command -v "$BROWSER" >/dev/null; then  # it ended at once: do not leave a dead screen
+    echo "Native Oberfläche hat sich sofort beendet – Firefox übernimmt." >> "$DATA/tandem.log"
+    [ -n "$BOTTOM" ] && kill "$BOTTOM" 2>/dev/null
+    windows firefox
+    wait "$TOPWIN"
+fi

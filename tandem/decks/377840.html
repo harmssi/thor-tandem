@@ -1,0 +1,477 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>FF IX Deck</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent}
+html,body{width:100%;height:100%;overflow:hidden;background:#000;overscroll-behavior:none}
+/* Fixed 1240x1080 reference stage (as in the Android view), scaled to fit and centred */
+#stage{position:absolute;left:50%;top:50%;width:1240px;height:1080px;transform-origin:0 0;overflow:hidden;
+ font:20px/1 "Arial Narrow","Roboto Condensed","Helvetica Neue",sans-serif;font-stretch:condensed;color:#F2E8D0;
+ background:linear-gradient(#070A16,#141C3C);text-shadow:2px 2px 2.5px rgba(0,0,0,.88)}
+body.gl.ing #stage{background:#000}
+.abs{position:absolute}
+.serif{font-family:Georgia,"Times New Roman",serif;font-weight:bold}
+.b{font-weight:bold}.gold{color:#D9B45A}.muted{color:#8C93B0}
+#frame{inset:10px;border:2px solid #D9B45A55;border-radius:18px;pointer-events:none}
+body.gl.ing #frame,body.gl.ing .star{display:none}
+.star{position:absolute;border-radius:50%;background:#fff;animation:tw 3s infinite ease-in-out}
+@keyframes tw{0%,100%{opacity:.15}50%{opacity:.45}}
+/* window skin: tiled paper + nine-slice frame; without the game's sprites a plain panel */
+.win{position:absolute;background:#141B36D0;border:2px solid #D9B45A66;border-radius:18px}
+.gl .win{background:none;border:0;border-radius:0}
+.gl .win::before{content:"";position:absolute;inset:8px;background:var(--bg);pointer-events:none}
+.gl .win::after{content:"";position:absolute;inset:0;border:26px solid transparent;border-image:var(--fr) var(--k) / 26px stretch;pointer-events:none;z-index:3}
+.win>*{position:relative;z-index:1}
+.empty{position:absolute;background:#141B3640;border-radius:18px}
+.sc{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;touch-action:pan-y;scrollbar-width:thin;scrollbar-color:#D9B45A88 transparent}
+.gl .sc{inset:10px}
+.sc::-webkit-scrollbar{width:6px}.sc::-webkit-scrollbar-thumb{background:#D9B45A88;border-radius:3px}
+/* header */
+#wait{inset:0;text-align:center}
+#wait h1{position:absolute;left:0;right:0;top:600px;font-size:54px}
+#wait p{position:absolute;left:210px;width:820px;top:675px;font-size:26px;line-height:34px;color:#8C93B0}
+#wait svg{position:absolute;left:480px;top:310px;width:280px;height:340px;overflow:visible}
+#wait .glow{animation:pl 2.6s infinite ease-in-out}
+@keyframes pl{0%,100%{opacity:.4}50%{opacity:1}}
+.chip{display:inline-block;border:2px solid;border-radius:16px;height:32px;line-height:28px;padding:0 14px;font-size:22px;font-weight:bold}
+.sch{display:inline-block;height:26px;line-height:26px;padding:0 10px;border-radius:12px;font-size:18px;font-weight:bold;margin-right:8px;white-space:nowrap}
+/* party */
+.card{padding:0}
+.card .in{position:absolute;inset:0;display:flex;align-items:flex-start}
+.card.ko .in{opacity:.9}.card.ko::before{filter:brightness(.6)}
+.card.tr{outline:4px solid #F06BC8;outline-offset:-6px;border-radius:14px}
+.face{height:184px;margin:18px 0 0 20px;flex:none}
+.face.ko{opacity:.43}
+.ph{background:#3a4470;border-radius:10px;flex:none}
+.mc{flex:1;min-width:0;padding:0 22px 0 22px}
+.nm{display:flex;align-items:baseline;height:64px;padding-top:12px;white-space:nowrap}
+.nm .n{font-size:36px}.nm .ch{flex:1;min-width:0;overflow:hidden;margin:0 14px 0 18px}.nm .lv{font-size:24px;color:#D9B45A}
+.bar{margin-bottom:8px}
+.bar .lb{display:flex;justify-content:space-between;height:26px;font-size:21px;line-height:18px;white-space:nowrap}
+.bar .lb b{font-size:19px;color:#8C93B0}
+.trk{background:#0B1022;border-radius:99px;overflow:hidden}
+.fill{height:100%;border-radius:99px;transition:width .3s ease-out}
+.fill.g{box-shadow:0 0 8px currentColor}
+.row2{display:flex;gap:16px}.row2>*{flex:1}
+/* tabs */
+.tab{position:absolute;top:140px;height:150px;border-radius:14px;background:#141B3690;color:#8C93B0;font:bold 19px/150px "Arial Narrow",sans-serif;text-align:center;overflow:hidden;white-space:nowrap}
+.tab.sel{background:#2A3360;color:#D9B45A;box-shadow:inset 0 0 0 2px #D9B45A}
+#ptog{font-size:44px;color:#D9B45A}
+/* lists */
+.li{display:flex;align-items:center;height:48px;margin:0 8px;padding:0 16px;border-radius:10px;font-size:26px}
+.li:nth-child(odd){background:#FFFFFF22}
+.li .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.li img,.li .ph{height:38px;width:auto;min-width:30px;margin-right:12px}
+.li .v{color:#D9B45A;padding-left:12px}
+.h2{font-size:28px;color:#D9B45A;padding:16px 22px 0;height:46px}
+.ap{display:flex;align-items:center;height:44px;padding:0 22px;font-size:24px}
+.ap .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ap .tr{width:140px;height:18px;border-radius:9px;background:#0B1022;margin:0 14px;overflow:hidden}
+.ap .tr i{display:block;height:100%;border-radius:9px}
+.ap .v{width:110px;text-align:right;font-size:21px}
+.dot{width:18px;height:18px;border-radius:50%;margin:0 12px 0 10px;flex:none}
+/* enemies / extras */
+.en{margin:0 14px 10px;background:#00000060;border-radius:14px;padding:0 16px;overflow:hidden;position:relative}
+.il{font-size:22px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;height:28px;line-height:28px}
+.il b{font-size:19px;color:#8C93B0;margin-right:12px}
+.bt{position:absolute;height:150px;border-radius:14px;background:#00000090;border:2px solid #FFFFFF66;display:flex;flex-direction:column;justify-content:center;padding-left:24px}
+.bt.on{background:#245A38C0;border:3px solid #7FD69B}
+.bt .l{font-size:22px;font-weight:bold}.bt .s{font-size:20px;color:#8C93B0;margin-top:8px}.bt.on .s{color:#7FD69B}
+.bt .ic{position:absolute;right:18px;top:55px;height:40px;opacity:.47}.bt.on .ic{opacity:1}
+.bt.off .l{color:#8C93B0}
+.cr{display:flex;justify-content:space-between;align-items:center;margin:0 8px;padding:0 16px;border-radius:10px;font-size:23px}
+.cr:nth-child(odd){background:#FFFFFF22}.cr span+span{color:#D9B45A}
+/* map */
+.map{position:absolute}
+.map img,.map .schem{position:absolute;inset:0;width:100%;height:100%}
+.schem{background:linear-gradient(135deg,#0E2546,#0A1830);
+ background-image:linear-gradient(to right,#4A78B833 1px,transparent 1px),linear-gradient(to bottom,#4A78B833 1px,transparent 1px);background-size:8.333% 10%}
+.mk{position:absolute;border-radius:50%;box-shadow:0 0 0 3px #000A}
+.me{position:absolute;width:0;height:0}
+.me .halo{position:absolute;left:-26px;top:-26px;width:52px;height:52px;border-radius:50%;background:#FFDC78}
+.me.p .halo{animation:hp 1.9s infinite ease-in-out}
+@keyframes hp{0%,100%{opacity:.16;transform:scale(.7)}50%{opacity:.5;transform:scale(1)}}
+.me svg{position:absolute;left:-14px;top:-20px;width:28px;height:34px;overflow:visible}
+.cap{position:absolute;left:20px;bottom:12px;font-size:21px;color:#8C93B0}
+</style></head><body>
+<div id="stage">
+ <div id="bg" class="abs" style="inset:0"></div>
+ <div id="frame" class="abs"></div>
+ <div id="wait" class="abs"></div>
+ <div id="hdr"></div><div id="party"></div><div id="tabs"></div><div id="panel" class="win"><div class="sc" id="sc"></div></div>
+</div>
+<script>
+"use strict";
+const Q = new URLSearchParams(location.search);
+const BASE = (Q.get("base") || "http://127.0.0.1:8766").replace(/\/$/, "");
+const DEMO = Q.has("demo");
+// The deck speaks the game's language (as the Android deck does): ?lang= is set by a reload once the game has told us.
+const ASKED = (location.search.match(/[?&]lang=(de|en)/) || [])[1];
+const DE = ASKED ? ASKED == "de" : (navigator.language || "").toLowerCase().startsWith("de");
+const S = {
+ en:{waiting:"Waiting for FF IX…",waiting_hint:"Start Final Fantasy IX (Memoria with [ThorStatus] Enabled = 1). Reconnecting automatically.",title_screen:"Title screen",title_hint:"Load a save to see your party.",
+ scene_field:"Field",scene_world:"World map",scene_battle:"Battle",scene_menu:"Menu",scene_cards:"Tetra Master",scene_ending:"Ending",scene_other:"Event",
+ tab_auto:"Auto",tab_map:"Map",tab_items:"Items",tab_key:"Key items",tab_ap:"Abilities",tab_extra:"Extras",enemies:"Enemies",no_enemies:"No enemies in sight",no_items:"Nothing here yet",
+ map_loading:"Loading map from your game data…",map_last:"Last known position",map_schematic:"Schematic map (image not available)",gil:"Gil",time:"Time",hp:"HP",mp:"MP",atb:"ATB",trance:"Trance",lv:"Lv",fps:"FPS",progress:"Progress",used:"used",ready:"READY",
+ weak:"Weak",absorbs:"Absorbs",immune:"Immune",halves:"Halves",steal:"Steal",drops:"Drops",nothing_left:"nothing left",ap_none:"The equipment teaches nothing new",ap_done:"learnt",
+ boosters:"Boosters",boosters_off:"Boosters are switched off in Memoria.ini ([Cheats] Enabled)",b_speed:"High speed",b_assist:"Battle assist",b_dmg:"9999 damage",b_noenc:"No battles",on:"ON",off:"OFF",
+ counters:"Hidden counters",c_steals:"Successful steals",c_frogs:"Frogs caught",c_dragons:"Dragons slain",c_treasure:"Treasure hunter",c_cards:"Cards (won / lost / draw)",c_chocographs:"Chocographs",c_excalibur:"Excalibur II (12 h)",c_excalibur_over:"time is up",rank:"rank",
+ st:{Petrify:"Stone",Venom:"Venom",Virus:"Virus",Silence:"Silence",Blind:"Darkness",Trouble:"Trouble",Zombie:"Zombie",Death:"KO",Confuse:"Confuse",Berserk:"Berserk",Stop:"Stop",AutoLife:"Auto-Life",Trance:"Trance",Defend:"Defend",Poison:"Poison",Sleep:"Sleep",Regen:"Regen",Haste:"Haste",Slow:"Slow",Float:"Float",Shell:"Shell",Protect:"Protect",Heat:"Heat",Freeze:"Freeze",Vanish:"Vanish",Doom:"Doom",Mini:"Mini",Reflect:"Reflect",GradualPetrify:"Gradual Petrify"},
+ el:{Fire:"Fire",Cold:"Ice",Thunder:"Thunder",Earth:"Earth",Aqua:"Water",Wind:"Wind",Holy:"Holy",Darkness:"Shadow"}},
+ de:{waiting:"Warte auf FF IX…",waiting_hint:"Final Fantasy IX starten (Memoria mit [ThorStatus] Enabled = 1). Verbindet sich automatisch neu.",title_screen:"Titelbildschirm",title_hint:"Spielstand laden, dann erscheint die Gruppe.",
+ scene_field:"Feld",scene_world:"Weltkarte",scene_battle:"Kampf",scene_menu:"Menü",scene_cards:"Tetra Master",scene_ending:"Abspann",scene_other:"Ereignis",
+ tab_auto:"Auto",tab_map:"Karte",tab_items:"Items",tab_key:"Schlüssel",tab_ap:"Fähigk.",tab_extra:"Extras",enemies:"Gegner",no_enemies:"Keine Gegner in Sicht",no_items:"Noch nichts vorhanden",
+ map_loading:"Karte wird aus deinen Spieldaten geladen…",map_last:"Zuletzt bekannte Position",map_schematic:"Schematische Karte (Bild nicht verfügbar)",gil:"Gil",time:"Zeit",hp:"LP",mp:"MP",atb:"ATB",trance:"Trance",lv:"St.",fps:"FPS",progress:"Fortschritt",used:"benutzt",ready:"BEREIT",
+ weak:"Schwach",absorbs:"Absorbiert",immune:"Immun",halves:"Halbiert",steal:"Stehlen",drops:"Beute",nothing_left:"nichts mehr",ap_none:"Die Ausrüstung lehrt nichts Neues",ap_done:"gelernt",
+ boosters:"Booster",boosters_off:"Booster sind in Memoria.ini abgeschaltet ([Cheats] Enabled)",b_speed:"Schnelllauf",b_assist:"Kampfhilfe",b_dmg:"9999 Schaden",b_noenc:"Keine Kämpfe",on:"AN",off:"AUS",
+ counters:"Versteckte Zähler",c_steals:"Erfolgreich gestohlen",c_frogs:"Frösche gefangen",c_dragons:"Drachen besiegt",c_treasure:"Schatzjäger",c_cards:"Karten (Sieg / Niederlage / Remis)",c_chocographs:"Chocografe",c_excalibur:"Excalibur II (12 Std.)",c_excalibur_over:"Zeit abgelaufen",rank:"Rang",
+ st:{Petrify:"Stein",Venom:"Toxin",Virus:"Virus",Silence:"Stumm",Blind:"Blind",Trouble:"Ärger",Zombie:"Zombie",Death:"K.O.",Confuse:"Konfus",Berserk:"Berserker",Stop:"Stopp",AutoLife:"Wiederbeleben",Trance:"Trance",Defend:"Abwehr",Poison:"Gift",Sleep:"Schlaf",Regen:"Regena",Haste:"Hast",Slow:"Gemach",Float:"Levitas",Shell:"Shell",Protect:"Protes",Heat:"Hitze",Freeze:"Frost",Vanish:"Unsichtbar",Doom:"Countdown",Mini:"Mini",Reflect:"Reflek",GradualPetrify:"Versteinerung"},
+ el:{Fire:"Feuer",Cold:"Eis",Thunder:"Blitz",Earth:"Erde",Aqua:"Wasser",Wind:"Wind",Holy:"Heilig",Darkness:"Schatten"}}
+}[DE ? "de" : "en"];
+document.documentElement.lang = DE ? "de" : "en";
+
+const C = {GOLD:"#D9B45A",CREAM:"#F2E8D0",MUTED:"#8C93B0",HP:"#5BD08A",HPMID:"#E8C14E",HPLOW:"#E0556A",MP:"#5AA9F0",ATB:"#F2D25C",TRANCE:"#F06BC8",ENEMY:"#E07A5A"};
+const POS = new Set(["AutoLife","Trance","Defend","Regen","Haste","Float","Shell","Protect","Vanish","Reflect"]);
+const BOOSTERS = ["speed","noenc","assist","dmg"];
+const TABS = ["tab_auto","tab_ap","tab_map","tab_items","tab_key","tab_extra"];
+const T_AUTO=0,T_AP=1,T_MAP=2,T_ITEMS=3,T_KEY=4,T_EXTRA=5;
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const lsGet = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
+
+let st = null, lastWorld = null, connected = false, tab = +Q.get("tab") || 0, partyHidden = lsGet("partyHidden") === "1";
+const stage = $("stage"), cv = document.createElement("canvas").getContext("2d");
+
+function fit() {
+  const s = Math.min(innerWidth / 1240, innerHeight / 1080);
+  stage.style.transform = `scale(${s}) translate(-50%,-50%)`;
+}
+addEventListener("resize", fit); fit();
+addEventListener("contextmenu", e => e.preventDefault());
+addEventListener("selectstart", e => e.preventDefault());
+
+// ---- sprites (the game's own graphics, cut by the server) ----
+const sprites = {}, asked = {};
+function spr(path) {
+  const e = sprites[path];
+  if (e && e.ok) return e.img;
+  if (!DEMO && connected && (!asked[path] || Date.now() - asked[path] > 8000)) {
+    asked[path] = Date.now();
+    const img = new Image();
+    img.onload = () => { sprites[path] = { ok: true, img }; skinCheck(); draw(); };
+    img.src = BASE + "/ui/" + path + ".png";
+  }
+  return null;
+}
+const url = path => { const i = spr(path); return i ? i.src : null; };
+function sprImg(path, cls, ph) {
+  const u = url(path);
+  if (u) return `<img class="${cls}" src="${u}">`;
+  return DEMO && ph ? `<div class="ph ${cls}" style="${ph}"></div>` : "";
+}
+let gl = false;
+function skinCheck() {
+  const bg = sprites["window/dialog_bg"], fr = sprites["window/dialog_frame_info"];
+  if (gl || !bg || !fr) return;
+  gl = true;
+  const r = document.documentElement.style;
+  r.setProperty("--bg", `url(${bg.img.src})`); r.setProperty("--fr", `url(${fr.img.src})`);
+  r.setProperty("--k", Math.floor(Math.min(fr.img.naturalWidth, fr.img.naturalHeight) * 2 / 5));
+  document.body.classList.add("gl");
+}
+function wantSkin() { spr("window/dialog_bg"); spr("window/dialog_frame_info"); }
+
+// ---- maps ----
+const maps = {}, mapAsked = {}; let mapFailed = false;
+function map(key) {
+  if (maps[key]) return maps[key];
+  if (!DEMO && connected && (!mapAsked[key] || Date.now() - mapAsked[key] > 15000)) {
+    mapAsked[key] = Date.now();
+    const img = new Image();
+    img.onload = () => { maps[key] = img; mapFailed = false; draw(); };
+    img.onerror = () => { mapFailed = true; draw(); };
+    img.src = BASE + "/map/" + key + ".png";
+  }
+  return null;
+}
+const CAL = [0.040, 0.925, 0.963, 0.926], CAL_SCHEM = [0, 1, 1, 1]; // normalised game coords -> image fractions
+
+// ---- helpers ----
+const fmtTime = s => `${Math.floor(s / 3600)}:${String(Math.floor(s / 60) % 60).padStart(2, "0")}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+const fmtGil = n => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+const sceneLabel = s => S["scene_" + s] || S.scene_other;
+function fitSize(str, max, min, width, font) {
+  let size = max;
+  for (; size > min; size -= 2) { cv.font = `bold ${size}px ${font}`; if (cv.measureText(str).width <= width) break; }
+  return size;
+}
+const lighten = hex => "#" + [1, 3, 5].map(i => Math.min(255, parseInt(hex.substr(i, 2), 16) + 60).toString(16).padStart(2, "0")).join("");
+const shown = {}; // bar key -> last drawn fraction, so rebuilt DOM can still ease
+function bar(key, label, value, frac, color, h, glow) {
+  frac = Math.max(0, Math.min(1, frac || 0));
+  const prev = shown[key] ?? frac; shown[key] = frac;
+  return `<div class="bar"><div class="lb"><b>${esc(label)}</b><span style="color:${glow ? color : C.CREAM}">${esc(value)}</span></div>
+  <div class="trk" style="height:${h}px"><div class="fill${glow ? " g" : ""}" data-t="${frac * 100}" style="color:${color};width:${prev * 100}%;background:linear-gradient(${lighten(color)},${color})"></div></div></div>`;
+}
+function settle(root) {
+  requestAnimationFrame(() => root.querySelectorAll(".fill[data-t]").forEach(f => { f.style.width = f.dataset.t + "%"; }));
+}
+function chips(list) {
+  return list.filter(s => S.st[s]).map(s => {
+    const col = POS.has(s) ? "#7FC8F0" : "#E88A9A";
+    return `<span class="sch" style="color:${col};background:${col}33">${esc(S.st[s])}</span>`;
+  }).join("");
+}
+const els = a => (a || []).map(n => S.el[n] || n).join(", ");
+const setHTML = (el, html) => { if (el._h !== html) { el._h = html; el.innerHTML = html; return true; } return false; };
+
+// ---- drawing ----
+const stars = (() => { let x = 9; const r = () => (x = (x * 16807) % 2147483647) / 2147483647; return Array.from({ length: 60 }, () => ({ x: r() * 100, y: r() * 90, s: .6 + r() * 2.8, d: r() * 3 })); })();
+$("bg").innerHTML = stars.map(s => `<i class="star" style="left:${s.x}%;top:${s.y}%;width:${s.s}px;height:${s.s}px;animation-delay:-${s.d}s"></i>`).join("");
+
+let queued = false;
+function draw() { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; render(); }); } }
+
+function render() {
+  wantSkin();
+  const ing = !!(connected && st && st.inGame);
+  document.body.classList.toggle("ing", ing);
+  const waiting = !connected || !st, title = !waiting && !st.inGame;
+  setHTML($("wait"), waiting || title ? waitHTML(waiting ? S.waiting : S.title_screen, waiting ? S.waiting_hint : S.title_hint) : "");
+  if (!ing) { for (const id of ["hdr", "party", "tabs"]) setHTML($(id), ""); setHTML($("sc"), ""); $("panel").style.display = "none"; }
+  if (title) $("hdr").innerHTML = fpsHTML();
+  if (!ing) return;
+  $("panel").style.display = "";
+  header(); party(); tabs(); panel();
+}
+function waitHTML(title, hint) {
+  return `<svg viewBox="-140 -170 280 340"><defs><radialGradient id="rg"><stop offset="0" stop-color="#78BEFF" stop-opacity=".55"/><stop offset="1" stop-color="#78BEFF" stop-opacity="0"/></radialGradient>
+  <linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#CDEBFF"/><stop offset="1" stop-color="#3F7FD8"/></linearGradient></defs>
+  <circle class="glow" r="162" fill="url(#rg)"/><path d="M0-90L45-4.5 0 90-45-4.5Z" fill="url(#lg)" stroke="#D9B45A" stroke-width="3"/>
+  <path d="M0-90L16-4.5 0 90-16-4.5Z" fill="#fff6"/><ellipse cy="67" rx="85" ry="13" fill="none" stroke="#D9B45A" stroke-width="3"/></svg>
+  <h1 class="serif">${esc(title)}</h1><p>${esc(hint)}</p>`;
+}
+function fpsHTML() {
+  const f = st ? st.fps || 0 : 0, col = f >= 55 ? "#7FD69B" : f >= 28 ? C.HPMID : C.HPLOW;
+  return `<div class="abs" style="left:1114px;top:102px;width:12px;height:12px;border-radius:50%;background:${connected ? "#7FD69B" : C.HPLOW}"></div>
+  <div class="abs" style="right:40px;top:98px;font-size:19px;color:${col}">${Math.round(f)} ${S.fps}</div>`;
+}
+function header() {
+  const loc = st.location || sceneLabel(st.scene);
+  const col = st.scene === "battle" ? C.ENEMY : st.scene === "world" ? C.MP : C.GOLD;
+  const chip = sceneLabel(st.scene);
+  cv.font = `bold 22px sans-serif`;
+  const html = `<div class="win" style="left:12px;top:10px;width:1216px;height:122px"></div>
+  <div class="abs serif" style="left:36px;top:30px;font-size:${fitSize(loc, 46, 26, 690, "Georgia,serif")}px;white-space:nowrap">${esc(loc)}</div>
+  <div class="abs" style="left:36px;top:86px;display:flex;align-items:center;gap:18px"><span class="chip" style="color:${col};border-color:${col};background:${col}33">${esc(chip)}</span>
+  ${st.scenario >= 0 ? `<span class="muted" style="font-size:20px">${S.progress} ${st.scenario}</span>` : ""}</div>
+  <div class="abs muted" style="right:230px;top:30px;font-size:20px;text-align:right">${S.gil}</div>
+  <div class="abs muted" style="right:40px;top:30px;font-size:20px;text-align:right">${S.time}</div>
+  <div class="abs b gold" style="right:230px;top:58px;font-size:36px">${fmtGil(st.gil || 0)}</div>
+  <div class="abs b" style="right:40px;top:58px;font-size:36px">${fmtTime(st.playTime || 0)}</div>` + fpsHTML();
+  setHTML($("hdr"), html);
+}
+function party() {
+  const el = $("party");
+  if (partyHidden) { setHTML(el, ""); return; }
+  const list = st.party || [], top = 140, gap = 12, h = (1080 - 24 - top - gap * 3) / 4, battle = !!st.battle;
+  let html = "";
+  for (let i = 0; i < 4; i++) {
+    const y = top + i * (h + gap);
+    html += i < list.length ? member(list[i], i, y, h, battle) : `<div class="empty" style="left:24px;top:${y}px;width:616px;height:${h}px"></div>`;
+  }
+  if (setHTML(el, html)) settle(el);
+}
+function member(m, i, y, h, battle) {
+  const status = m.status || [], ko = m.hp === 0 || status.includes("Death");
+  const maxHp = Math.max(1, m.maxHp || 1), maxMp = Math.max(1, m.maxMp || 1), maxAtb = Math.max(1, m.maxAtb || 1);
+  const hpF = m.hp / maxHp, hpC = hpF < .25 ? C.HPLOW : hpF < .5 ? C.HPMID : C.HP;
+  const inB = battle && m.atb !== undefined, ready = inB && m.atb >= maxAtb && m.canAct !== false;
+  const showTr = m.hasTrance || m.trance > 0, k = "m" + i + m.id;
+  const face = m.face ? sprImg("face/" + m.face, "face" + (ko ? " ko" : ""), "width:150px") : "";
+  return `<div class="win card${ko ? " ko" : ""}${m.inTrance ? " tr" : ""}" style="left:24px;top:${y}px;width:616px;height:${h}px"><div class="in">${face}
+  <div class="mc"><div class="nm"><span class="n serif" style="color:${ko ? C.MUTED : C.CREAM}">${esc(m.name || "?")}</span><span class="ch">${chips(status)}</span><span class="lv">${S.lv} ${m.lv ?? 1}</span></div>
+  ${bar(k + "h", S.hp, m.hp + " / " + maxHp, hpF, hpC, 20)}${bar(k + "m", S.mp, m.mp + " / " + maxMp, m.mp / maxMp, C.MP, 14)}
+  <div class="row2">${inB ? bar(k + "a", S.atb, ready ? S.ready : "", m.atb / maxAtb, C.ATB, 12, ready) : ""}
+  ${showTr ? bar(k + "t", S.trance, m.inTrance ? "!!" : "", (m.trance || 0) / 255, C.TRANCE, 12, m.inTrance || m.trance >= 255) : ""}</div></div></div></div>`;
+}
+function tabs() {
+  const l = partyHidden ? 24 : 664, rr = 1136, w = (rr - l - 30) / 6;
+  let html = `<div class="tab" id="ptog" data-act="ptog" style="left:1144px;width:72px">${partyHidden ? "»" : "«"}</div>`;
+  html += TABS.map((k, i) => `<div class="tab${tab === i ? " sel" : ""}" data-tab="${i}" style="left:${l + i * (w + 6)}px;width:${w}px">${esc(S[k])}</div>`).join("");
+  setHTML($("tabs"), html);
+}
+const PT = 302;
+function panel() {
+  const l = partyHidden ? 24 : 664, rr = 1216, b = 1056, p = $("panel"), sc = $("sc");
+  p.style.cssText = `left:${l}px;top:${PT}px;width:${rr - l}px;height:${b - PT}px`;
+  const pad = gl ? 10 : 0, W = rr - l - 2 * pad, H = b - PT - 2 * pad;
+  let mode = tab;
+  const hasWorld = st.world || lastWorld;
+  if (mode === T_AUTO) mode = st.battle ? -1 : hasWorld && st.scene !== "menu" ? T_MAP : T_ITEMS;
+  const keep = sc.dataset.mode === String(mode) + tab ? sc.scrollTop : 0;
+  sc.dataset.mode = String(mode) + tab;
+  sc.style.overflowY = mode === T_MAP || mode === -1 ? "hidden" : "auto";
+  const html = mode === -1 ? enemies(W, H) : mode === T_MAP ? mapView(W, H) : mode === T_AP ? abilities() : mode === T_EXTRA ? extras(W, H)
+    : list(mode === T_KEY ? st.keyItems : st.items, mode === T_KEY);
+  if (setHTML(sc, html)) { sc.scrollTop = keep; settle(sc); }
+}
+function list(items, key) {
+  items = items || [];
+  if (!items.length) return `<div class="muted abs" style="left:22px;top:22px;font-size:24px">${S.no_items}</div>`;
+  return `<div style="padding:14px 0">` + items.map(it => {
+    const ic = it.icon ? sprImg("icon/" + it.icon, "", "width:38px") : "";
+    return `<div class="li" style="${key && it.used ? "color:" + C.MUTED : ""}">${ic}<span class="t">${esc(it.name)}</span><span class="v">${key ? (it.used ? S.used : "◆") : "× " + (it.n || 0)}</span></div>`;
+  }).join("") + `</div>`;
+}
+function abilities() {
+  let html = "";
+  const stone = url("icon/ability_stone");
+  for (const m of st.party || []) {
+    html += `<div class="h2 serif">${esc(m.name)}</div>`;
+    if (!(m.learn || []).length) html += `<div class="ap muted" style="font-size:21px">${S.ap_none}</div>`;
+    for (const a of m.learn || []) {
+      const frac = a.done ? 1 : Math.min(1, (a.ap || 0) / Math.max(1, a.max || 1));
+      const ic = stone && !a.support ? `<img src="${stone}" style="width:38px;height:32px;margin:0 10px 0 0">` : `<span class="dot" style="background:${a.support ? "#7FC8F0" : "#E0556A"}"></span>`;
+      html += `<div class="ap">${ic}<span class="t" style="color:${a.done ? C.MUTED : C.CREAM}">${esc(a.name)}</span>
+      <span class="tr"><i style="width:${frac * 100}%;background:${a.done ? C.GOLD : "#58C8F0"}"></i></span>
+      <span class="v" style="color:${a.done ? C.GOLD : C.CREAM}">${a.done ? "★ " + S.ap_done : a.ap + " / " + a.max}</span></div>`;
+    }
+  }
+  return `<div style="padding-bottom:10px">${html}</div>`;
+}
+function enemies(W, H) {
+  const list = st.battle.enemies || [];
+  let html = `<div class="serif" style="font-size:30px;color:${C.ENEMY};padding:12px 22px 0;height:64px">${S.enemies}</div>`;
+  if (!list.length) return html + `<div class="muted" style="font-size:24px;padding:4px 22px">${S.no_enemies}</div>`;
+  const h = Math.min(250, (H - 64 - 10) / list.length), compact = h < 100;
+  list.forEach((e, i) => {
+    const maxHp = Math.max(1, e.maxHp || 1);
+    let inner = `<div class="serif" style="font-size:${Math.min(28, h * .26)}px;padding-top:${Math.min(36, h * .32) - Math.min(28, h * .26) * .8}px;height:${Math.min(54, h * .42) - 8}px">${esc(e.name)}</div>`;
+    inner += bar("e" + i + e.name, S.hp, compact ? "" : e.hp + " / " + maxHp, e.hp / maxHp, C.ENEMY, compact ? 10 : 14);
+    if (!compact) {
+      if (e.weak !== undefined && h >= 150) {
+        const line = (lab, val, col) => val ? `<div class="il"><b>${lab}</b><span style="color:${col}">${esc(val)}</span></div>` : "";
+        // same cut-offs as the Android view, measured from the start of the card
+        let ly = Math.min(54, h * .42) - 8 + 48 + 22; const lim = h - 34;
+        const res = [[S.absorbs, e.absorb], [S.immune, e.immune], [S.halves, e.half]].filter(r => (r[1] || []).length).map(r => r[0] + " " + els(r[1])).join(" · ");
+        inner += line(S.weak, els(e.weak), "#FFD27A"); ly += 28;
+        if (res && ly < h - 40) { inner += `<div class="il muted">${esc(res)}</div>`; ly += 28; }
+        if (ly < lim) { inner += line(S.steal, (e.steal || []).length ? e.steal.join(", ") : S.nothing_left, "#9FE0A8"); ly += 28; }
+        if (ly < lim && (e.drop || []).length) inner += line(S.drops, e.drop.join(", "), C.CREAM);
+      } else inner += `<div style="margin-top:6px">${chips(e.status || [])}</div>`;
+    }
+    html += `<div class="en" style="height:${h - 10}px">${inner}</div>`;
+  });
+  return html;
+}
+function extras(W, H) {
+  let html = `<div class="serif gold" style="font-size:28px;padding:12px 22px 0;height:62px">${S.boosters}</div>`;
+  if (!st.boosters || !st.counters) return html;
+  const bo = st.boosters, co = st.counters, on = [bo.speed, bo.noenc, bo.assist, bo.dmg];
+  const names = ["b_speed", "b_noenc", "b_assist", "b_dmg"], icons = ["icon_ff", "icon_encounter", "icon_battle", "icon_9999"];
+  const bw = (W - 44 - 14) / 2, bh = 150;
+  for (let i = 0; i < 4; i++) {
+    const x = 22 + (i % 2) * (bw + 14), y = 62 + Math.floor(i / 2) * (bh + 12);
+    const lab = S[names[i]] + (i === 0 && bo.speedFactor > 1 ? " ×" + bo.speedFactor : "");
+    html += `<div class="bt ${on[i] ? "on" : "off"}" data-boost="${BOOSTERS[i]}" style="left:${x}px;top:${y}px;width:${bw}px">
+    ${sprImg("icon/" + icons[i], "ic", "width:40px")}<div class="l" style="${bo.allowed ? "" : "color:" + C.MUTED}">${esc(lab)}</div><div class="s">${on[i] ? S.on : S.off}</div></div>`;
+  }
+  let y = 62 + 2 * (bh + 12) + 8;
+  html += `<div style="position:absolute;left:0;right:0;top:${y}px">`;
+  if (!bo.allowed) html += `<div style="font-size:19px;color:${C.HPMID};padding:0 22px 8px">${esc(S.boosters_off)}</div>`;
+  const t = co.treasure || 0, rank = t >= 340 ? "S" : t < 200 ? "H" : String.fromCharCode(71 - Math.floor((t - 200) / 20));
+  const left = 12 * 3600 - (st.playTime || 0);
+  const rows = [[S.c_excalibur, left > 0 ? fmtTime(left) : S.c_excalibur_over], [S.c_steals, co.steals], [S.c_frogs, co.frogs], [S.c_dragons, co.dragons],
+    [S.c_treasure, S.rank + " " + rank + " · " + t], [S.c_chocographs, (co.chocographs || 0) + " / 24"], [S.c_cards, `${co.cardWins || 0} / ${co.cardLosses || 0} / ${co.cardDraws || 0}`]];
+  html += `<div class="serif gold" style="font-size:28px;padding:6px 22px 8px">${S.counters}</div>`;
+  html += rows.map((r, i) => `<div class="cr" style="height:42px;${i === 0 && left <= 0 ? "color:" + C.MUTED : ""}"><span>${esc(r[0])}</span><span style="${i === 0 && left <= 0 ? "color:" + C.MUTED : ""}">${esc(r[1] ?? 0)}</span></div>`).join("");
+  return html + `</div>`;
+}
+function mapView(W, H) {
+  const ws = st.world ? st : lastWorld;
+  const key = ws && ws.world && ws.world.naviMap === 0 ? "mist" : "world";
+  const img = map(key);
+  const pad = 16, aw = W - pad * 2, ah = H - pad * 2 - 40;
+  const iw = img ? img.naturalWidth : 1536, ih = img ? img.naturalHeight : 1280, sc = Math.min(aw / iw, ah / ih);
+  const dw = iw * sc, dh = ih * sc, dx = pad + (aw - dw) / 2, dy = pad + (ah - dh) / 2;
+  const cap = !img ? (!mapFailed && connected && !DEMO ? S.map_loading : S.map_schematic) : !st.world && ws ? S.map_last : "";
+  let html = `<div class="map" style="left:${dx}px;top:${dy}px;width:${dw}px;height:${dh}px;outline:2px solid #D9B45A66">${img ? `<img src="${img.src}">` : `<div class="schem"></div>`}`;
+  if (ws && ws.world) {
+    const w = ws.world, cal = img ? CAL : CAL_SCHEM;
+    const at = (x, y) => [dw * (cal[0] + cal[1] * x), dh * (cal[2] - cal[3] * y)];
+    const mk = (o, col) => { const [x, y] = at(o.x, o.y); return `<i class="mk" style="left:${x - 9}px;top:${y - 9}px;width:18px;height:18px;background:${col}"></i>`; };
+    if (w.airship) html += mk(w.airship, "#7FE0FF");
+    if (w.chocobo) html += mk(w.chocobo, "#F2D25C");
+    const [px, py] = at(w.x || 0, w.y || 0);
+    html += `<div class="me${st.world ? " p" : ""}" style="left:${px}px;top:${py}px"><div class="halo"></div>
+    <svg viewBox="-14 -20 28 34" style="transform:rotate(${w.rot || 0}deg)"><path d="M0-18L11 12 0 6-11 12Z" fill="#FFE9A8" stroke="#3A2A00" stroke-width="2.5"/></svg></div>`;
+  }
+  return html + `</div><div class="cap">${esc(cap)}</div>`;
+}
+
+// ---- input ----
+stage.addEventListener("click", e => {
+  const t = e.target.closest("[data-tab],[data-act],[data-boost]");
+  if (!t) return;
+  if (t.dataset.tab !== undefined) { tab = +t.dataset.tab; draw(); }
+  else if (t.dataset.act === "ptog") { partyHidden = !partyHidden; lsSet("partyHidden", partyHidden ? "1" : "0"); draw(); }
+  else if (st && st.boosters && st.boosters.allowed) {
+    const n = t.dataset.boost;
+    if (DEMO) { st.boosters[n] = !st.boosters[n]; draw(); }
+    else fetch(BASE + "/cmd/booster/" + n, { mode: "no-cors" }).catch(() => {});
+  }
+});
+
+// ---- connection ----
+function onState(s) {
+  if (s.world) lastWorld = s;
+  st = s; draw();
+}
+function setConnected(c) {
+  connected = c;
+  if (!c) { st = null; for (const k in asked) delete asked[k]; }
+  draw();
+}
+function connect() {
+  let es, dog;
+  const retry = () => { clearTimeout(dog); try { es.close(); } catch (e) {} if (connected) setConnected(false); setTimeout(connect, 1000); };
+  const arm = () => { clearTimeout(dog); dog = setTimeout(retry, 12000); }; // server sends a keep-alive at least every 5 s
+  try { es = new EventSource(BASE + "/events"); } catch (e) { return setTimeout(connect, 1000); }
+  es.onopen = () => { if (!connected) setConnected(true); arm(); };
+  es.onmessage = ev => { arm(); try {
+    const s = JSON.parse(ev.data), want = s.lang == "GR" ? "de" : s.lang ? "en" : null;
+    if (want && !ASKED && want != (DE ? "de" : "en")) return location.replace(location.pathname + "?lang=" + want);
+    onState(s); } catch (e) {} };
+  es.onerror = retry;
+}
+
+// ---- demo ----
+function demoState() {
+  const lrn = (n, ap, max, sup) => ({ name: n, ap, max, done: ap >= max, support: !!sup });
+  const s = { inGame: true, scene: Q.get("battle") ? "battle" : "world", fps: 60, lang: "GR", playTime: 24690, gil: 48213, location: "Lindblum – Theaterviertel", scenario: 4720, fieldId: 1, worldId: 0,
+    party: [
+      { id: 0, name: "Zidane", lv: 21, hp: 412, maxHp: 480, mp: 61, maxMp: 78, trance: 180, hasTrance: true, face: "zidane", status: ["Haste"], learn: [lrn("Flammenklinge", 40, 40), lrn("Mutkraft", 12, 60), lrn("Auto-Hast", 33, 50, true)] },
+      { id: 1, name: "Vivi", lv: 19, hp: 96, maxHp: 301, mp: 120, maxMp: 160, trance: 0, hasTrance: true, face: "vivi", status: ["Poison", "Protect"], learn: [lrn("Feuga", 22, 40)] },
+      { id: 2, name: "Steiner", lv: 20, hp: 0, maxHp: 540, mp: 20, maxMp: 40, trance: 255, hasTrance: true, inTrance: true, face: "steiner", status: ["Death"], learn: [] },
+      { id: 3, name: "Dagger", lv: 18, hp: 250, maxHp: 260, mp: 150, maxMp: 160, trance: 40, hasTrance: true, face: "dagger", status: [], learn: [lrn("Leviathan", 80, 120)] }],
+    items: ["Potion", "Hi-Potion", "Äther", "Phönixfeder", "Ethiopier-Dolch", "Eidolon-Pelz", "Ohrring", "Kettenhemd", "Elixier", "Zelt", "Antidot", "Goldnadel", "Augentropfen", "Echo-Kraut", "Mondstein", "Tränke", "Rubin", "Zinnober"].map((n, i) => ({ id: i, name: n, n: 3 + i * 4, icon: "i" + i })),
+    keyItems: [{ name: "Fahrkarte nach Alexandria", used: true }, { name: "Gartenschlüssel" }, { name: "Cid-Hörnchen" }, { name: "Karte der Mistwelt" }].map((e, i) => ({ id: i, icon: "k", ...e })),
+    world: { x: .55, y: .42, rot: 40, activeMap: 1, naviMap: 1, chocobo: { x: .3, y: .6 }, airship: { x: .7, y: .25 } },
+    boosters: { allowed: true, speed: true, assist: false, dmg: false, noenc: true, speedFactor: 3 },
+    counters: { steals: 17, frogs: 4, dragons: 2, treasure: 262, cardWins: 12, cardLosses: 7, cardDraws: 3, chocographs: 9 } };
+  if (Q.get("battle")) {
+    s.battle = { enemies: [{ name: "Ochu", lv: 12, hp: 680, maxHp: 800, atb: 20, maxAtb: 40, status: ["Slow"], weak: ["Fire", "Cold"], absorb: ["Earth"], immune: ["Aqua"], half: [], steal: ["Potion", "Äther"], drop: ["Gysahl-Grün"] },
+      { name: "Gargoyle", lv: 10, hp: 120, maxHp: 400, atb: 5, maxAtb: 40, status: [], weak: ["Holy"], absorb: [], immune: [], half: ["Wind"], steal: [], drop: [] }] };
+    s.party.forEach((m, i) => { m.atb = 10 + i * 12; m.maxAtb = 40; m.canAct = true; });
+    s.party[0].atb = 40;
+  }
+  return s;
+}
+
+if (DEMO) { connected = true; onState(demoState()); }
+else connect();
+draw();
+</script></body></html>

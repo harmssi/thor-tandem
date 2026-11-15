@@ -1,0 +1,9 @@
+{
+  "name": "Studio",
+  "colors": {"bg": "#07070d", "panel": "#12111c", "raised": "#1a1828", "line": "#24213a", "text": "#f2f2f7", "muted": "#a9a8bd", "accent": "#8a5cf6", "live": "#5ab0d0", "warn": "#f0728f"},
+  "gradient": ["#8a5cf6", "#6f9be0", "#5ab0d0"],
+  "fonts": {"display": ["Inter", "Adwaita Sans", "Noto Sans"], "body": ["Inter", "Adwaita Sans", "Noto Sans"]},
+  "radius": 1.3,
+  "glow": 0.8,
+  "gameAccent": true
+}

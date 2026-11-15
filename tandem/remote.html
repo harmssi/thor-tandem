@@ -1,0 +1,120 @@
+<!doctype html><html lang="de"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Toravo Tandem</title>
+<style>
+/* Toravo Studio look (tokens from toravo-os/brand/tokens.css): near-black with a violet tint, Inter, tracked micro labels. */
+:root{--bg:#07070d;--bg2:#0c0c14;--panel:#12111c;--panel2:#181626;--line:#24213a;--text:#f2f2f7;--text2:#a9a8bd;--text3:#9491ad;
+ --violet:#8a5cf6;--coral:#d8806a;--green:#4cc38a;--grad:linear-gradient(90deg,#8a5cf6 0%,#6f9be0 55%,#5ab0d0 100%);--r:12px}
+*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:84px}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 Inter,"Inter Variable",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+header{position:sticky;top:0;z-index:5;height:72px;display:flex;align-items:center;gap:28px;padding:0 max(16px,5vw);background:rgba(7,7,13,.92);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.mark{font-weight:700;letter-spacing:.32em;font-size:13px;white-space:nowrap}.mark i{font-style:normal;color:var(--violet)}
+nav{display:flex;gap:22px;overflow-x:auto;font-size:14px;scrollbar-width:none}nav a{color:var(--text2);text-decoration:none;white-space:nowrap;padding:8px 0}nav a:hover,nav a:focus-visible{color:var(--violet)}
+#live{margin-left:auto;display:flex;align-items:center;gap:8px;color:var(--text2);font-size:13px;white-space:nowrap}#live::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--text3)}#live.on::before{background:var(--green)}
+main{max-width:1120px;margin:0 auto;padding:28px max(16px,5vw) 96px;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,330px),1fr));gap:18px;align-items:start}
+section{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:22px}
+section.wide{grid-column:1/-1}
+h2{margin:0 0 4px;font-size:11px;font-weight:600;letter-spacing:.32em;text-transform:uppercase;color:var(--text3)}
+h3{margin:0 0 14px;font-size:19px;font-weight:600}
+p{margin:0 0 12px;color:var(--text2)}p:last-child{margin-bottom:0}
+label{display:block;margin:14px 0 6px;font-size:13px;color:var(--text2)}label:first-of-type{margin-top:0}
+input,select,button{font:inherit;color:inherit;width:100%;min-height:44px;padding:10px 12px;border-radius:8px;border:1px solid var(--line);background:var(--bg2)}
+input:focus-visible,select:focus-visible,button:focus-visible,a:focus-visible{outline:2px solid var(--violet);outline-offset:2px}
+input[type=range]{padding:0;min-height:32px;border:0;background:none;accent-color:var(--violet)}
+button{cursor:pointer;background:var(--panel2);font-weight:500}button:hover{border-color:var(--violet)}
+button.go{background:var(--violet);border-color:var(--violet);color:#0b0718;font-weight:600;margin-top:16px}button.warn{color:var(--coral)}
+.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-top:14px}.row:first-child{margin-top:0}
+.slider{display:grid;grid-template-columns:1fr 3.2em;gap:12px;align-items:center}.slider output{font:13px "JetBrains Mono",ui-monospace,monospace;color:var(--text2);text-align:right}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px}.stat b{display:block;font-size:19px;font-weight:600;overflow-wrap:anywhere}.stat span{font-size:12px;color:var(--text3)}
+.bar{height:6px;border-radius:3px;background:var(--bg2);overflow:hidden;margin-top:8px}.bar i{display:block;height:100%;background:var(--grad)}
+#msg{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);max-width:min(92vw,520px);padding:12px 18px;border-radius:999px;background:var(--panel2);border:1px solid var(--violet);box-shadow:0 12px 40px #0009;opacity:0;pointer-events:none;transition:opacity .2s}
+#msg.show{opacity:1}
+.login{max-width:420px;margin:12vh auto 0;padding:0 16px}.login b{color:var(--coral)}
+@media(max-width:640px){header{gap:14px}.mark{letter-spacing:.2em}#live span{display:none}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}#msg{transition:none}}
+</style>
+<!--SPLIT-->
+<header><div class="mark">TORAVO<i>/</i>TANDEM</div></header>
+<div class="login"><section><h2>Einrichtung</h2><h3>Mit dem Thor verbinden</h3>
+<p>Die PIN steht auf dem Thor unter „System“. Danach bleibt dieses Gerät ein Jahr angemeldet.</p>__MSG__
+<form method="post"><label for="pin">PIN vom Thor</label><input id="pin" name="pin" inputmode="numeric" autocomplete="off" required autofocus><button class="go">Anmelden</button></form></section></div>
+<!--SPLIT-->
+<header><div class="mark">TORAVO<i>/</i>TANDEM</div>
+<nav aria-label="Bereiche"><a href="#uebersicht">Übersicht</a><a href="#bild">Bild &amp; Ton</a><a href="#spiele">Spiele</a><a href="#netz">Netzwerk</a><a href="#konten">Konten</a><a href="#geraet">Gerät</a></nav>
+<div id="live"><span>verbinde …</span></div></header>
+<main>
+<section class="wide" id="uebersicht"><h2>Übersicht</h2><h3 id="st">–</h3><div class="stats" id="stats"></div></section>
+
+<section id="bild"><h2>Bild &amp; Ton</h2><h3>Helligkeit und Lautstärke</h3>
+<label for="bt">Oberer Bildschirm</label><div class="slider"><input type="range" id="bt" max="100"><output for="bt"></output></div>
+<label for="bb">Unterer Bildschirm</label><div class="slider"><input type="range" id="bb" max="100"><output for="bb"></output></div>
+<label for="vol">Lautstärke</label><div class="slider"><input type="range" id="vol" max="100"><output for="vol"></output></div>
+<label for="theme">Aussehen der Oberfläche</label><select id="theme"></select>
+<label for="rest">Bildschirme schwarz nach (OLED-Schutz)</label><select id="rest"><option value="0">nie</option><option value="1">1 Minute</option><option value="3">3 Minuten</option><option value="10">10 Minuten</option></select></section>
+
+<section id="spiele"><h2>Spiele</h2><h3>Bibliothek und Emulatoren</h3><p id="lib">–</p>
+<div class="row"><button data-post="rescan">Bibliothek neu einlesen</button><button data-post="quit">Laufendes Spiel beenden</button></div>
+<label for="eden">Switch-Emulator (Eden)</label><select id="eden"><option value="eden">Stabile Fassung</option><option value="eden-nightly">Nightly (Tagesstand)</option></select>
+<button class="go" id="edengo">Installieren oder aktualisieren</button></section>
+
+<section id="netz"><h2>Netzwerk</h2><h3>WLAN</h3><p id="wl">–</p>
+<label for="ssid">Netz</label><select id="ssid"></select>
+<label for="wp">Passwort (leer lassen bei bekanntem Netz)</label><input id="wp" type="password" autocomplete="off">
+<button class="go" id="wgo">Verbinden</button>
+<label for="own">Eigene Adresse dieser Seite (z. B. https://thor.example.de, leer = keine)</label><input id="own" type="url" autocomplete="off" autocapitalize="off" placeholder="https://">
+<button id="owngo">Adresse speichern</button></section>
+
+<section id="konten"><h2>Konten</h2><h3>RetroAchievements</h3><p id="ra">–</p>
+<label for="u">Benutzername</label><input id="u" autocomplete="username" autocapitalize="off">
+<label for="p">Passwort (nur zur Anmeldung, wird nicht gespeichert)</label><input id="p" type="password" autocomplete="current-password">
+<label for="k">Web-API-Schlüssel (für die Anzeige der Erfolge)</label><input id="k" autocomplete="off">
+<button class="go" id="rasave">Speichern und in allen Emulatoren anmelden</button></section>
+
+<section><h2>Eingabe</h2><h3>Tastatur der Shell</h3>
+<label for="kb">Belegung der Bildschirmtastatur</label><select id="kb"><option value="de">Deutsch</option><option value="us">Englisch (US)</option></select></section>
+
+<section id="geraet"><h2>Gerät</h2><h3>Tandem aktualisieren</h3><p id="ver">–</p>
+<label for="src">Update-Quelle (leer = keine)</label><input id="src" type="url" autocomplete="off" autocapitalize="off" placeholder="https://">
+<div class="row"><button id="srcgo">Quelle speichern</button><button id="upcheck">Nach Update suchen</button><button id="upgo" hidden>Jetzt installieren</button></div>
+<h3>Ein und aus</h3>
+<div class="row"><button data-post="action" data-name="suspend">Standby</button><button class="warn" data-post="action" data-name="reboot" data-ask="Den Thor neu starten?">Neustart</button>
+<button class="warn" data-post="action" data-name="poweroff" data-ask="Den Thor ausschalten?">Ausschalten</button></div></section>
+
+<section><h2>Anmeldung</h2><h3>Dieser Browser</h3><p>Bleibt ein Jahr angemeldet, auch nach einem Neustart des Thor.</p>
+<div class="row"><button data-post="logout">Dieses Gerät abmelden</button><button class="warn" data-post="logout-all" data-ask="Wirklich alle Geräte abmelden?">Alle Geräte abmelden</button></div></section>
+</main>
+<div id="msg" role="status"></div>
+<script>
+const $=id=>document.getElementById(id),gb=n=>Math.round(n/1e9)+' GB',esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let hide;const say=t=>{if(!t)return;$('msg').textContent=t;$('msg').classList.add('show');clearTimeout(hide);hide=setTimeout(()=>$('msg').classList.remove('show'),3500)};
+const post=(what,body)=>fetch('api/'+what,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}).then(r=>r.status==401?location.reload():r.json())
+  .then(d=>{say(d&&d.error?d.error:(d&&d.text)||'Erledigt.');return d}).catch(()=>say('Der Thor antwortet nicht.'));
+const stat=(big,small,part)=>`<div class="stat"><b>${esc(big)}</b><span>${esc(small)}</span>${part==null?'':`<div class="bar"><i style="width:${Math.round(part*100)}%"></i></div>`}</div>`;
+function load(){fetch('api/all').then(r=>r.status==401?location.reload():r.json()).then(d=>{
+  $('live').className='on';$('live').firstChild.textContent='verbunden';
+  for(const k of['bt','bb','vol']){const e=$(k),v=d.settings[k];e.disabled=v==null;if(v!=null&&document.activeElement!=e)e.value=v;e.nextElementSibling.textContent=v==null?'–':e.value+' %'}
+  $('st').textContent=d.run?'Läuft gerade: '+d.run:'Kein Spiel läuft';
+  $('stats').innerHTML=stat(d.games,'Spiele in der Bibliothek')+(d.battery?stat(d.battery.level+' %',d.battery.charging?'Akku, lädt':'Akku',d.battery.level/100):'')
+    +d.system.storage.map(s=>stat(gb(s.free)+' frei',s.name+' · '+gb(s.total),1-s.free/s.total)).join('')+stat(d.system.ssid||'offline','WLAN');
+  $('lib').textContent=d.games+' Spiele gefunden. Neu einlesen sucht auch fehlende Cover.';
+  $('ra').textContent=d.config.ra_login?'Angemeldet als '+d.config.ra_user+'.':'Noch nicht angemeldet.'+(d.config.ra_key_set?' Der Web-API-Schlüssel ist hinterlegt.':'');
+  if(document.activeElement!=$('u')&&!$('u').value)$('u').value=d.config.ra_user;if(document.activeElement!=$('kb'))$('kb').value=d.layout;
+  if(document.activeElement!=$('own'))$('own').value=d.config.remote_url||'';
+  $('ver').textContent='Installiert: Version '+d.config.version;if(document.activeElement!=$('src'))$('src').value=d.config.update_url||'';
+  if(document.activeElement!=$('rest'))$('rest').value=d.config.rest_min;
+  if(document.activeElement!=$('theme')){$('theme').replaceChildren(...(d.config.themes||[]).map(t=>new Option(t.name,t.id)));$('theme').value=d.config.theme}
+  $('wl').textContent=d.system.ssid?'Verbunden mit '+d.system.ssid+'.':'Nicht verbunden.';
+  if(document.activeElement!=$('ssid')){const now=$('ssid').value;$('ssid').replaceChildren(...d.system.networks.map(n=>new Option(n.ssid+' · '+n.signal+' %'+(n.known?' · bekannt':''),n.ssid)));if(now)$('ssid').value=now}
+ }).catch(()=>{$('live').className='';$('live').firstChild.textContent='keine Verbindung'})}
+for(const k of['bt','bb','vol']){$(k).oninput=e=>e.target.nextElementSibling.textContent=e.target.value+' %';$(k).onchange=e=>post('set',{key:k,value:+e.target.value})}
+$('rasave').onclick=()=>post('config',{ra_user:$('u').value,ra_password:$('p').value,ra_key:$('k').value}).then(d=>{$('p').value=$('k').value='';if(d&&d.applied)say('Angemeldet in: '+d.applied.join(', '));load()});
+$('wgo').onclick=()=>{say('Verbinde …');post('wifi',{ssid:$('ssid').value,password:$('wp').value}).then(()=>{$('wp').value='';load()})};
+$('kb').onchange=e=>post('layout',{layout:e.target.value});
+$('theme').onchange=e=>post('config',{theme:e.target.value});
+$('rest').onchange=e=>post('config',{rest_min:+e.target.value});
+$('srcgo').onclick=()=>post('config',{update_url:$('src').value}).then(load);
+const up=apply=>post('selfupdate',{apply}).then(d=>{say(d.error||d.text);$('upgo').hidden=apply||!d.new});
+$('upcheck').onclick=()=>up(false);$('upgo').onclick=()=>{say('Installiere …');up(true)};
+$('owngo').onclick=()=>post('config',{remote_url:$('own').value}).then(load);
+$('edengo').onclick=()=>{say('Lade … das kann eine Minute dauern.');post('update',{id:$('eden').value}).then(load)};
+for(const b of document.querySelectorAll('[data-post]'))b.onclick=()=>{if(b.dataset.ask&&!confirm(b.dataset.ask))return;post(b.dataset.post,{name:b.dataset.name}).then(load)};
+load();setInterval(load,8000);
+</script>
