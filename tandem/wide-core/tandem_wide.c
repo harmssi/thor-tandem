@@ -343,6 +343,11 @@ void tandemWideLoad(struct mCore* core, const char* systemDir) {
         tandemWideUnload();
         return;
     }
+    if (!gba) {
+        /* a Super Game Boy border would make SGB-enhanced games 256x224 with a frame around: keep the game's own picture (as gba-duo) */
+        mCoreConfigSetIntValue(&core->config, "sgb.borders", 0);
+        core->reloadConfigOption(core, "sgb.borders", NULL);
+    }
     g_state.core = core;
     g_pending = g_hasWide = true; /* until the script says otherwise, so the first geometry is already wide */
     g_on = read_switch();
