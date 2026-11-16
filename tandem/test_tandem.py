@@ -122,6 +122,11 @@ class Launch(unittest.TestCase):
         self.assertEqual((wide[4], wide[5], on), (str(tandem.RA_WIDE_CORE), 'rom.gba', False))
         self.assertEqual(sorted(p.name for p in tandem.RA_WIDE.iterdir()), ['game.lua', 'names.lua', 'on'])
         self.assertEqual((tandem.RA_WIDE / 'on').read_text(), '0')
+        saves = cores.parent / 'saves'  # a Game Boy game moves from Gambatte to the wide mGBA and keeps its save
+        touch(saves / 'Gambatte/rom.srm', 'save')
+        gb = tandem.wide_core(cmd[:4] + [str(cores / 'gambatte_libretro.so'), 'roms/rom.gb'], 'w-wide', True)
+        self.assertEqual((gb[0][4], gb[1], (saves / 'mGBA/rom.srm').read_text()), (str(tandem.RA_WIDE_CORE), True, 'save'))
+        self.assertTrue((saves / 'mGBA/rom.srm').is_symlink())
         touch(folder / 'game.lua', 'function frame(view) end\n')  # a game.lua without wide(): the plain core
         self.assertEqual(tandem.wide_core(cmd, 'w-wide', True), (cmd, None))
         self.assertEqual(tandem.wide_core(cmd[:4] + [str(cores / 'gpsp_libretro.so'), 'rom.gba'], 'w-wide', True)[1], None)

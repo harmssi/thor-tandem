@@ -14,6 +14,8 @@
 #include <mgba/internal/gba/gba.h>
 #include <mgba/internal/gba/io.h>
 #include <mgba/internal/gba/renderers/video-software.h>
+#include <mgba/internal/gb/gb.h>
+#include <mgba/internal/gb/renderers/software.h>
 
 #include "bus.h"
 #include "script.h"
@@ -48,7 +50,8 @@ static unsigned g_poll;
 /* ---- bus.h backend: script.c's mem.* and wide.c go through these ---------------- */
 
 int gbaduo_bus_platform(void) {
-    return g_state.core ? GBADUO_BUS_GBA : GBADUO_BUS_NONE;
+    if (!g_state.core) return GBADUO_BUS_NONE;
+    return g_state.core->platform(g_state.core) == mPLATFORM_GBA ? GBADUO_BUS_GBA : GBADUO_BUS_GB;
 }
 
 uint8_t gbaduo_bus_read8(uint32_t address) {
@@ -158,6 +161,117 @@ static void paint_wide_margins(void) {
     g_state.wideBlank = false;
 }
 
+/* ---- GB/GBC (as core.c's paint_gb_margins) ------------------------------------------
+ * The background map is 256 px wide, so each line is continued past the 160 columns from the state the
+ * renderer kept for that line's ends (gbaduo/mgba-gb-wide.diff). With camX every stage column seen valid is
+ * remembered and the margins come from that memory. All in the core's own RGB565, straight into g_out. */
+#define GB_HIST_W 1024
+static mColor g_gbHist[GB_VIDEO_VERTICAL_PIXELS][GB_HIST_W];
+static int32_t g_gbHistCol[GB_HIST_W];
+static int g_gbHistScene = INT32_MIN, g_gbHistCam = -1;
+static int32_t g_gbHistMin = INT32_MAX; /* the leftmost stage column seen: left of it repeats it */
+
+static void gb_hist_reset(void) {
+    for (int i = 0; i < GB_HIST_W; i++) g_gbHistCol[i] = INT32_MIN;
+    g_gbHistMin = INT32_MAX;
+}
+
+static void blank_gb_margins(void) {
+    memset(g_out, 0, (size_t) g_state.videoWidth * g_state.videoHeight * sizeof(mColor));
+    g_state.wideBlank = true;
+}
+
+static void paint_gb_margins(const mColor* raw, size_t stride) {
+    int width = (int) g_state.videoWidth, frameW = (int) g_state.frameW, frameH = (int) g_state.frameH;
+    struct GB* gb = g_state.core->board;
+    struct GBVideoSoftwareRenderer* sw = (struct GBVideoSoftwareRenderer*) gb->video.renderer;
+    struct WideWorld worldData;
+    const struct WideWorld* world = &worldData;
+    bool have = sw && gbaduo_game_enabled() && gbaduo_game_wide(width, (int) g_state.wideLeft, g_state.wideMatch, &worldData) && worldData.affine;
+    if (!have) {
+        const char* error = gbaduo_game_last_error();
+        if (error[0] && g_state.wideErrorLogCountdown-- <= 0) {
+            g_state.wideErrorLogCountdown = 300;
+            LOGE("game.lua: %s", error);
+        }
+        g_state.wideMatch = 0.0f;
+        wide_gate_step(&g_state.wideGate, false, 0.0f);
+        if (!g_state.wideBlank) blank_gb_margins();
+        return;
+    }
+    /* the pack wants the frame elsewhere */
+    if (world->frameLeft >= 0 && world->frameLeft + frameW <= width && (unsigned) world->frameLeft != g_state.wideLeft) {
+        g_state.wideLeft = (unsigned) world->frameLeft;
+        blank_gb_margins();
+    }
+    int left = (int) g_state.wideLeft, right = width - frameW - left;
+
+    mColor want[8];
+    int same = 0, counted = 0;
+    for (int y = world->blankTop; y < frameH - world->blankBottom; y++) {
+        counted++;
+        const mColor* line = raw + (size_t) y * stride;
+        GBVideoSoftwareRendererWideRow(sw, y, 0, 8, want);
+        for (int k = 0; k < 8; k++) same += line[k] == want[k];
+        GBVideoSoftwareRendererWideRow(sw, y, frameW - 8, 8, want);
+        for (int k = 0; k < 8; k++) same += line[frameW - 8 + k] == want[k];
+    }
+    /* sprites sit on top of the edge columns now and then, so the check is looser than the world views' */
+    g_state.wideMatch = counted ? (float) same / (float) (counted * 16) : 0.0f;
+    if (!wide_gate_step(&g_state.wideGate, true, g_state.wideMatch > 0.6f ? 1.0f : 0.0f)) {
+        if (!g_state.wideBlank) blank_gb_margins();
+        return;
+    }
+
+    bool hist = world->camX >= 0;
+    if (hist) {
+        if (world->scene != g_gbHistScene || world->camX + 512 < g_gbHistCam) gb_hist_reset();
+        g_gbHistScene = world->scene;
+        g_gbHistCam = world->camX;
+        /* remember the valid stretch of the ring, background only */
+        int from = world->minX > -left - 256 ? world->minX : -left - 256;
+        int to = world->maxX < frameW + 256 ? world->maxX : frameW + 256;
+        if (to - from > GB_HIST_W) from = to - GB_HIST_W;
+        static mColor row[GB_HIST_W];
+        for (int y = 0; y < frameH && to > from; y++) {
+            GBVideoSoftwareRendererWideRow(sw, y, from, to - from, row);
+            for (int x = from; x < to; x++) g_gbHist[y][(world->camX + x) & (GB_HIST_W - 1)] = row[x - from];
+        }
+        for (int x = from; x < to; x++) {
+            int ax = world->camX + x;
+            g_gbHistCol[ax & (GB_HIST_W - 1)] = ax;
+            if (ax < g_gbHistMin) g_gbHistMin = ax;
+        }
+    }
+
+    for (int y = 0; y < frameH; y++) {
+        mColor* line = g_out + (size_t) y * (size_t) width;
+        const mColor* game = raw + (size_t) y * stride;
+        if (y < world->blankTop || y >= frameH - world->blankBottom) {
+            mColor l = world->barFill ? game[0] : 0, r = world->barFill ? game[frameW - 1] : 0;
+            for (int c = 0; c < left; c++) line[c] = l;
+            for (int c = 0; c < right; c++) line[left + frameW + c] = r;
+        } else if (hist) {
+            for (int c = 0; c < left + right; c++) {
+                int x = c < left ? c - left : frameW + (c - left);
+                int ax = world->camX + x;
+                if (ax < g_gbHistMin && g_gbHistMin != INT32_MAX && g_gbHistMin <= 0) ax = g_gbHistMin; /* before the stage's start */
+                int slot = ax & (GB_HIST_W - 1);
+                line[c < left ? c : frameW + c] = g_gbHistCol[slot] == ax ? g_gbHist[y][slot] : 0;
+            }
+        } else {
+            if (world->blankLeft) memset(line, 0, (size_t) left * sizeof(mColor));
+            else GBVideoSoftwareRendererWideRow(sw, y, -left, left, line);
+            if (world->blankRight) memset(line + left + frameW, 0, (size_t) right * sizeof(mColor));
+            else GBVideoSoftwareRendererWideRow(sw, y, frameW, right, line + left + frameW);
+            /* columns the game hasn't loaded (yet) stay black */
+            for (int c = 0; c < left; c++) if (c - left < world->minX || c - left >= world->maxX) line[c] = 0;
+            for (int c = 0; c < right; c++) if (frameW + c < world->minX || frameW + c >= world->maxX) line[left + frameW + c] = 0;
+        }
+    }
+    g_state.wideBlank = false;
+}
+
 /* ---- the switch and the script --------------------------------------------------- */
 
 static void set_wide(bool on) {
@@ -210,7 +324,8 @@ static void load_script(void) {
 
 void tandemWideLoad(struct mCore* core, const char* systemDir) {
     tandemWideUnload();
-    if (!systemDir || core->platform(core) != mPLATFORM_GBA) return;
+    if (!systemDir) return;
+    bool gba = core->platform(core) == mPLATFORM_GBA;
     snprintf(g_dir, sizeof(g_dir), "%s/tandem-wide", systemDir);
     char path[PATH_MAX + 16];
     snprintf(path, sizeof(path), "%s/game.lua", g_dir);
@@ -218,12 +333,12 @@ void tandemWideLoad(struct mCore* core, const char* systemDir) {
     if (!f) return; /* no pack with a game.lua: the plain core */
     fclose(f);
 
-    g_state.videoWidth = TANDEM_WIDE_W;
-    g_state.videoHeight = g_state.frameH = WIDE_FRAME_H;
-    g_state.frameW = WIDE_FRAME_W;
-    g_state.wideLeft = (TANDEM_WIDE_W - WIDE_FRAME_W) / 2;
-    g_state.videoBuffer = calloc((size_t) TANDEM_WIDE_W * WIDE_FRAME_H, sizeof(uint32_t));
-    g_out = calloc((size_t) TANDEM_WIDE_W * WIDE_FRAME_H, sizeof(uint16_t));
+    g_state.videoWidth = gba ? TANDEM_WIDE_W : TANDEM_WIDE_GB_W;
+    g_state.videoHeight = g_state.frameH = gba ? WIDE_FRAME_H : GB_VIDEO_VERTICAL_PIXELS;
+    g_state.frameW = gba ? WIDE_FRAME_W : GB_VIDEO_HORIZONTAL_PIXELS;
+    g_state.wideLeft = (g_state.videoWidth - g_state.frameW) / 2;
+    g_state.videoBuffer = calloc((size_t) g_state.videoWidth * g_state.videoHeight, sizeof(uint32_t));
+    g_out = calloc((size_t) g_state.videoWidth * g_state.videoHeight, sizeof(uint16_t));
     if (!g_state.videoBuffer || !g_out) {
         tandemWideUnload();
         return;
@@ -244,7 +359,7 @@ void tandemWideUnload(void) {
 }
 
 unsigned tandemWideWidth(unsigned width) {
-    return g_state.core && g_on && width == WIDE_FRAME_W ? TANDEM_WIDE_W : width;
+    return g_state.core && g_on && width == g_state.frameW ? g_state.videoWidth : width;
 }
 
 /* RGB565 as this core draws it (mColorFrom555: red in the top bits) to the GBA's BGR555 and back. */
@@ -270,11 +385,19 @@ const mColor* tandemWideFrame(const mColor* raw, const mColor* shown, size_t str
     if (++g_poll % SWITCH_POLL_FRAMES == 0) {
         set_wide(g_hasWide && read_switch());
     }
-    if (!g_on || *width != WIDE_FRAME_W || height != WIDE_FRAME_H) return shown;
+    if (!g_on || *width != g_state.frameW || height != g_state.frameH) return shown; /* e.g. a Super Game Boy border */
 
-    *width = TANDEM_WIDE_W;
-    *pitch = TANDEM_WIDE_W * sizeof(mColor);
+    *width = g_state.videoWidth;
+    *pitch = g_state.videoWidth * sizeof(mColor);
     if (!raw) return g_out;
+
+    if (g_state.frameW == GB_VIDEO_HORIZONTAL_PIXELS) {
+        paint_gb_margins(raw, stride);
+        for (unsigned y = 0; y < g_state.frameH; y++) {
+            memcpy(g_out + (size_t) y * g_state.videoWidth + g_state.wideLeft, shown + y * stride, g_state.frameW * sizeof(mColor));
+        }
+        return g_out;
+    }
 
     unsigned left = g_state.wideLeft;
     for (unsigned y = 0; y < WIDE_FRAME_H; y++) {

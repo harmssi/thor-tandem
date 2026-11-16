@@ -18,6 +18,7 @@ cd /work
 [ -d mgba ] || git clone -q https://github.com/libretro/mgba.git mgba
 git -C mgba checkout -q -f $MGBA && git -C mgba clean -fdq
 git -C mgba apply /src/mgba-libretro.diff
+sed "s/color_t\* out/mColor* out/" /src/gbaduo/mgba-gb-wide.diff | git -C mgba apply  # this tree calls the colour type mColor
 cp /src/tandem_wide.[ch] /src/gbaduo/*.[ch] mgba/src/platform/libretro/  # CMake takes every .c in that folder
 
 if [ ! -f $LUA/src/liblua.a ]; then

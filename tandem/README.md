@@ -124,16 +124,18 @@ mGBA). Ablage: je Paket ein Ordner in `~/.config/tandem/packs/<name>/` (Zip vorh
   `:pressed`; CSS wie beschrieben: Selektoren, `var()`, `@font-face`, `@media`, `calc()/min()/max()/clamp()`, Flexbox,
   Grid, `stack`, absolute Lage, Hintergrundbilder und `linear-gradient`, Rahmen, Radien, harte Schatten, Deckkraft,
   Textschatten; `gfx.decode/tilemap/sprite/layers`, `lz77`, `pack.require`, `log`.
-- **Breitbild (GBA):** Hat das Paket ein `game.lua` mit `wide()` und ist der Breitbild-Kern installiert
+- **Breitbild (GBA, GB, GBC):** Hat das Paket ein `game.lua` mit `wide()` und ist der Breitbild-Kern installiert
   (`wide-core/`, eigener Bau; liegt als `cores/tandem-wide/mgba_libretro.so`), startet das Spiel mit diesem Kern statt `mgba_libretro.so`. Der Dienst legt dazu `game.lua`
   und die Lua-Module des Pakets nach `…/retroarch/system/tandem-wide/` und den Schalter in die Datei `on` (`1`/`0`); der
   Kern liest ihn zweimal je Sekunde. Die reservierte Aktion `wideView` (`on`, `off`, `toggle`) schaltet über
   `POST /api/wide`, die Wahl bleibt je Spiel in `state.json` (anfangs aus, wie in der App). `_wide` und `_wideLabel`
-  (`ON`, `OFF`, `N/A` ohne `wide()`) stimmen. Bild 284 × 160 (16:9); die Ränder zeigen sich nur, solange die Vorhersage
+  (`ON`, `OFF`, `N/A` ohne `wide()`) stimmen. Bild 284 × 160 (16:9), Game Boy 256 × 144; die Ränder zeigen sich nur, solange die Vorhersage
   der 16 Randspalten zu 85 % stimmt, sonst bleiben sie schwarz (Kampf, Menü). `frame()` läuft, Schreiben bleibt zu.
   Spielstände, Schnellspeicher und Kern-Optionen sind dieselben wie beim normalen mGBA-Kern (gleicher Name, gleicher
-  Quellstand). Ohne Paket, ohne `wide()` oder ohne den Kern läuft alles wie bisher.
-- **Nicht unterstützt:** Breitbild für GB/GBC (dort läuft Gambatte), Schreiben in
+  Quellstand). Game-Boy-Spiele mit Breitbild-Paket laufen dafür in diesem mGBA statt in Gambatte; ihr bisheriger
+  Spielstand wird als Verknüpfung übernommen (eine Datei für beide Kerne). Ohne Paket, ohne `wide()` oder ohne den Kern
+  läuft alles wie bisher.
+- **Nicht unterstützt:** Schreiben in
   den Spielspeicher, `values` im Manifest ohne Skript, `transition` (Wechsel sofort), `transform`, weiche Schatten
   (werden hart gezeichnet), `text.font` der alten Form. Geisterbereiche des GB (Echo-RAM, Modul-RAM) lesen sich als 0.
   Ohne eigene Schrift nimmt ein Paket Qts Standardschrift statt Roboto.

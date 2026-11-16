@@ -3,7 +3,7 @@
 Ein libretro-Kern für RetroArch: der mGBA-Kern von libretro (derselbe Quellstand wie der Kern aus RetroArchs
 Online-Updater, daher dieselben Spielstände, Schnellspeicher und Optionen), ergänzt um die „Wide view“ aus
 [gba-duo](https://github.com/khumam/gba-duo). Neben dem 240 × 160 großen Bild eines GBA-Spiels zeigt er links und rechts
-mehr von der Spielwelt (284 × 160, also 16:9), so wie es das `game.lua` eines Begleiter-Pakets in `wide(view)` beschreibt
+mehr von der Spielwelt (284 × 160, also 16:9; Game Boy und Game Boy Color: 256 × 144 statt 160 × 144), so wie es das `game.lua` eines Begleiter-Pakets in `wide(view)` beschreibt
 (Format: `docs-packs/game-script.md` in gba-duo).
 
 ## Was der Kern liest
@@ -15,7 +15,7 @@ Im Systemordner von RetroArch (`…/retroarch/system/tandem-wide/`), von Tandem 
 | `game.lua` | das Skript des Pakets; `pack.require("name")` lädt `name.lua` aus demselben Ordner |
 | `on` | `1` = Breitbild an, sonst aus; wird alle 30 Bilder neu gelesen |
 
-Fehlt `game.lua`, ist das Spiel kein GBA-Spiel oder hat das Skript kein `wide()`, verhält sich der Kern wie der normale.
+Fehlt `game.lua` oder hat das Skript kein `wide()`, verhält sich der Kern wie der normale.
 
 ## Wie es arbeitet
 
@@ -27,7 +27,7 @@ schreiben. Figuren stehen nicht in den Rändern (sie gehören nicht zur Karte).
 
 Unterschiede zur Android-App: feste Breite 284 statt „bis 400 nach Bildschirm“; der Kern zeichnet in RGB565, die Ränder
 werden dafür umgerechnet; Farbkorrektur und Zwischenbild-Mischung des Kerns wirken nur auf das Spielbild, nicht auf die
-Ränder; kein Breitbild für GB/GBC; kein Schreiben in den Spielspeicher.
+Ränder; kein Schreiben in den Spielspeicher.
 
 ## Bauen
 
@@ -41,6 +41,9 @@ libretro/mgba (fester Commit) und Lua 5.4.7 (Prüfsumme) und wendet an:
 - `tandem_wide.c`, `tandem_wide.h`: Speicherzugriff für das Skript, Ränder, Schalter (nach gba-duos `core.c`)
 - `gbaduo/`: unverändert aus gba-duo (`app/src/main/cpp`, Commit a5d648d): `wide.c`, `wide_affine.c`, `script.c`
   (Lua-Sandbox), `memwrite.c` und ihre Header
+- `gbaduo/mgba-gb-wide.diff`: gba-duos Änderung an mGBAs Game-Boy-Renderer (`patches-mgba-gb-wide.diff`): er merkt sich je
+  Zeile, wie ihre Enden gezeichnet wurden, damit der Kern die 256 px breite Hintergrundkarte über die 160 Spalten hinaus
+  fortsetzen kann (`{ affine = 1 }`, mit `camX` aus dem Gedächtnis schon gesehener Spalten, `frameLeft` verschiebt das Spielbild)
 - `lua-pattern-hook.diff`: gba-duos kleine Änderung an Luas `lstrlib.c` (Zeitgrenze auch in Mustern)
 
 ## Lizenz

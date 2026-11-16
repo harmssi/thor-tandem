@@ -181,13 +181,19 @@ def wide_core(cmd, pack, on):
     try:
         at = cmd.index('-L') + 1
         script = folder / Path(str(json.loads((folder / 'manifest.json').read_text(encoding='utf-8'))['gameScript'])).name
-        if cmd[at] != str(RA_CORES[0] / 'mgba_libretro.so') or not RA_WIDE_CORE.is_file(): return cmd, None
+        stock = Path(cmd[at]).name  # Game Boy games usually start in Gambatte; their wide view needs this mGBA
+        if stock not in ('mgba_libretro.so', 'gambatte_libretro.so', 'sameboy_libretro.so') or not RA_WIDE_CORE.is_file(): return cmd, None
         if not re.search(r'^function\s+wide\s*\(', script.read_text(encoding='utf-8'), re.M): return cmd, None
         shutil.rmtree(RA_WIDE, ignore_errors=True)
         RA_WIDE.mkdir(parents=True)
         for lua in folder.glob('*.lua'): shutil.copy(lua, RA_WIDE)  # pack.require looks beside the script
         shutil.copy(script, RA_WIDE / 'game.lua')
         (RA_WIDE / 'on').write_text('1' if on else '0')
+        if stock != 'mgba_libretro.so':  # RetroArch keeps saves per core: one file for both, so no progress is left behind
+            saves = RA_CORES[0].parent / 'saves'
+            old, new = (saves / {'g': 'Gambatte', 's': 'SameBoy'}[stock[0]] / (Path(cmd[-1]).stem + '.srm')), saves / 'mGBA' / (Path(cmd[-1]).stem + '.srm')
+            if old.is_file() and not new.exists() and not new.is_symlink():
+                new.parent.mkdir(parents=True, exist_ok=True); new.symlink_to(old)
     except (OSError, ValueError, KeyError): return cmd, None
     return cmd[:at] + [str(RA_WIDE_CORE)] + cmd[at + 1:], bool(on)
 
@@ -433,7 +439,7 @@ class Tandem:
                 if game['s'] == 'steam': self.steam_show = time.time() + 300
             if not label: return {'error': cmd}
             pack, wide = find_pack(game) if label == 'RetroArch' else None, None  # the native bottom screen runs it (ui/decks/pack.py)
-            if pack and game['s'] == 'gba': cmd, wide = wide_core(cmd, pack, self.saved.get('wide', {}).get(gid, False))
+            if pack: cmd, wide = wide_core(cmd, pack, self.saved.get('wide', {}).get(gid, False))
             if not self.dry: self.home_window = focused_window()
             with open(STATE / 'launch.log', 'ab') as log:  # the child keeps its own copy of the handle
                 log.write(f'\n== {time.strftime("%F %T")} {game["t"]}: {cmd}\n'.encode()); log.flush()

@@ -1,0 +1,123 @@
+diff --git a/include/mgba/internal/gb/renderers/software.h b/include/mgba/internal/gb/renderers/software.h
+index c61f227..91a3694 100644
+--- a/include/mgba/internal/gb/renderers/software.h
++++ b/include/mgba/internal/gb/renderers/software.h
+@@ -63,8 +63,22 @@ struct GBVideoSoftwareRenderer {
+ 	uint32_t sgbBorderMask[18];
+ 
+ 	uint8_t lastHighlightAmount;
++
++	/* GBADuo wide view: each line's background state at its left and right end, so the line can be
++	 * continued past the 160 columns (GBVideoSoftwareRendererWideRow). */
++	struct GBWideLineState {
++		int16_t sx, sy;      /* map pixel of screen x 0 on this line */
++		uint8_t lcdc;
++		uint8_t lookup[4];
++		bool bg;             /* the background (or the window) was drawn */
++		bool window;         /* the window covers this end of the line */
++		int16_t winSx, winSy;
++	} wideLine[GB_VIDEO_VERTICAL_PIXELS][2];
+ };
+ 
++/** GBADuo: [count] colours of line [y] from screen x [x] (may be < 0 or >= 160), background/window only. */
++void GBVideoSoftwareRendererWideRow(struct GBVideoSoftwareRenderer* renderer, int y, int x, int count, color_t* out);
++
+ void GBVideoSoftwareRendererCreate(struct GBVideoSoftwareRenderer*);
+ 
+ CXX_GUARD_END
+diff --git a/src/gb/renderers/software.c b/src/gb/renderers/software.c
+index a5e4116..048dd30 100644
+--- a/src/gb/renderers/software.c
++++ b/src/gb/renderers/software.c
+@@ -624,6 +624,27 @@ static void GBVideoSoftwareRendererDrawRange(struct GBVideoRenderer* renderer, i
+ 		memset(&softwareRenderer->row[startX], 0, (endX - startX) * sizeof(softwareRenderer->row[0]));
+ 	}
+ 
++	if (startX == 0 || endX >= GB_VIDEO_HORIZONTAL_PIXELS) {
++		/* GBADuo wide view: remember how this end of the line was drawn */
++		int wy = softwareRenderer->wy + softwareRenderer->currentWy;
++		int wx = softwareRenderer->wx + softwareRenderer->currentWx - 7;
++		bool win = GBRegisterLCDCIsWindow(softwareRenderer->lcdc) && softwareRenderer->hasWindow && !softwareRenderer->d.disableWIN;
++		int side;
++		for (side = 0; side < 2; ++side) {
++			if ((side == 0 && startX != 0) || (side == 1 && endX < GB_VIDEO_HORIZONTAL_PIXELS)) {
++				continue;
++			}
++			struct GBWideLineState* st = &softwareRenderer->wideLine[y][side];
++			st->sx = softwareRenderer->scx - softwareRenderer->offsetScx;
++			st->sy = softwareRenderer->scy + y - softwareRenderer->offsetScy;
++			st->lcdc = softwareRenderer->lcdc;
++			memcpy(st->lookup, softwareRenderer->lookup, 4);
++			st->bg = (GBRegisterLCDCIsBgEnable(softwareRenderer->lcdc) || softwareRenderer->model >= GB_MODEL_CGB) && !softwareRenderer->d.disableBG;
++			st->window = win && (side == 1 ? wx < GB_VIDEO_HORIZONTAL_PIXELS : wx <= 0);
++			st->winSx = -wx - softwareRenderer->offsetWx;
++			st->winSy = y - wy - softwareRenderer->offsetWy;
++		}
++	}
+ 	if (startX == 0) {
+ 		_cleanOAM(softwareRenderer, y);
+ 	}
+@@ -1149,3 +1170,63 @@ static void GBVideoSoftwareRendererPutPixels(struct GBVideoRenderer* renderer, s
+ 		memmove(&softwareRenderer->outputBuffer[softwareRenderer->outputBufferStride * i], &colorPixels[stride * i], GB_VIDEO_HORIZONTAL_PIXELS * BYTES_PER_PIXEL);
+ 	}
+ }
++
++void GBVideoSoftwareRendererWideRow(struct GBVideoSoftwareRenderer* renderer, int y, int x, int count, color_t* out) {
++	if (y < 0 || y >= GB_VIDEO_VERTICAL_PIXELS) {
++		return;
++	}
++	const struct GBWideLineState* st = &renderer->wideLine[y][x < 0 ? 0 : 1];
++	if (!st->bg) {
++		int i;
++		for (i = 0; i < count; ++i) {
++			out[i] = renderer->palette[PAL_BG | st->lookup[0]];
++		}
++		return;
++	}
++	uint8_t* maps = &renderer->d.vram[GB_BASE_MAP];
++	int sx = st->sx, sy = st->sy;
++	if (st->window) {
++		if (GBRegisterLCDCIsWindowTileMap(st->lcdc)) {
++			maps += GB_SIZE_MAP;
++		}
++		sx = st->winSx;
++		sy = st->winSy;
++	} else if (GBRegisterLCDCIsTileMap(st->lcdc)) {
++		maps += GB_SIZE_MAP;
++	}
++	uint8_t* attr = &maps[GB_SIZE_VRAM_BANK0];
++	int topY = ((sy >> 3) & 0x1F) * 0x20;
++	int i;
++	for (i = 0; i < count; ++i) {
++		int px = x + i + sx;
++		int topX = (px >> 3) & 0x1F;
++		int bottomX = 7 - (px & 7);
++		int localY = sy & 7;
++		uint8_t* data = renderer->d.vram;
++		int bgTile;
++		if (GBRegisterLCDCIsTileData(st->lcdc)) {
++			bgTile = maps[topX + topY];
++		} else {
++			data += 0x1000;
++			bgTile = ((int8_t*) maps)[topX + topY];
++		}
++		int p = PAL_BG;
++		if (renderer->model >= GB_MODEL_CGB) {
++			GBObjAttributes attrs = attr[topX + topY];
++			p |= GBObjAttributesGetCGBPalette(attrs) * 4;
++			if (GBObjAttributesIsBank(attrs)) {
++				data += GB_SIZE_VRAM_BANK0;
++			}
++			if (GBObjAttributesIsYFlip(attrs)) {
++				localY = 7 - localY;
++			}
++			if (GBObjAttributesIsXFlip(attrs)) {
++				bottomX = 7 - bottomX;
++			}
++		}
++		uint8_t lo = data[(bgTile * 8 + localY) * 2] >> bottomX;
++		uint8_t hi = data[(bgTile * 8 + localY) * 2 + 1] >> bottomX;
++		int index = ((hi & 1) << 1) | (lo & 1);
++		out[i] = renderer->palette[p | st->lookup[index]];
++	}
++}
