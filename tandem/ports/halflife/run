@@ -1,0 +1,47 @@
+#!/bin/bash
+# run <valve|gearbox|bshift>: starts Half-Life, Opposing Force or Blue Shift (Xash3D FWGS from dist/, see build.sh).
+# The game files are the player's own Steam copy and are only read: the first of $HALFLIFE_DATA, ~/Half-Life, Steam's
+# library in the home folder, or a "steamapps/common/Half-Life" on a card (looked for once, then remembered).
+# Settings and saved games go to data/ next to this script.
+set -eu
+HERE="$(cd "$(dirname "$0")" && pwd)"
+GAME="${1:-valve}"
+BASE="$HERE/data"
+mkdir -p "$BASE/$GAME/cl_dlls" "$BASE/$GAME/dlls"
+
+has() { [ -f "$1/valve/liblist.gam" ] && [ -f "$1/$GAME/liblist.gam" ]; }
+DATA="${HALFLIFE_DATA:-$(cat "$BASE/data-path" 2>/dev/null || true)}"
+if ! has "$DATA"; then
+    DATA=
+    for d in "$HOME/Half-Life" "$HOME/.local/share/Steam/steamapps/common/Half-Life" \
+             $(find /run/media/"$USER" -maxdepth 9 -type d -path '*/steamapps/common/Half-Life' 2>/dev/null); do
+        if has "$d"; then DATA="$d"; echo "$d" > "$BASE/data-path"; break; fi
+    done
+fi
+[ -n "$DATA" ] || { echo "Half-Life: no game files for '$GAME' found (set HALFLIFE_DATA or copy Steam's Half-Life folder to ~/Half-Life)" >&2; exit 1; }
+
+# The engine looks for the game's libraries inside the game folder, under the names of its liblist.gam.
+SERVER="$(sed -n 's/^gamedll_linux *"dlls\/\(.*\)\.so".*/\1/p' "$DATA/$GAME/liblist.gam" | tr -d '\r' | head -1)"
+ln -sfn "$HERE/dist/$GAME/client.so" "$BASE/$GAME/cl_dlls/client_arm64.so"
+ln -sfn "$HERE/dist/$GAME/server.so" "$BASE/$GAME/dlls/${SERVER:-hl}_arm64.so"
+
+DECK="${TANDEM_DECK_SOCKET:+1}"  # started by Tandem: the HUD is on the bottom screen
+{
+    echo "// written on every launch, do not edit: your own commands go into thor_user.cfg"
+    echo "thor_deck ${DECK:-0}"
+    echo "touch_enable 0"
+    if [ ! -f "$BASE/$GAME/config.cfg" ]; then  # first start: the pad layout of the port, and no censored German version
+        echo "joy_loadpreset thor"
+        printf 'violence_hblood 1\nviolence_hgibs 1\nviolence_ablood 1\nviolence_agibs 1\n'
+    fi
+    echo "exec thor_user.cfg"
+} > "$BASE/$GAME/thor.cfg"
+[ -f "$BASE/$GAME/thor_user.cfg" ] || echo "// your own extra commands, executed on every launch" > "$BASE/$GAME/thor_user.cfg"
+
+export XASH3D_BASEDIR="$BASE" XASH3D_RODIR="$DATA" XASH3D_EXTRAS_PAK1="$HERE/dist/extras.pk3" THOR_DECK="${DECK:-0}"
+export LD_LIBRARY_PATH="$HERE/dist${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+# What the deck needs to know beyond the game's state (weapon sprites, saved games). shortcut: a path with a quote or
+# backslash in it breaks this line, escape it when someone has one.
+export TANDEM_DECK_HELLO="{\"game\":\"$GAME\",\"data\":\"$DATA\",\"home\":\"$BASE\"}"
+cd "$HERE/dist"
+exec ./xash3d -game "$GAME" -fullscreen +exec thor.cfg

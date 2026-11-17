@@ -27,10 +27,23 @@ button.go{background:var(--violet);border-color:var(--violet);color:#0b0718;font
 .bar{height:6px;border-radius:3px;background:var(--bg2);overflow:hidden;margin-top:8px}.bar i{display:block;height:100%;background:var(--grad)}
 #msg{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);max-width:min(92vw,520px);padding:12px 18px;border-radius:999px;background:var(--panel2);border:1px solid var(--violet);box-shadow:0 12px 40px #0009;opacity:0;pointer-events:none;transition:opacity .2s}
 #msg.show{opacity:1}
+.check{display:flex;align-items:center;gap:12px;margin:14px 0 0;color:var(--text);font-size:15px}.check input{width:22px;min-height:22px;accent-color:var(--violet)}
+.swatches{display:flex;flex-wrap:wrap;gap:10px;margin-top:6px}.swatches button{width:40px;min-height:40px;border-radius:50%;padding:0;border:2px solid var(--line)}.swatches button[aria-pressed=true]{border-color:var(--text);box-shadow:0 0 0 3px var(--bg),0 0 0 5px var(--text)}
+table{width:100%;border-collapse:collapse;font-size:14px}td{padding:8px 0;border-top:1px solid var(--line);vertical-align:top}td:last-child{text-align:right;white-space:nowrap;padding-left:12px;color:var(--text2)}td small{display:block;color:var(--text3);font-size:12px}th{text-align:left;padding:16px 0 4px;font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--text3);font-weight:600}
 .login{max-width:420px;margin:12vh auto 0;padding:0 16px}.login b{color:var(--coral)}
 @media(max-width:640px){header{gap:14px}.mark{letter-spacing:.2em}#live span{display:none}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}#msg{transition:none}}
 </style>
+<script>
+// English page when Tandem's language is English: the native front end's table (ui/en.json, see ui/lang.py), applied to every text the page shows
+if('__LANG__'=='en'){const E=__EN__,R=E.rules.map(([p,t])=>[new RegExp('^(?:'+p+')$'),t]),U={};for(const k in E.text)U[k.toUpperCase()]=E.text[k].toUpperCase();
+ const tr=s=>{if(s in E.text)return E.text[s];const c=s.trim();if(c!=s)return c?s.slice(0,s.length-s.trimStart().length)+tr(c)+s.slice(s.trimEnd().length):s;if(s in U)return U[s];
+  for(const[r,t]of R){const m=s.match(r);if(m)return t.replace(/\{(\d)\}/g,(_,n)=>tr(m[n]||''))}return s};
+ const walk=n=>{if(n.nodeType==3){const t=tr(n.data);if(t!=n.data)n.data=t;return}if(n.nodeType!=1||n.tagName=='SCRIPT'||n.tagName=='STYLE')return;
+  for(const a of['aria-label','title','data-ask']){const v=n.getAttribute(a),t=v&&tr(v);if(t&&t!=v)n.setAttribute(a,t)}n.childNodes.forEach(walk)};
+ document.documentElement.lang='en';addEventListener('DOMContentLoaded',()=>{walk(document.body);  // later texts (load(), say()) too; translated ones do not match again, so this settles
+  new MutationObserver(ms=>ms.forEach(m=>m.type=='characterData'?walk(m.target):m.addedNodes.forEach(walk))).observe(document.body,{subtree:true,childList:true,characterData:true})})}
+</script>
 <!--SPLIT-->
 <header><div class="mark">TORAVO<i>/</i>TANDEM</div></header>
 <div class="login"><section><h2>Einrichtung</h2><h3>Mit dem Thor verbinden</h3>
@@ -38,22 +51,30 @@ button.go{background:var(--violet);border-color:var(--violet);color:#0b0718;font
 <form method="post"><label for="pin">PIN vom Thor</label><input id="pin" name="pin" inputmode="numeric" autocomplete="off" required autofocus><button class="go">Anmelden</button></form></section></div>
 <!--SPLIT-->
 <header><div class="mark">TORAVO<i>/</i>TANDEM</div>
-<nav aria-label="Bereiche"><a href="#uebersicht">Übersicht</a><a href="#bild">Bild &amp; Ton</a><a href="#spiele">Spiele</a><a href="#netz">Netzwerk</a><a href="#konten">Konten</a><a href="#geraet">Gerät</a></nav>
+<nav aria-label="Bereiche"><a href="#bild">Bildschirme &amp; Ton</a><a href="#controller">Controller</a><a href="#licht">Beleuchtung</a><a href="#leistung">Leistung</a><a href="#netz">WLAN</a><a href="#konten">Konten</a><a href="#aussehen">Aussehen</a><a href="#spiele">Bibliothek</a><a href="#updates">Updates</a><a href="#geraet">Gerät</a></nav>
 <div id="live"><span>verbinde …</span></div></header>
 <main>
 <section class="wide" id="uebersicht"><h2>Übersicht</h2><h3 id="st">–</h3><div class="stats" id="stats"></div></section>
 
-<section id="bild"><h2>Bild &amp; Ton</h2><h3>Helligkeit und Lautstärke</h3>
+<section id="bild"><h2>Bildschirme &amp; Ton</h2><h3>Helligkeit und Lautstärke</h3>
 <label for="bt">Oberer Bildschirm</label><div class="slider"><input type="range" id="bt" max="100"><output for="bt"></output></div>
 <label for="bb">Unterer Bildschirm</label><div class="slider"><input type="range" id="bb" max="100"><output for="bb"></output></div>
 <label for="vol">Lautstärke</label><div class="slider"><input type="range" id="vol" max="100"><output for="vol"></output></div>
-<label for="theme">Aussehen der Oberfläche</label><select id="theme"></select>
-<label for="rest">Bildschirme schwarz nach (OLED-Schutz)</label><select id="rest"><option value="0">nie</option><option value="1">1 Minute</option><option value="3">3 Minuten</option><option value="10">10 Minuten</option></select></section>
+<label for="rest">Ruheschutz (OLED): Bildschirme schwarz nach</label><select id="rest"><option value="0">nie</option><option value="1">1 Minute</option><option value="3">3 Minuten</option><option value="10">10 Minuten</option></select></section>
 
-<section id="spiele"><h2>Spiele</h2><h3>Bibliothek und Emulatoren</h3><p id="lib">–</p>
-<div class="row"><button data-post="rescan">Bibliothek neu einlesen</button><button data-post="quit">Laufendes Spiel beenden</button></div>
-<label for="eden">Switch-Emulator (Eden)</label><select id="eden"><option value="eden">Stabile Fassung</option><option value="eden-nightly">Nightly (Tagesstand)</option></select>
-<button class="go" id="edengo">Installieren oder aktualisieren</button></section>
+<section id="controller"><h2>Controller &amp; Tasten</h2><h3>Tastenbelegung</h3><p>Bestätigen ist immer A, zurück immer B – in Tandem, in jedem Emulator und in den Ports.</p>
+<table id="map"></table><p id="off" style="margin-top:14px">–</p><button id="ctrlgo">In allen Emulatoren angleichen</button>
+<label class="check" id="gyrorow" hidden><input type="checkbox" id="gyro"> Gyro (Bewegungssensor)</label>
+<label for="kb">Bildschirmtastatur</label><select id="kb"><option value="de">Deutsch</option><option value="us">Englisch (US)</option></select></section>
+
+<section id="licht"><h2>Beleuchtung</h2><h3>Stick-Ringe</h3><p id="rgbmsg">–</p><div id="rgbbox" hidden>
+<label class="check"><input type="checkbox" id="rgbon"> Beleuchtung an</label>
+<label>Farbe</label><div class="swatches" id="sw"></div>
+<label for="rgbl">Helligkeit</label><div class="slider"><input type="range" id="rgbl" max="100"><output for="rgbl"></output></div>
+<label class="check"><input type="checkbox" id="rgblink"> Mit dem Bildschirm heller und dunkler</label></div></section>
+
+<section id="leistung"><h2>Leistung &amp; Akku</h2><h3>Leistungsprofil</h3><select id="prof"></select>
+<p style="margin-top:12px">Sparsam: länger spielen, leiser. Ausgewogen: für fast alles. Leistung: volle Kraft für PS2, Switch und PC-Spiele.</p><div class="stats" id="pstats"></div></section>
 
 <section id="netz"><h2>Netzwerk</h2><h3>WLAN</h3><p id="wl">–</p>
 <label for="ssid">Netz</label><select id="ssid"></select>
@@ -62,19 +83,34 @@ button.go{background:var(--violet);border-color:var(--violet);color:#0b0718;font
 <label for="own">Eigene Adresse dieser Seite (z. B. https://thor.example.de, leer = keine)</label><input id="own" type="url" autocomplete="off" autocapitalize="off" placeholder="https://">
 <button id="owngo">Adresse speichern</button></section>
 
+
+
+
+
 <section id="konten"><h2>Konten</h2><h3>RetroAchievements</h3><p id="ra">–</p>
 <label for="u">Benutzername</label><input id="u" autocomplete="username" autocapitalize="off">
 <label for="p">Passwort (nur zur Anmeldung, wird nicht gespeichert)</label><input id="p" type="password" autocomplete="current-password">
 <label for="k">Web-API-Schlüssel (für die Anzeige der Erfolge)</label><input id="k" autocomplete="off">
-<button class="go" id="rasave">Speichern und in allen Emulatoren anmelden</button></section>
+<button class="go" id="rasave">Speichern und in allen Emulatoren anmelden</button>
+<h3>Battle.net (WoW Forever)</h3><p id="bn">–</p>
+<label for="be">E-Mail</label><input id="be" type="email" autocomplete="off" autocapitalize="off">
+<label for="bp">Passwort (bleibt nur auf dem Thor, wird nie wieder angezeigt)</label><input id="bp" type="password" autocomplete="off">
+<button class="go" id="bnsave">Speichern</button> <button id="bnforget">Anmeldung vergessen</button></section>
 
-<section><h2>Eingabe</h2><h3>Tastatur der Shell</h3>
-<label for="kb">Belegung der Bildschirmtastatur</label><select id="kb"><option value="de">Deutsch</option><option value="us">Englisch (US)</option></select></section>
+<section id="aussehen"><h2>Aussehen</h2><h3>Thema</h3><label for="theme">Farben und Stil der Oberfläche</label><select id="theme"></select>
+<label for="lang">Sprache / Language</label><select id="lang"><option value="de">Deutsch</option><option value="en">English</option></select></section>
 
-<section id="geraet"><h2>Gerät</h2><h3>Tandem aktualisieren</h3><p id="ver">–</p>
+<section id="spiele"><h2>Bibliothek</h2><h3>Spiele</h3><p id="lib">–</p><p>Spiele gehören in einen Ordner „ROMs“ auf der Karte oder im Gerät, je System ein Unterordner.</p>
+<div class="row"><button data-post="rescan">Neu einlesen und Cover laden</button><button data-post="quit">Laufendes Spiel beenden</button></div></section>
+
+<section id="updates"><h2>Updates</h2><h3>Tandem</h3><p id="ver">–</p>
 <label for="src">Update-Quelle (leer = keine)</label><input id="src" type="url" autocomplete="off" autocapitalize="off" placeholder="https://">
 <div class="row"><button id="srcgo">Quelle speichern</button><button id="upcheck">Nach Update suchen</button><button id="upgo" hidden>Jetzt installieren</button></div>
-<h3>Ein und aus</h3>
+<label for="eden">Switch-Emulator (Eden)</label><select id="eden"><option value="eden">Stabile Fassung</option><option value="eden-nightly">Nightly (Tagesstand)</option></select>
+<button class="go" id="edengo">Installieren oder aktualisieren</button></section>
+
+<section id="geraet"><h2>Gerät</h2><h3>Über den Thor</h3><div class="stats" id="about"></div>
+<h3 style="margin-top:20px">Ein und aus</h3>
 <div class="row"><button data-post="action" data-name="suspend">Standby</button><button class="warn" data-post="action" data-name="reboot" data-ask="Den Thor neu starten?">Neustart</button>
 <button class="warn" data-post="action" data-name="poweroff" data-ask="Den Thor ausschalten?">Ausschalten</button></div></section>
 
@@ -95,21 +131,47 @@ function load(){fetch('api/all').then(r=>r.status==401?location.reload():r.json(
   $('stats').innerHTML=stat(d.games,'Spiele in der Bibliothek')+(d.battery?stat(d.battery.level+' %',d.battery.charging?'Akku, lädt':'Akku',d.battery.level/100):'')
     +d.system.storage.map(s=>stat(gb(s.free)+' frei',s.name+' · '+gb(s.total),1-s.free/s.total)).join('')+stat(d.system.ssid||'offline','WLAN');
   $('lib').textContent=d.games+' Spiele gefunden. Neu einlesen sucht auch fehlende Cover.';
+  $('bn').textContent=d.config.bnet_set?'Hinterlegt. WoW Forever meldet sich beim Start selbst an.':'Noch nicht hinterlegt.'+(secure()?'':' Eintragen geht nur über die https-Adresse.');
   $('ra').textContent=d.config.ra_login?'Angemeldet als '+d.config.ra_user+'.':'Noch nicht angemeldet.'+(d.config.ra_key_set?' Der Web-API-Schlüssel ist hinterlegt.':'');
   if(document.activeElement!=$('u')&&!$('u').value)$('u').value=d.config.ra_user;if(document.activeElement!=$('kb'))$('kb').value=d.layout;
   if(document.activeElement!=$('own'))$('own').value=d.config.remote_url||'';
   $('ver').textContent='Installiert: Version '+d.config.version;if(document.activeElement!=$('src'))$('src').value=d.config.update_url||'';
-  if(document.activeElement!=$('rest'))$('rest').value=d.config.rest_min;
+  if(document.activeElement!=$('rest'))$('rest').value=d.config.rest_min;if(document.activeElement!=$('lang'))$('lang').value=d.config.lang||'de';
   if(document.activeElement!=$('theme')){$('theme').replaceChildren(...(d.config.themes||[]).map(t=>new Option(t.name,t.id)));$('theme').value=d.config.theme}
+  const T=d.thor||{},rgb=T.rgb,pw=T.power,C=d.controls||{};
+  $('map').innerHTML=(C.table||[]).map((r,i,a)=>(i==0||a[i-1].group!=r.group?`<tr><th colspan="2">${esc(r.group||'')}</th></tr>`:'')+`<tr><td>${esc(r.what)}<small>${esc(r.where||'')}</small></td><td>${esc(r.pad)}</td></tr>`).join('');
+  const off=[...new Set((C.off||[]).map(o=>o.emu))];$('off').textContent=off.length?'Abweichend: '+off.join(', ')+'.':'Alle Emulatoren haben die Tandem-Belegung.';
+  $('gyrorow').hidden=!T.gyro;if(T.gyro)$('gyro').checked=!!T.gyro.enabled;
+  $('rgbbox').hidden=!rgb;$('rgbmsg').textContent=rgb?'Farbe und Helligkeit der Leuchtringe um die Sticks. Gilt sofort.':'Diese Beleuchtung ist gerade nicht erreichbar.';
+  if(rgb){$('rgbon').checked=!!rgb.enabled;$('rgblink').checked=!!rgb.linkBrightness;if(document.activeElement!=$('rgbl'))$('rgbl').value=rgb.level;$('rgbl').nextElementSibling.textContent=$('rgbl').value+' %';
+    for(const b of $('sw').children)b.setAttribute('aria-pressed',b.dataset.c==String(rgb.color).toUpperCase())}
+  $('prof').disabled=!pw;if(pw&&document.activeElement!=$('prof')){$('prof').replaceChildren(...pw.profiles.map(([v,l])=>new Option(l,v)));$('prof').value=pw.profile}
+  $('pstats').innerHTML=(d.battery?stat(d.battery.level+' %',d.battery.charging?'Akku, lädt':'Akku',d.battery.level/100):'')+(pw?stat(pw.temp+' °C','Temperatur')+stat(pw.fan+' U/min','Lüfter'):'');
+  $('about').innerHTML=stat('AYN Thor','Gerät')+stat(T.os||'–','ArmadaOS')+stat(d.config.version,'Tandem');
   $('wl').textContent=d.system.ssid?'Verbunden mit '+d.system.ssid+'.':'Nicht verbunden.';
   if(document.activeElement!=$('ssid')){const now=$('ssid').value;$('ssid').replaceChildren(...d.system.networks.map(n=>new Option(n.ssid+' · '+n.signal+' %'+(n.known?' · bekannt':''),n.ssid)));if(now)$('ssid').value=now}
  }).catch(()=>{$('live').className='';$('live').firstChild.textContent='keine Verbindung'})}
 for(const k of['bt','bb','vol']){$(k).oninput=e=>e.target.nextElementSibling.textContent=e.target.value+' %';$(k).onchange=e=>post('set',{key:k,value:+e.target.value})}
+// the password only travels encrypted: over https, or on the Thor itself
+const secure=()=>location.protocol=='https:'||['127.0.0.1','localhost'].includes(location.hostname);
+$('bnsave').onclick=()=>{if(!secure())return say('Nur über die https-Adresse des Thor – im WLAN ohne https könnte das Passwort mitgelesen werden.');
+  if(!$('be').value||!$('bp').value)return say('Bitte E-Mail und Passwort eintragen.');
+  post('config',{bnet_email:$('be').value,bnet_password:$('bp').value}).then(()=>{$('be').value=$('bp').value='';say('Gespeichert.');load()})};
+$('bnforget').onclick=()=>post('config',{bnet_forget:true}).then(()=>{say('Battle.net-Anmeldung gelöscht.');load()});
 $('rasave').onclick=()=>post('config',{ra_user:$('u').value,ra_password:$('p').value,ra_key:$('k').value}).then(d=>{$('p').value=$('k').value='';if(d&&d.applied)say('Angemeldet in: '+d.applied.join(', '));load()});
 $('wgo').onclick=()=>{say('Verbinde …');post('wifi',{ssid:$('ssid').value,password:$('wp').value}).then(()=>{$('wp').value='';load()})};
+const COLORS=[['Weiß','FFFFFF'],['Rot','FF2000'],['Orange','FF7A00'],['Gelb','FFD000'],['Grün','20E040'],['Türkis','00D0C0'],['Blau','1060FF'],['Lila','9040FF'],['Pink','FF30A0']];
+$('sw').replaceChildren(...COLORS.map(([n,c])=>{const b=document.createElement('button');b.dataset.c=c;b.title=n;b.setAttribute('aria-label',n);b.style.background='#'+c;b.onclick=()=>post('thor',{key:'rgb',value:{color:c,enabled:true}}).then(load);return b}));
+$('rgbon').onchange=e=>post('thor',{key:'rgb',value:{enabled:e.target.checked}}).then(load);
+$('rgblink').onchange=e=>post('thor',{key:'rgb',value:{linkBrightness:e.target.checked,brightness:+$('rgbl').value}}).then(load);
+$('rgbl').oninput=e=>e.target.nextElementSibling.textContent=e.target.value+' %';$('rgbl').onchange=e=>post('thor',{key:'rgb',value:{brightness:+e.target.value,enabled:true}});
+$('gyro').onchange=e=>post('thor',{key:'gyro',value:e.target.checked});
+$('prof').onchange=e=>post('thor',{key:'profile',value:e.target.value});
+$('ctrlgo').onclick=()=>{say('Gleiche an …');post('controls',{}).then(load)};
 $('kb').onchange=e=>post('layout',{layout:e.target.value});
 $('theme').onchange=e=>post('config',{theme:e.target.value});
 $('rest').onchange=e=>post('config',{rest_min:+e.target.value});
+$('lang').onchange=e=>post('config',{lang:e.target.value}).then(()=>location.reload());
 $('srcgo').onclick=()=>post('config',{update_url:$('src').value}).then(load);
 const up=apply=>post('selfupdate',{apply}).then(d=>{say(d.error||d.text);$('upgo').hidden=apply||!d.new});
 $('upcheck').onclick=()=>up(false);$('upgo').onclick=()=>{say('Installiere …');up(true)};

@@ -1,6 +1,6 @@
 """Self-check for the native front end: python3 ui/test_ui.py (needs PySide6, no display; skipped without PySide6).
 Runs both windows against a real Tandem service in dry-run mode and walks through the views index.html has."""
-import json, os, socket, socketserver, struct, sys, threading, time, unittest
+import base64, json, os, socket, socketserver, struct, sys, threading, time, unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -15,7 +15,7 @@ try:
     import tandem_ui as ui
     from PySide6.QtCore import QBuffer, QEvent, QPointF, Qt
     from PySide6.QtGui import QFontDatabase, QGuiApplication, QImage, QMouseEvent
-    from decks import ffix, packcss, packlua, packmem, pipboy
+    from decks import aok, cnc, d2, ffix, hev, homm3, kknd2, packcss, packlua, packmem, pipboy, portsocket, ra2
 except ImportError: ui = None
 SHOTS = os.environ.get('TANDEM_UI_SHOTS')  # a folder: every painted view is saved there to look at
 
@@ -104,6 +104,169 @@ class FakeFallout(socketserver.BaseRequestHandler):
                         FakeFallout.commands.append((m['command'], m['params']))
                         result = {'enabled': m['params'].get('enable')} if m['command'] == 'radio' else {'action': 'used' if m['command'] == 'use' else 'equipped'}
                         self.tell({'type': 'commandResult', 'id': m['id'], 'command': m['command'], 'success': True, 'result': result})
+        except OSError: pass
+
+
+def hev_state(t=1.0):
+    """A snapshot as the Half-Life client library sends it (cl_dll/thor_deck.cpp): in the test chamber, crowbar and pistol."""
+    return {'v': 1, 'seq': 7, 't': t, 'map': 'c1a0d', 'deck': 1, 'hp': 82, 'ap': 15, 'suit': 1, 'dead': 0, 'hide': 0, 'fl': 1, 'flbat': 64, 'dmg': 1 << 18, 'geiger': 300,
+            'train': 0, 'pain': [0, .5, 0, 0], 'water': 0, 'air': -1.0, 'ground': 1, 'fallv': 0, 'speed': 120, 'move': 3, 'yaw': 45.0, 'pitch': 0.0, 'pos': [100, 200, 0],
+            'slots': 5, 'cur': 2, 'sel': 0, 'w': [[1, 'weapon_crowbar', 0, 0, -1, -1, -1, -1, -1, 1], [2, 'weapon_9mmhandgun', 1, 0, 12, 68, 250, -1, -1, 1],
+                                                  [4, 'weapon_9mmAR', 2, 0, 0, 0, 250, 2, 10, 0]],
+            'feed': [[3, 'a', 'weapon_9mmAR#2', 2, 1.0], [2, 'w', 'weapon_9mmhandgun', 0, 30.0], [1, 'i', 'item_battery', 0, 70.0]]}
+
+
+class FakeHalfLife(socketserver.BaseRequestHandler):
+    """Stands in for the game's end of the deck socket (ports/tandem_deck.h): the launcher's line, then snapshots; commands are kept."""
+    commands, home = [], ''
+
+    def handle(self):
+        try:
+            self.request.sendall(json.dumps({'game': 'valve', 'data': '', 'home': FakeHalfLife.home}).encode() + b'\n#icons 3\nabc\n')
+            self.request.settimeout(.05)
+            t = 1.0
+            while True:
+                t += .05
+                self.request.sendall(json.dumps(hev_state(t)).encode() + b'\n')
+                try: data = self.request.recv(4096)
+                except socket.timeout: continue
+                if not data: return
+                FakeHalfLife.commands += [line for line in data.decode().split('\n') if line]
+        except OSError: pass
+
+
+def aok_state():
+    """A state line as the Age of Kings port sends it (ports/aok/deck_socket.inc): a villager selected, one house to build, one villager queued."""
+    i = [1, 1, 200, 180, 100, 150, 4, 5, 0, 0, 1, 25, 25, 50730, 15, 83, 3, 10, 2, 1, 3, 4, 2, 0, 0, 4, 0, 4, 2, 0, 2, 1, 150, 2, 0, 0, 0, 1]
+    i += [1, 0, 50706, 3, 1, 0, -1, 0] + [15, 27, 0, -1, 1, 1, -1, 0] + [0, 83, 2, 50730, 15] + [0, 1, 50706, 7]
+    return {'v': 1, 'ingame': 1, 'i': i, 'age': 'Dunkle Zeit', 'next': 'Feudalzeit', 'name': 'Dorfbewohner', 'labels': ['Haus', 'Mehr'], 'goto': ['Dorfzentrum'] + [''] * 13,
+            'help': ['<b>Haus bauen</b>  (Q)', '']}
+
+
+def ra2_state():
+    """A state line as the Red Alert 2 port sends it (the engine's thor.cpp): Soviet, radar on, a power plant building, a barracks, one superweapon, group I."""
+    i = [2, 1, 9500, 150, 100, 1, 1, 0, 0b1111, 4, 2, 1, 0, 2, 1, 2, 1, 7, 3, 5, 4, 0, 0x300, 0]
+    i += [5, 800, 1, 400, 1, 0, 0] + [9, 500, 0, 0, 0, 0, 0] + [2 << 16 | 1, 0, 250, 300, 0] + [3, 3, 0, 0, 0, 0, 0, 0, 0, 0]
+    return {'v': 1, 'ingame': 1, 'zoom': 125, 'i': i}
+
+
+def cnc_state():
+    """A state line as the Command & Conquer port sends it (the engine's thor_tandem.cpp): Red Alert, Soviet, radar on, a power plant
+    building, a rifleman to train, group 2 with six units selected, the controller's ring on the first item."""
+    i = [4, 1, 8105, 200, 70, cnc.F_RADAR | cnc.F_REPAIR_OK, 10, 20, 64, 64, 12 * 16, 22 * 16, 15 * 16, 8 * 16, 1, 1, 1, 0, 0, 0, 0b10, 0, 6, 0, 0, 4, 6, 1]
+    i += [0, 0, 5 << 16 | 3, 300, cnc.ST_BUILDING, 400] + [1, 0, 3 << 16 | 1, 100, cnc.ST_AVAILABLE, 0]
+    return {'v': 1, 'game': 'ra', 'ingame': 1, 'pal': 11, 'radar': 12, 'focus': 0, 'pw': [1, 2, 3, 4, 5, 6], 'i': i}
+
+
+def homm3_state():
+    """A state as the Heroes III port sends it (the fork's ThorDeck.cpp): the adventure map, one hero selected, one town, two stacks, the map 4 x 2."""
+    return {'mode': 'adventure', 'player': 0, 'day': 1, 'week': 1, 'month': 1, 'res': [20, 10, 26, 10, 10, 10, 20000],
+            'heroes': [{'id': 7, 'name': 'Xsi', 'level': 1, 'icon': 3, 'mp': 1500, 'mpMax': 1500, 'mana': 20, 'manaMax': 20, 'selected': True}],
+            'towns': [{'id': 9, 'name': 'Agony', 'icon': 2}], 'army': [{'slot': 0, 'name': 'Skelette', 'count': 30, 'icon': 56}, {'slot': 2, 'name': 'Zombies', 'count': 6, 'icon': 58}],
+            'spells': [{'id': 1, 'name': 'Schiff rufen', 'icon': 1, 'cost': 8, 'ok': False}, {'id': 4, 'name': 'Erde sehen', 'icon': 4, 'cost': 2, 'ok': True}],
+            'can': {'endTurn': True, 'next': False, 'hero': True}, 'map': {'w': 4, 'h': 2, 'levels': 1, 'view': [0, 0, 2, 1, 0], 'version': 1}}
+
+
+def kknd2_state():
+    """A state line as the KKnD 2 port sends it (the game's thor/linux/TandemDeck.cs): Evolved in a skirmish, a factory with a unit
+    in the works and a locked one, a lab with one building to research, two units selected, group 1, the controller's ring on card 0."""
+    return {'v': 1, 'tab': 1, 'producer': 0, 'focus': 0, 'paused': False, 'speed': 150, 'waypoint': False, 'force': True, 'playing': True, 'over': False,
+            'won': False, 'faction': 'evolved', 'cash': 900, 'queues': [{'id': 31, 'cat': 'vehicle', 'by': 'Beast Enclosure',
+                                                                        'items': [['evolved_giant_beetle', 'Giant Beetle', 600, 40, 1, True, False, False, False],
+                                                                                  ['evolved_mammoth', 'Mammoth', 1200, -1, 0, False, False, True, False]]}],
+            'sel': [['evolved_berserker', 'Berserker', 2, 64]], 'groups': [2] + [0] * 9, 'gicons': ['evolved_berserker'] + [None] * 9,
+            'techs': [[40, 'evolved_clanhall', 'Clanhall', 1, 3, False, 500]], 'labs': 1, 'free': 1, 'rigs': 2, 'tankers': 1, 'stations': 1, 'oil': 12000,
+            'secs': 75, 'stance': 'Defend', 'pings': [10.5, 12.5], 'mode': 'UnitOrderGenerator', 'level': 'levels/multi/mlti_01.lpm', 'map': [64, 64],
+            'bounds': [1, 1, 62, 62], 'cam': [10, 10, 30, 17], 'dots': [20.5, 30.5, 0xFF00FF, 0, 22.5, 30.5, 0xFF00FF, 1]}
+
+
+def kknd2_art():
+    """An art block as the game sends it: 12 sidebar buttons of 16 x 16, then a font of 224 glyphs where only 'A' has pixels."""
+    frames = [struct.pack('<HHhh', 16, 16, 0, 0) + bytes([255]) * 16 * 16 * 4 for _ in range(12)]
+    frames += [struct.pack('<HHhh', 3, 1, 0, 2) + bytes([255]) * 12 if n == 33 else struct.pack('<HHhh', 3, 0, 0, 0) for n in range(224)]
+    return struct.pack('<H', len(frames)) + b''.join(frames)
+
+
+class FakeKknd2(socketserver.BaseRequestHandler):
+    """Stands in for the KKnD 2 port: the state, the faction's art, the minimap and one icon; commands are kept."""
+    commands = []
+
+    def handle(self):
+        try:
+            self.request.sendall(json.dumps(kknd2_state()).encode() + b'\n')
+            while data := self.request.recv(4096):
+                for line in data.decode().split('\n'):
+                    if line == 'art evolved': self.request.sendall(b'#art:evolved %d\n' % len(kknd2_art()) + kknd2_art())
+                    elif line == 'minimap': self.request.sendall(b'#minimap 36\n' + struct.pack('<HH', 4, 2) + bytes(32))
+                    elif line == 'icon evolved_giant_beetle': self.request.sendall(b'#icon:evolved_giant_beetle 8\n' + struct.pack('<HHI', 1, 1, 0xFF00FF00))
+                    elif line and not line.startswith('icon '): FakeKknd2.commands.append(line)
+        except OSError: pass
+
+
+class FakeHomm3(socketserver.BaseRequestHandler):
+    """Stands in for the Heroes III port: the state, the minimap (JSON as a block) when the deck says "fresh", and the art the deck asks
+    for (only the gold icon is there); commands are kept."""
+    commands = []
+
+    def handle(self):
+        try:
+            self.request.sendall(json.dumps(homm3_state()).encode() + b'\n')
+            while data := self.request.recv(4096):
+                for line in data.decode().split('\n'):
+                    minimap = json.dumps({'minimap': base64.b64encode(bytes(range(24))).decode(), 'w': 4, 'h': 2}).encode()
+                    if line == 'fresh': self.request.sendall(b'#json %d\n' % len(minimap) + minimap)
+                    elif line == 'art def:RESOURCE:6': self.request.sendall(b'#art:def:RESOURCE:6 16\n' + struct.pack('<III', 1, 1, 0) + bytes([0, 255, 0, 255]))
+                    elif line.startswith('art '): self.request.sendall(b'#art:%s 12\n' % line[4:].encode() + bytes(12))  # the files do not have it: drawn plain
+                    elif line: FakeHomm3.commands.append(line)
+        except OSError: pass
+
+
+class FakeCnc(socketserver.BaseRequestHandler):
+    """Stands in for the Command & Conquer port: the state, the radar and the pictures the deck asks for (only the power plant has a
+    cameo, there is no sidebar art); commands are kept."""
+    commands = []
+
+    def handle(self):
+        try:
+            self.request.sendall(json.dumps(cnc_state()).encode() + b'\n')
+            while data := self.request.recv(4096):
+                for line in data.decode().split('\n'):
+                    if line == 'radar': self.request.sendall(b'#radar 36\n' + struct.pack('<HH', 4, 2) + bytes(32))
+                    elif line == f'pic {5 << 16 | 3}': self.request.sendall(b'#pic:%d 17\n' % (5 << 16 | 3) + struct.pack('<HHI', 1, 1, 0xFF00FF00) + b'Kraftwerk')
+                    elif line.startswith('pic '): self.request.sendall(b'#pic:%s 4\n' % line.split()[1].encode() + bytes(4))
+                    elif line: FakeCnc.commands.append(line)
+        except OSError: pass
+
+
+class FakeRa2(socketserver.BaseRequestHandler):
+    """Stands in for the Red Alert 2 port: the state, the radar and the pictures the deck asks for (only cameo 5 has one); commands are kept."""
+    commands = []
+
+    def handle(self):
+        try:
+            self.request.sendall(json.dumps(ra2_state()).encode() + b'\n')
+            while data := self.request.recv(4096):
+                for line in data.decode().split('\n'):
+                    if line == 'radar': self.request.sendall(b'#radar 36\n' + struct.pack('<HH', 4, 2) + bytes(32))
+                    elif line == 'pic 5': self.request.sendall(b'#pic:5 17\n' + struct.pack('<HHI', 1, 1, 0xFF00FF00) + 'Kraftwerk'.encode())
+                    elif line.startswith('pic '): self.request.sendall(b'#pic:%s 4\n' % line.split()[1].encode() + bytes(4))  # no sidebar art: plain plates
+                    elif line: FakeRa2.commands.append(line)
+        except OSError: pass
+
+
+class FakeAok(socketserver.BaseRequestHandler):
+    """Stands in for the Age of Kings port: the state, and the binary blocks the deck asks for (mini-map, icons); commands are kept."""
+    commands = []
+
+    def handle(self):
+        try:
+            self.request.sendall(json.dumps(aok_state()).encode() + b'\n')
+            while data := self.request.recv(4096):
+                for line in data.decode().split('\n'):
+                    if line == 'map': self.request.sendall(b'#map 32\n' + bytes(32))
+                    elif line.startswith('icon 50'): self.request.sendall(b'#icon:%s:%s 8\n' % tuple(n.encode() for n in line.split()[1:]) + struct.pack('<HHI', 1, 1, 0xFF00FF00))
+                    elif line.startswith('icon'): self.request.sendall(b'#icon:%s:%s 0\n' % tuple(n.encode() for n in line.split()[1:]))  # no interface art: plain panels
+                    elif line: FakeAok.commands.append(line)
         except OSError: pass
 
 
@@ -414,9 +577,9 @@ class Looks(unittest.TestCase):
         self.assertEqual(ui.read_theme('gibtsnicht')['id'], 'toravo')
         half = ui.read_theme('halb')
         self.assertEqual((half['colors']['accent'], half['colors']['bg'], half['colors']['text'], half['radius'], half['glow'], half['fonts'], half['gradient'], half['gameAccent'], half['background']),
-                         ('#00cc66', '#0a0c13', '#eef0f6', 1.0, 1.0, ui.DEFAULT_THEME['fonts'], None, False, None))  # what is wrong keeps its default, the rest counts
+                         ('#00cc66', '#07080b', '#f5f5f7', 1.0, 1.0, ui.DEFAULT_THEME['fonts'], None, False, None))  # what is wrong keeps its default, the rest counts
         ui.apply_theme(half)
-        self.assertEqual((ui.FOCUS.name(), ui.INK.name()), ('#00cc66', '#0a0c13'))
+        self.assertEqual((ui.FOCUS.name(), ui.INK.name()), ('#00cc66', '#07080b'))
         ui.apply_theme(ui.read_theme('toravo'))
         self.assertEqual(ui.FOCUS.name(), '#ffb23e')
 
@@ -460,6 +623,113 @@ class PipboyState(unittest.TestCase):
         self.assertEqual((pipboy.date_string(d['world.time']), pipboy.date_string(None)), ('23.10.2287  09:30', '–'))
         self.assertEqual([pipboy.fmt_weight(w) for w in (0, 1.25, 14.6)], ['–', '1.2', '15'])
         self.assertEqual((pipboy.language(d), pipboy.language({'game': {'lang': 'en'}})), ('de', 'en'))
+
+    def test_ra2_deck_logic(self):
+        m = ra2.parse(ra2_state())
+        self.assertEqual((m['credits'], m['out'], m['drain'], m['side'], m['radar'], m['view'], m['zoom'], m['groups']), (9500, 150, 100, 1, (7, 4, 2), [1, 0, 2, 1], 125, [(3, 3)] + [(0, 0)] * 4))
+        self.assertEqual((m['items'][0], m['supers']), ({'key': 5, 'cost': 800, 'state': ra2.ST_BUILDING, 'progress': 400, 'queued': 1, 'tab': 0}, [{'key': 2 << 16 | 1, 'ready': 0, 'progress': 250, 'seconds': 300}]))
+        self.assertEqual([ra2.parse(d) for d in (None, {'v': 1, 'ingame': 0}, {**ra2_state(), 'i': ra2_state()['i'][:-1]})], [None, None, None])  # no game, or a line cut short
+        self.assertEqual((ra2.pips(10, 0, 0), ra2.pips(10, 400, 100), ra2.pips(10, 100, 300, True)), ([0] * 10, [3, 3, 2, 2, 1, 1, 0, 0, 0, 0], [4] * 5 + [0] * 5))  # in use, the last 100 spare, the rest; an outage blinks
+        self.assertEqual([ra2.speed_label(v) for v in (-1, 0, 1, 4, 6)], ['-', '4x', '4x', '1x', '0.7x'])
+
+    def test_homm3_deck_logic(self):
+        self.assertEqual((homm3.plain('Zug… „Ende“ – 5×'), homm3.clean('{Skelette} treffen {#ff0000|hart}')), ('Zug... "Ende" - 5x', 'Skelette treffen hart'))
+        art = struct.pack('<III', 2, 1, 2) + struct.pack('<2i', 5, 7) + bytes(range(8)) + b'rest'
+        self.assertEqual([homm3.parse_art(d) for d in (art, art[:19], bytes(12), b'')], [(2, 1, [5, 7], bytes(range(8))), None, None, None])  # a piece, one cut short, none
+        self.assertEqual([s['id'] for s in homm3.spell_order(homm3_state()['spells'] + [{'id': 9, 'ok': True}], 2)], [4, 9])  # what can be cast comes first
+
+    def test_d2_deck_logic(self):
+        head = lambda t: b'D2AM' + bytes((2, t)) + b'\0\0'
+        stats = head(d2.STATS) + bytes((2, 3)) + struct.pack('<HIHIHI', 12, 80, 39, 160, 40, 5) + bytes((1,)) + struct.pack('<II', 300 << 8, 400 << 8) + bytes((70, 1, 0))
+        s = d2.parse_stats(stats)
+        self.assertEqual((d2.kind(stats), s['v'], s['merc'], s['merc_life'] >> 8, s['merc_level'], s['single'], s['waypoints'], d2.resistance(s, 39, 40)),
+                         (d2.STATS, {12: 80, 39: 160, 40: 5}, True, 300, 70, True, None, 60))  # Hell: 160 - 100, cap 80
+        self.assertEqual(d2.resistance({**s, 'v': {39: 200}}, 39, 40), 75)
+        item = struct.pack('<I4sBBBBBBHB', 7, b'hp1 ', d2.BELT, 2, 0, 0x11, 2, 0, 1, 5) + b'Trank'
+        self.assertEqual(d2.parse_items(head(d2.ITEMS) + bytes((0, 0, 1)) + item), (0, 0, [{'id': 7, 'code': 'hp1', 'page': d2.BELT, 'x': 2, 'y': 0, 'w': 1, 'h': 1, 'q': 2, 'flags': 0, 'n': 1, 'name': 'Trank'}]))
+        self.assertEqual((d2.parse_items(head(d2.ITEMS) + bytes((0, 0, 1)) + item[:-1]), d2.parse_stats(stats[:12]), d2.kind(b'D2AC' + stats[4:]), d2.parse_state(head(2))), (None, None, -1, None))  # cut short, foreign
+        info = d2.parse_info(head(d2.EFFECTS) + bytes((1, 1)) + struct.pack('<HHH', 0x8000 | 101, 30, 60) + b'\1ThorTest' + bytes(8))
+        self.assertEqual((info['effects'], info['flags'], info['name']), ([(101, 30, 60, True)], 1, 'ThorTest'))
+        self.assertEqual((d2.command(d2.CMD_SORT, b'\0\0'), d2.points_command(d2.KIND_KEY, 300, 2, True), d2.deck_item(d2.DI_MOVE, 9, d2.DI_TO_BELT, 1)),
+                         (b'D2AC\x01\x18\0\0\0\0', b'D2AC\x01\x13\0\0\2\x2c\1\2\1', b'D2AC\x01\x26\0\0\1\x09\0\0\0\x0a\1\0\0\0\0\0'))
+        self.assertEqual((d2.free_spot([{'page': 0, 'x': 0, 'y': 0, 'w': 2, 'h': 3}], 0, 4, 4, 2, 2), d2.free_spot([], 0, 1, 1, 2, 1), [d2.act_of(v) for v in (1, 40, 75, 103, 109)]),
+                         ((2, 0), None, [1, 2, 3, 4, 5]))  # first free place row by row; too big; acts by area number
+        from decks import d2recipes  # the recipe book: a cube recipe record (3 El runes -> Eld), names by key
+        rec = bytearray(4 + d2recipes.RECORD); rec[:4] = struct.pack('<i', 1); rec[4] = 1; rec[4 + 0x10] = 1
+        struct.pack_into('<HHHBB', rec, 4 + 0x14, 1, 1, 0, 0, 3); struct.pack_into('<HH', rec, 4 + 0x4C, 0, 2); rec[4 + 0x4C + 8] = d2recipes.KIND_ITEM
+        rows = d2recipes.recipes(bytes(rec))
+        self.assertEqual((rows[0][1], rows[0][2]['item'], d2recipes.clean('[fs]El-Rune'), d2recipes.recipes(bytes(rec[:-1]))), ([(1, 1, 0, 0, 3)], 2, 'El-Rune', None))
+        tables = type('T', (), {'get': lambda self, c: None, 'tier': staticmethod(lambda it: None), 'item_is_index': lambda self, it, t: False})()
+        eld = {'cat': 0, 'doable': True, 'parts': [{'n': 3, 'label': 'El-Rune', 'codes': ['r01'], 'type': -1, 'q': 0, 'flags': 0}]}
+        el = {'code': 'r01', 'q': 2, 'flags': 0}
+        self.assertEqual([d2recipes.status(eld, have, tables) for have in ([el] * 3, [el], [])], [d2recipes.READY, d2recipes.ALMOST, d2recipes.ALMOST])
+        self.assertEqual((d2recipes.ingredients(eld), d2recipes.status({**eld, 'doable': False}, [el] * 3, tables)), ('3x El-Rune', d2recipes.NONE))
+        ring = b'D2PR\1' + bytes((2, 0, 1)) + bytes((3, 7, 1, 4)) + b'Gold' + bytes((5, 0, 0, 5)) + b'Akara'
+        self.assertEqual((d2.parse_ring(ring), d2.parse_ring(b'D2PR\0'), d2.parse_ring(ring[:-2])), ((0, 1, [(3, 7, True, 'Gold'), (5, 0, False, 'Akara')]), None, (0, 1, [(3, 7, True, 'Gold'), (5, 0, False, 'Aka')])))
+        # the game files: MPQ hashing, PKWARE explode (blast.c's example), a DC6 frame, a string table
+        from decks import d2art
+        self.assertEqual((d2art.mpq_hash('(hash table)', 3), d2art.explode(bytes.fromhex('00048224258f807f'), 100)), (0xC3AF3770, b'AIAIAIAIAIAIA'))
+        pal = [bytes((i, i, i, 255)) for i in range(256)]
+        frame = struct.pack('<6iII', 0, 2, 2, 0, 0, 0, 0, 8) + bytes((2, 5, 6, 0x80, 0x81, 1, 7, 0x80))  # bottom row first
+        self.assertEqual(d2art.dc6(struct.pack('<6iI', 6, 1, 0, -1, 1, 1, 28) + frame, pal)[0], (2, 2, 0, 0, bytearray(bytes(4) + pal[7] + pal[5] + pal[6])))
+        tbl = struct.pack('<HHi', 0, 1, 1) + bytes(13) + struct.pack('<H', 0) + struct.pack('<BHIIIH', 1, 0, 0, 40, 42, 10) + b'k\0' + 'Höhleÿc1'.encode()
+        strings = d2art.Strings(tbl, None, None)
+        self.assertEqual((strings.get('k'), strings.get(0), strings.get('x')), ('Höhle', 'Höhle', None))
+
+    def test_kknd2_deck_logic(self):
+        m = kknd2.parse(kknd2_state())
+        self.assertEqual((m['ingame'], m['dots'], m['pings'], m['sel'][0]['hp'], kknd2.current_queue(m), [kknd2.parse(d) for d in (None, {'game': 1}, {'v': 2})]),
+                         (True, [(20.5, 30.5, 0xFF00FF, 0), (22.5, 30.5, 0xFF00FF, 1)], [(10.5, 12.5)], 64, 0, [None, None, None]))
+        cards = kknd2.cards(m)  # the vehicle page: a unit in the works (tap builds one more, hold holds it) and a locked one
+        self.assertEqual([(c['badge'], c['status'], c['dim'], c['tap'], c['hold']) for c in cards],
+                         [('1', '', False, ('produce 31 evolved_giant_beetle 0', None), ('produce 31 evolved_giant_beetle 1', 'ANGEHALTEN')), ('', 'GESPERRT', True, None, None)])
+        tech = kknd2.cards({**m, 'tab': kknd2.TECH_TAB})  # research: a free lab, so it can start
+        self.assertEqual((tech[0]['line'], tech[0]['status'], tech[0]['tap']), ('STUFE 1/3', 'ÖL 500', ('research 40', 'FORSCHUNG GESTARTET')))
+        self.assertEqual([kknd2.cards({**m, 'tab': t}) for t in (0, 2)], [[], []])  # no infantry or building queue yet
+        self.assertEqual([kknd2.speed_label(v) for v in (50, 100, 150, 200)], ['0.5X', '1X', '1.5X', '2X'])
+        art = kknd2.parse_art(kknd2_art())
+        self.assertEqual((len(art), art[0][:4], art[12 + 33][:4], art[12][:4], kknd2.parse_art(kknd2_art()[:-1]), kknd2.parse_art(b'')), (236, (16, 16, 0, 0), (3, 1, 0, 2), (3, 0, 0, 0), None, None))
+
+    def test_cnc_deck_logic(self):
+        m = cnc.parse(cnc_state())
+        self.assertEqual((m['td'], m['credits'], m['power'], m['drain'], m['side'], m['map'], m['view'], m['groups'], m['group'], m['speed'], m['focus']),
+                         (False, 8105, 200, 70, 1, [10, 20, 64, 64], [192, 352, 240, 128], [0, 6, 0, 0], 1, 4, 0))
+        self.assertEqual(m['items'], [{'column': 0, 'index': 0, 'key': 5 << 16 | 3, 'cost': 300, 'state': cnc.ST_BUILDING, 'progress': 400},
+                                      {'column': 1, 'index': 0, 'key': 3 << 16 | 1, 'cost': 100, 'state': cnc.ST_AVAILABLE, 'progress': 0}])
+        self.assertEqual([cnc.parse(d) for d in (None, {'v': 1, 'game': 'td', 'ingame': 0}, {**cnc_state(), 'i': cnc_state()['i'][:-1]})], [None, None, None])  # no mission, or a line cut short
+        self.assertEqual([round(cnc.power_height(v, 153, 5), 1) for v in (0, 50, 100, 200, 100000)], [0, 15.1, 30.2, 54.4, 151])  # the game's own curve, capped
+        self.assertEqual((cnc.ascii('GEBÄUDE - PRIMÄR'), sorted(k for k in cnc.layout(True, 360) if isinstance(k, str))[:3]), ('GEBAUDE - PRIMAR', ['alert', 'base', 'credits']))
+
+    def test_aok_deck_logic(self):
+        m = aok.parse(aok_state())
+        self.assertEqual((m['stock'], m['pop'], m['cap'], m['map'], m['view'], m['speed'], m['groups']), ([200, 180, 100, 150], 4, 5, (3, 4, 2), [(0, 0), (4, 0), (4, 2), (0, 2)], 150, [2, 0, 0, 0]))
+        self.assertEqual(m['commands'][1], {'kind': 0, 'icon': (50706, 3), 'enabled': True, 'affordable': False, 'count': -1, 'name': 'Haus', 'help': 'Haus bauen (Q)'})
+        self.assertEqual((m['commands'][15]['kind'], m['queue'], m['goto']), (aok.KIND_CAPTION, [{'slot': 0, 'count': 2, 'icon': (50730, 15)}], [{'entry': 0, 'count': 1, 'icon': (50706, 7), 'name': 'Dorfzentrum'}]))
+        self.assertEqual([aok.parse(d) for d in (None, {'v': 1, 'ingame': 0}, {**aok_state(), 'i': aok_state()['i'][:-1]})], [None, None, None])  # no game, or a line cut short
+
+    def test_hev_deck_logic(self):
+        self.assertEqual(portsocket.split_lines(b'{"a":1}\n#radar 4\n\n{"x{"b":2}\nnoise\n{"c"'), ([{'a': 1}, ('radar', b'\n{"x'), {'b': 2}], b'{"c"'))  # a block's bytes are not lines
+        self.assertEqual(portsocket.split_lines(b'{"a":1}\n#radar 4\nAB'), ([{'a': 1}], b'#radar 4\nAB'))  # a block that is still on its way waits whole
+        self.assertEqual([hev.chapter(m) for m in ('c1a0d', 'c2a4', 'c2a4e', 'of1a5b', 'ba_xen3', 'unknown', '')],
+                         ['Anomalous Materials', 'Residue Processing', 'Questionable Ethics', '"We Are Pulling Out"', 'Focal Point', None, None])
+        self.assertEqual((hev.chapter('ba_teleport2', 'ba_xen6'), hev.chapter('ba_teleport2', 'ba_power2')), ('Focal Point', 'A Leap of Faith'))
+        self.assertEqual([hev.pickup_name(*f) for f in (('a', 'weapon_9mmAR#2'), ('a', 'weapon_shotgun'), ('w', 'weapon_rpg'), ('i', 'item_battery'), ('i', 'item_new_thing'))],
+                         ['Granaten', 'Schrotflinte', 'Raketenwerfer', 'HEV-Batterie', 'New thing'])
+        tokens = b'GameHeader\0mapName\0comment\0'  # a saved game's start: header, token table, the GameHeader block with two fields
+        save = struct.pack('<5i', 0x5641534A, 0x71, 0, 3, len(tokens)) + tokens + struct.pack('<hhB', 1, 0, 2) + struct.pack('<hh', 4, 2) + b'abc\0' + struct.pack('<hh', 7, 1) + b'c2a3b\0\0'
+        self.assertEqual((hev.save_map(save), hev.save_map(save[:30]), hev.save_map(b'nothing')), ('c2a3b', '', ''))
+        txt = 'weapon 320 320hud1 0 0 80 20\nweapon 640 640hud1 0 2 3 2\nweapon 1280 gone 0 0 9 9\nammo 640 640hud7 0 0 24 24\n'
+        self.assertEqual(hev.sprite_entry(txt, lambda sheet: sheet != 'gone'), ('640hud1', 0, 2, 3, 2))
+        pixels = bytes([0, 0, 0, 0,  0, 0, 0, 0,  1, 2, 1, 0,  2, 2, 1, 0])  # a 4x4 sheet; palette: black, dim grey, white
+        spr = struct.pack('<4if2iifiH', 0x50534449, 2, 0, 1, 1.0, 4, 4, 1, 0.0, 0, 3) + bytes([0, 0, 0, 60, 60, 60, 255, 255, 255]) + struct.pack('<5i', 0, 0, 0, 4, 4) + pixels
+        self.assertEqual(hev.sprite_mask(spr, 0, 2, 3, 2), (3, 2, bytes([19, 255, 19, 255, 255, 19])))  # the dim background is cut down, bright is solid
+        self.assertIsNone(hev.sprite_mask(spr, 0, 0, 4, 2))  # nothing bright in there: no icon
+        d = hev_state()
+        self.assertEqual(hev.hazards(d), [('Strahlung', 'amber')])
+        self.assertEqual([hev.status(*a) for a in ((d, True, False), (d, True, True), (d, False, False), ({**d, 'hp': 20, 'dmg': 0}, True, False), ({**d, 'dead': 1}, True, False))],
+                         [('Warnung', 'amber'), ('Pausiert', 'teal'), ('Bereitschaft', 'text3'), ('Kritisch', 'red'), ('Nulllinie', 'red')])
+        self.assertEqual(hev.visible(d), hev.visible({**d, 't': 9.0, 'seq': 99, 'yaw': 45.4}))  # time passing and a twitch of the stick: no repaint
+        self.assertNotEqual(hev.visible(d), hev.visible({**d, 'hp': 81}))
 
     def test_websocket_frames(self):
         for text in ('{"type":"heartbeat"}', 'ä' * 300, 'x' * 70000):
@@ -556,6 +826,34 @@ class Views(unittest.TestCase):
             QGuiApplication.sendEvent(win, QMouseEvent(kind, rect.center(), rect.center(), Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
         self.app.processEvents()
 
+    def test_game_start_reaches_a_resting_screen(self):
+        bottom, run = self.bottom, {'id': 'x', 't': 'Spiel', 's': 'port', 'emu': 'Port', 'since': int(time.time())}
+        bottom.active = 0  # nobody touched it for long: the screen rests
+        self.assertTrue(bottom.resting())
+        bottom.on_event({'kind': 'state', 'run': run, 'ui': dict(bottom.S), 'from': 'service'})
+        self.assertEqual((bottom.RUN, bottom.resting()), (run, False))  # the start wakes it and is taken over
+        bottom.active = 0
+        bottom.on_event({'kind': 'key', 'a': 'right'})
+        bottom.on_event({'kind': 'state', 'run': None, 'ui': dict(bottom.S), 'from': 'service'})
+        self.assertIsNone(bottom.RUN)
+
+    def test_quick_menu(self):  # the Thor key: a menu on the bottom screen only, closed by its button or the key again
+        top, bottom = self.top, self.bottom
+        bottom.SET = {'bt': 50, 'bb': 50, 'vol': 50}
+        for win in (top, bottom): win.on_event({'kind': 'quick'})
+        self.assertIsNone(top.QUICK)
+        self.assertTrue(bottom.QUICK)
+        self.paint('quick')
+        names = [h[3] for h in bottom.hits]
+        for name in ('bt', 'bb', 'vol', 'Bildschirmfoto', 'Schließen'): self.assertIn(name, names)
+        slider = next(h for h in reversed(bottom.hits) if h[3] == 'bb')
+        slider[1](slider[0].left())
+        self.assertEqual(bottom.SET['bb'], 5)  # never fully dark
+        self.tap('Schließen')
+        self.assertIsNone(bottom.QUICK)
+        bottom.on_event({'kind': 'quick'}); bottom.on_event({'kind': 'quick'})
+        self.assertIsNone(bottom.QUICK)
+
     def test_walk_through(self):
         top, bottom = self.top, self.bottom
         self.paint('systems')  # nothing played yet: the service opens on the systems
@@ -583,7 +881,7 @@ class Views(unittest.TestCase):
         bottom.RUN['deck'], bottom.RUN['appid'] = 'deck/377840.html', '377840'
         self.paint('deck'); self.wait(lambda: bottom.deck and bottom.deck.st and bottom.deck.sprite('face/zidane'))
         self.paint('deck-field')
-        self.assertNotIn('SPIEL BEENDEN', [h[3] for h in bottom.hits])
+        self.assertNotIn('Spiel beenden', [h[3] for h in bottom.hits])
         self.tap('Items'); self.paint('deck-Items')
         area = bottom.scrolls[-1][0]  # forty items do not fit: the list follows the finger
         mouse = lambda kind, y: QGuiApplication.sendEvent(bottom, QMouseEvent(kind, QPointF(area.center().x(), y), QPointF(area.center().x(), y), Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
@@ -626,6 +924,137 @@ class Views(unittest.TestCase):
         bottom.drop_deck()
         self.assertIsNone(bottom.deck); self.assertNotIn('decks.pipboy', sys.modules)
         bottom.RUN['appid'] = None
+        # a native port: Half-Life's HEV deck over the deck socket (a stand-in for the game's client library)
+        FakeHalfLife.home = str(base.TMP / 'hl')
+        (base.TMP / 'hl/valve/save').mkdir(parents=True)
+        (base.TMP / 'hl/valve/save/quick.sav').write_bytes(b'')
+        path = str(base.TMP / 'deck.sock')
+        game = socketserver.ThreadingUnixStreamServer(path, FakeHalfLife)
+        threading.Thread(target=game.serve_forever, daemon=True).start()
+        bottom.RUN['port'] = {'deck': 'hev', 'socket': path}
+        self.paint('hev'); self.wait(lambda: bottom.deck and bottom.deck.d.get('w') and bottom.deck.hello)
+        self.paint('hev-arsenal')
+        self.assertNotIn('Spiel beenden', [h[3] for h in bottom.hits])
+        self.tap('weapon_crowbar'); self.wait(lambda: FakeHalfLife.commands == ['thor_select 1'])
+        self.tap('weapon_9mmAR'); self.assertEqual(bottom.deck.toast, 'Leer')  # no ammunition: nothing is sent
+        self.tap('Lampe'); self.tap('Benutzen'); self.wait(lambda: FakeHalfLife.commands[1:] == ['impulse 100', 'thor_use'])
+        self.tap('Schnellladen'); self.paint('hev-armed'); self.tap('Nochmal tippen'); self.wait(lambda: FakeHalfLife.commands[-1] == 'loadquick')  # only the second tap loads
+        self.tap('SPIELSTÄNDE'); self.wait(lambda: bottom.deck.saves); self.paint('hev-saves')
+        self.tap('save:quick'); self.tap('save:quick'); self.wait(lambda: FakeHalfLife.commands[-1] == 'load quick')
+        self.tap('SPEICHERN'); self.wait(lambda: FakeHalfLife.commands[-1] == 'save new')
+        self.tap('ARSENAL')
+        bottom.drop_deck()
+        self.assertIsNone(bottom.deck); self.assertNotIn('decks.hev', sys.modules)
+        bottom.RUN['port'] = None; game.shutdown(); game.server_close()
+        # another native port: the command deck of Age of Kings, with the mini-map and the icons as binary blocks
+        path = str(base.TMP / 'aok.sock')
+        game = socketserver.ThreadingUnixStreamServer(path, FakeAok)
+        threading.Thread(target=game.serve_forever, daemon=True).start()
+        bottom.RUN['port'] = {'deck': 'aok', 'socket': path}
+        self.paint('aok'); self.wait(lambda: bottom.deck and bottom.deck.map is not None and bottom.deck.icons.get((50706, 3)))
+        self.paint('aok-commands')
+        self.assertEqual((bottom.deck.map.width(), bottom.deck.icons[50706, 3].pixel(0, 0), bottom.deck.art), (4, 0xFF00FF00, None))
+        self.tap('Dorfzentrum'); self.tap('command1'); self.tap('faster'); self.wait(lambda: FakeAok.commands == ['cmd 5 0 0', 'cmd 1 1 0', 'cmd 15 1 0'])
+        at = bottom.deck.stage.map(aok.MAP_AREA.center())  # a finger on the middle of the mini-map
+        QGuiApplication.sendEvent(bottom, QMouseEvent(QEvent.Type.MouseButtonPress, at, at, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+        self.wait(lambda: FakeAok.commands[-1] == 'cmd 2 32768 32768')
+        QGuiApplication.sendEvent(bottom, QMouseEvent(QEvent.Type.MouseButtonRelease, at, at, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+        bottom.deck.press(bottom.deck.stage.map(aok.GROUPS[1].center())); self.wait(lambda: FakeAok.commands[-1] == 'cmd 14 2 0')  # held: the selection becomes group II
+        bottom.deck.press(None)
+        self.tap('GEHE ZU'); self.tap('goto0'); self.wait(lambda: FakeAok.commands[-1] == 'cmd 12 0 0'); self.paint('aok-goto')
+        self.tap('SPIEL'); self.tap('Beenden'); self.paint('aok-game'); self.assertTrue(bottom.deck.is_armed('quit'))  # asks first
+        bottom.drop_deck()
+        bottom.RUN['port'] = None; game.shutdown(); game.server_close()
+        # and the command deck of Red Alert 2: the radar, the cameos and the sidebar art as binary blocks
+        path = str(base.TMP / 'ra2.sock')
+        game = socketserver.ThreadingUnixStreamServer(path, FakeRa2)
+        threading.Thread(target=game.serve_forever, daemon=True).start()
+        bottom.RUN['port'] = {'deck': 'ra2', 'socket': path}
+        self.paint('ra2'); self.wait(lambda: bottom.deck and bottom.deck.radar is not None and bottom.deck.pics.get(5))
+        self.paint('ra2-deck')
+        self.assertEqual((bottom.deck.radar.width(), bottom.deck.pics[5].pixel(0, 0), bottom.deck.names[5], bottom.deck.has_art(ra2.CH_SIDE2)), (4, 0xFF00FF00, 'Kraftwerk', False))
+        self.tap('Reparieren'); self.tap('item9'); self.tap('item5'); self.tap('Infanterie'); self.tap('ZOOM 125%')  # a building in the works: its tap holds it
+        self.wait(lambda: FakeRa2.commands == ['cmd 3 0 0 0', 'cmd 1 0 9 0', 'cmd 1 0 5 1', 'cmd 6 2 0 0', 'zoom 150'])
+        at = bottom.deck.stage.map(ra2.RADAR_VIEW.center())  # a finger on the middle of the radar
+        QGuiApplication.sendEvent(bottom, QMouseEvent(QEvent.Type.MouseButtonPress, at, at, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+        self.wait(lambda: FakeRa2.commands[-1] == 'cmd 2 32768 32768 0')
+        QGuiApplication.sendEvent(bottom, QMouseEvent(QEvent.Type.MouseButtonRelease, at, at, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+        bottom.deck.press(bottom.deck.stage.map(ra2.cell(2, 1).center())); self.wait(lambda: FakeRa2.commands[-1] == 'cmd 8 2 1 0')  # held: the selection becomes group II
+        bottom.deck.press(None)
+        self.tap('BEENDEN'); self.paint('ra2-armed'); self.assertTrue(bottom.deck.is_armed('quit'))  # asks first
+        bottom.drop_deck()
+        bottom.RUN['port'] = None; game.shutdown(); game.server_close()
+        # and the command deck of Command & Conquer / Red Alert: the snapshot, radar and cameos of the engine Thor Conquer
+        path = str(base.TMP / 'cnc.sock')
+        game = socketserver.ThreadingUnixStreamServer(path, FakeCnc)
+        threading.Thread(target=game.serve_forever, daemon=True).start()
+        bottom.RUN['port'] = {'deck': 'cnc', 'socket': path}
+        key = 5 << 16 | 3
+        self.paint('cnc'); self.wait(lambda: bottom.deck and bottom.deck.radar is not None and bottom.deck.pics.get(key) and bottom.deck.pics.get(3 << 16 | 1) is False)
+        self.paint('cnc-deck')
+        self.assertEqual((bottom.deck.radar.width(), bottom.deck.pics[key].pixel(0, 0), bottom.deck.names[key], bottom.deck.pics[3 << 16 | 1]), (4, 0xFF00FF00, 'Kraftwerk', False))
+        for name in ('Optionen', 'REPARIEREN', 'VERKAUFEN', f'item{key}', f'item{3 << 16 | 1}', 'group2', 'group1', 'BASIS', 'TEMPO', 'SICHERN'): self.tap(name)
+        # the menu key, repair, sell, a building in the works is held, a unit is trained, the selected group is looked at, an empty one and a skirmish's quick save only say so
+        self.wait(lambda: FakeCnc.commands == ['cmd 5 41 0 0', 'cmd 3 0 0 0', 'cmd 4 0 0 0', f'cmd 1 0 0 {key << 1 | 1}', f'cmd 1 1 0 {(3 << 16 | 1) << 1}', 'cmd 9 1 2 0', 'cmd 8 1 0 0', 'cmd 11 3 0 0'])
+        at = bottom.deck.stage.map(bottom.deck.L['radar'].center())  # a finger on the middle of the radar: the middle of the 64 x 64 map
+        QGuiApplication.sendEvent(bottom, QMouseEvent(QEvent.Type.MouseButtonPress, at, at, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+        self.wait(lambda: FakeCnc.commands[-1] == 'cmd 2 42 52 0')
+        QGuiApplication.sendEvent(bottom, QMouseEvent(QEvent.Type.MouseButtonRelease, at, at, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+        bottom.deck.press(bottom.deck.stage.map(bottom.deck.L['group', 2].center())); self.wait(lambda: FakeCnc.commands[-1] == 'cmd 9 2 1 0')  # held: the selection becomes group 3
+        bottom.deck.press(None)
+        bottom.deck.press(bottom.deck.stage.map(bottom.deck.L['strip', 0].topLeft() + QPointF(5, 5)))  # the building held: on hold now ...
+        self.wait(lambda: FakeCnc.commands[-1] == f'cmd 1 0 0 {key << 1 | 1}' and bottom.deck.cancel[0] == key)
+        bottom.deck.press(None)
+        bottom.deck.heard({**cnc_state(), 'i': cnc_state()['i'][:32] + [cnc.ST_ON_HOLD] + cnc_state()['i'][33:]})  # ... and given up once the game says so
+        self.wait(lambda: FakeCnc.commands[-2:] == [f'cmd 1 0 0 {key << 1 | 1}'] * 2 and bottom.deck.cancel[0] is None)
+        self.tap('BEENDEN'); self.paint('cnc-armed'); self.assertTrue(bottom.deck.is_armed('quit'))  # asks first
+        bottom.drop_deck()
+        bottom.RUN['port'] = None; game.shutdown(); game.server_close()
+        # and the deck of KKnD 2: the state, the faction's art, the minimap and the icons of the game OpenRA as binary blocks
+        path = str(base.TMP / 'kknd2.sock')
+        game = socketserver.ThreadingUnixStreamServer(path, FakeKknd2)
+        threading.Thread(target=game.serve_forever, daemon=True).start()
+        bottom.RUN['port'] = {'deck': 'kknd2', 'socket': path}
+        self.paint('kknd2'); self.wait(lambda: bottom.deck and bottom.deck.art and bottom.deck.minimap is not None and bottom.deck.icons.get('evolved_giant_beetle'))
+        self.paint('kknd2-deck')
+        self.assertEqual((len(bottom.deck.art), bottom.deck.minimap.width(), bottom.deck.icons['evolved_giant_beetle'].pixel(0, 0)), (12, 4, 0xFF00FF00))
+        self.assertNotIn('card:evolved_mammoth', [h[3] for h in bottom.hits])  # a locked card does nothing
+        for name in ('INFANTERIE', 'FORSCHUNG', 'card:evolved_giant_beetle', 'group1', 'TEMPO', 'BEWEGEN', 'ANGRIFF', 'MENÜ'): self.tap(name)
+        # the vehicle page stays the game's: the taps on the pages only ask the game to turn them
+        self.wait(lambda: FakeKknd2.commands == ['tab 0', 'tab 4', 'produce 31 evolved_giant_beetle 0', 'group 0 0', 'speed', 'move', 'mode attack', 'menu'])
+        at = bottom.deck.stage.map(bottom.deck.mm[0].center())  # a finger on the middle of the minimap: the middle of the map's bounds
+        QGuiApplication.sendEvent(bottom, QMouseEvent(QEvent.Type.MouseButtonPress, at, at, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+        self.wait(lambda: FakeKknd2.commands[-1] == 'jump 32.0 32.0')
+        QGuiApplication.sendEvent(bottom, QMouseEvent(QEvent.Type.MouseButtonRelease, at, at, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+        bottom.deck.press(bottom.deck.stage.map(next(r for r, k, _ in bottom.deck.longs if k == ('group', 2)).center()))
+        self.wait(lambda: FakeKknd2.commands[-1] == 'group 2 1')  # held: the selection becomes group 3
+        bottom.deck.press(None)
+        self.tap('BEENDEN'); self.paint('kknd2-armed'); self.assertTrue(bottom.deck.is_armed('quit'))  # asks first
+        bottom.deck.heard(None); self.paint('kknd2-idle'); self.tap('MENÜ'); self.wait(lambda: FakeKknd2.commands[-1] == 'menu')  # the game's menus: the idle page
+        bottom.drop_deck()
+        bottom.RUN['port'] = None; game.shutdown(); game.server_close()
+        # and the deck of Heroes III: the state, the minimap as a JSON block, the game's art as binary blocks
+        path = str(base.TMP / 'homm3.sock')
+        game = socketserver.ThreadingUnixStreamServer(path, FakeHomm3)
+        threading.Thread(target=game.serve_forever, daemon=True).start()
+        bottom.RUN['port'] = {'deck': 'homm3', 'socket': path}
+        self.paint('homm3'); self.wait(lambda: bottom.deck and bottom.deck.minimap is not None and bottom.deck.pics.get('def:RESOURCE:6') and bottom.deck.fonts.get('medium') is False)
+        self.paint('homm3-deck')
+        self.assertEqual((bottom.deck.minimap.width(), bottom.deck.pics['def:RESOURCE:6'].pixel(0, 0), bottom.deck.pics['img:DIBOXBCK']), (4, 0xFF00FF00, False))
+        self.assertNotIn('key adventureNextHero', [h[3] for h in bottom.hits])  # the game says there is no next hero: the button does nothing
+        for name in ('key adventureEndTurn', 'hero 7', 'ui:slot 0 1', 'ui:slot 2 1', 'ui:tab 1', 'spell 4', 'ui:tab 3', 'key adventureMainMenu'): self.tap(name)
+        self.wait(lambda: FakeHomm3.commands == ['key adventureEndTurn', 'hero 7', 'army 0 2 m', 'spell 4', 'key adventureMainMenu'])  # two slots tapped: the stack moves
+        at = bottom.deck.stage.map(bottom.deck.map_rect.center())  # a finger on the middle of the minimap: the middle tile
+        QGuiApplication.sendEvent(bottom, QMouseEvent(QEvent.Type.MouseButtonPress, at, at, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+        self.wait(lambda: FakeHomm3.commands[-1] == 'tile 2 1')
+        QGuiApplication.sendEvent(bottom, QMouseEvent(QEvent.Type.MouseButtonRelease, at, at, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+        bottom.deck.heard({**homm3_state(), 'mode': 'battle', 'battle': {'hero': 'Xsi', 'mana': 20, 'manaMax': 20, 'unit': {'name': 'Skelette', 'count': 30, 'icon': 56},
+                                                                         'queue': [{'icon': 56, 'count': 30, 'side': 0, 'turn': 0}], 'speed': 2, 'log': ['{Skelette} greifen an']}})
+        self.paint('homm3-battle'); self.tap('key battleDefend'); self.tap('speed 3'); self.wait(lambda: FakeHomm3.commands[-2:] == ['key battleDefend', 'speed 3'])
+        bottom.deck.heard({'mode': 'menu'})
+        self.tap('ui:quit'); self.paint('homm3-armed'); self.assertLess(time.time() - bottom.deck.armed, homm3.CONFIRM)  # asks first
+        bottom.drop_deck()
+        bottom.RUN['port'] = None; game.shutdown(); game.server_close()
         # an emulated game with a companion pack (stand-ins: RetroArch's memory commands, a small pack of our own)
         ra = FakeRetroArch()
         sample_pack(base.TMP / 'config/tandem/packs/sample-pack')
@@ -636,7 +1065,7 @@ class Views(unittest.TestCase):
         deck = bottom.deck
         names = lambda: [h[3] for h in bottom.hits]
         self.paint('pack-waiting')
-        self.assertEqual((deck.tree.snapshot['waiting'], [n for n in names() if n in ('Begleiter', 'Erfolge', 'Steuerung', 'mon', 'SPIEL BEENDEN')]), (True, ['Steuerung', 'Erfolge', 'Begleiter']))
+        self.assertEqual((deck.tree.snapshot['waiting'], [n for n in names() if n in ('Begleiter', 'Erfolge', 'Steuerung', 'mon', 'Spiel beenden')]), (True, ['Steuerung', 'Erfolge', 'Begleiter']))
         sample_game(ra); ra.poke(0x02000000, bytes([1, 2]))  # the game is past its title screen
         self.wait(lambda: (self.paint('pack'), deck.tree.snapshot.get('ready'))[1])
         self.assertEqual({k: deck.tree.snapshot[k] for k in ('coins', 'math', 'code', 'far')}, {'coins': 1234, 'math': '48 16 3 77', 'code': 'TEST', 'far': 7})
@@ -666,10 +1095,10 @@ class Views(unittest.TestCase):
         bottom.RUN['wide'] = True; self.paint('pack-wide-on'); self.assertEqual((deck.tree.snapshot['_wideLabel'], deck.tree.snapshot['_wide']), ('ON', 1))
         bottom.post = post; del bottom.RUN['wide']
         self.tap('Steuerung'); self.paint('pack-controls')
-        self.assertTrue({'SPIEL BEENDEN', 'vol', 'SPEICHERN' if bottom.RUN['emu'] == 'RetroArch' else 'vol'} <= set(names()))
+        self.assertTrue({'Spiel beenden', 'vol', 'Speichern' if bottom.RUN['emu'] == 'RetroArch' else 'vol'} <= set(names()))
         self.assertNotIn('mon', names())
         self.tap('Erfolge'); self.paint('pack-achievements')
-        self.assertTrue(bottom.maxoff['ach'] > 0 and 'SPIEL BEENDEN' not in names())
+        self.assertTrue(bottom.maxoff['ach'] > 0 and 'Spiel beenden' not in names())
         self.tap('Begleiter'); self.paint('pack-back'); self.assertEqual(names().count('mon'), 2)
         bottom.ACH = None; self.paint('pack-no-ra'); self.assertNotIn('Erfolge', names())  # no RetroAchievements for the game: no such tab
         bottom.drop_deck()
@@ -683,38 +1112,7 @@ class Views(unittest.TestCase):
         top.go('close'); self.wait(lambda: bottom.CONFIRM)
         self.paint('confirm')
         top.go('back'); self.wait(lambda: not bottom.CONFIRM)
-        self.tap('BEENDEN'); self.wait(lambda: not top.RUN and not bottom.RUN)  # the bar's own button
-        # System tab: account name through the on-screen keys
-        self.tap('System'); self.wait(lambda: bottom.SYS)
-        self.paint('system')
-        self.tap('AUSSCHALTEN'); self.wait(lambda: top.CONFIRM and bottom.CONFIRM)  # power actions ask first, on both screens
-        self.paint('power')
-        top.go('back'); self.wait(lambda: not bottom.CONFIRM)
-        self.tap('STANDBY'); self.wait(lambda: top.CONFIRM)
-        self.assertEqual(self.actions, [])
-        top.go('ok'); self.wait(lambda: self.actions == ['suspend'] and not bottom.CONFIRM)
-        self.assertEqual(ui.THEME['id'], 'toravo')
-        self.tap('WECHSELN'); self.wait(lambda: self.service.saved is not None and tandem.public_config()['theme'] != 'toravo' and top.CFG.get('theme') == ui.THEME['id'] != 'toravo')  # touch: next look, stored by the service
-        self.paint('theme-' + ui.THEME['id'])
-        seen = {ui.THEME['id']}
-        for _ in range(8):  # the controller's A on the System tab walks through all of them, back to the default
-            before = ui.THEME['id']
-            top.go('ok'); self.wait(lambda: tandem.public_config()['theme'] == ui.THEME['id'] != before and bottom.CFG.get('theme') == ui.THEME['id'])
-            self.paint('theme-' + ui.THEME['id']); seen.add(ui.THEME['id'])
-            if ui.THEME['id'] == 'toravo': break
-        self.assertTrue({'toravo', 'studio', 'oled', 'hell'} <= seen)
-        self.assertEqual((ui.THEME['id'], ui.INK.name()), ('toravo', '#0a0c13'))
-        self.tap('NAME'); self.assertTrue(bottom.PROMPT)
-        self.paint('prompt')
-        for key in ('⇧', 'A', 'b', 'c', '⌫'): self.tap(key)
-        self.assertEqual(bottom.PROMPT['value'], 'Ab')
-        self.tap('Fertig'); self.wait(lambda: bottom.CFG.get('ra_user') == 'Ab')
-        bottom.SYS['networks'] = [{'ssid': 'Daheim', 'signal': 70, 'secure': True, 'known': False, 'active': False}]
-        bottom.SUB = 'wifi'
-        self.paint('wifi')
-        self.tap('Daheim'); self.assertIn('Daheim', bottom.PROMPT['title'])
-        self.paint('wifi-password')
-        self.tap('Abbrechen'); self.assertIsNone(bottom.PROMPT)
+        self.tap('Beenden'); self.wait(lambda: not top.RUN and not bottom.RUN)  # the bar's own button
         # terminal keys, volume display, toast
         bottom.RUN = top.RUN = {'id': 'term', 't': 'Terminal', 's': 'term', 'emu': 'Terminal', 'since': time.time(), 'layout': 'de'}
         self.paint('terminal')
@@ -727,8 +1125,62 @@ class Views(unittest.TestCase):
         for n in range(len(ui.TABS)): bottom.open_tab(n); self.paint(f'tab{n}')
         bottom.open_tab(3); self.paint('apps')  # Apps has an obvious way to the desktop; it asks first
         self.tap('Zum Desktop'); self.tap('Zum Desktop'); self.wait(lambda: top.CONFIRM and bottom.CONFIRM and 'Desktop' in top.CONFIRM['text'])
-        self.assertEqual(self.actions, ['suspend'])  # nothing ran
-        self.tap('ABBRECHEN'); self.wait(lambda: not top.CONFIRM)
+        self.assertEqual(self.actions, [])  # nothing ran
+        self.tap('Abbrechen'); self.wait(lambda: not top.CONFIRM)
+
+
+    def test_zz_settings(self):  # after the walk-through: it starts from the service's first page
+        top, bottom, changes = self.top, self.bottom, []
+        fake = {'rgb': {'enabled': True, 'linkBrightness': False, 'brightness': 50, 'maxBrightness': 50, 'color': 'FFFFFF', 'saturation': 100, 'level': 50},
+                'gyro': {'supported': True, 'enabled': True}, 'power': {'profile': 'Balanced', 'profiles': [['Eco', 'Sparsam'], ['Balanced', 'Ausgewogen']], 'temp': 40, 'fan': 2000}, 'os': '1'}
+        tandem.thor.state = lambda: fake  # never the Thor's real lights and fan while testing on one
+        tandem.thor.change = lambda key, value: changes.append((key, value)) or fake
+        tandem.settings = lambda: {'bt': 50, 'bb': 50, 'vol': 50}  # the computer running this has no such panels
+        tandem.system_info = lambda roots=(), rescan=False: {'ssid': '', 'networks': [{'ssid': 'Daheim', 'signal': 70, 'secure': True, 'known': False, 'active': False}], 'storage': []}  # nor this network
+        if self.service.run: self.service.quit()  # whatever an earlier test left running
+        self.wait(lambda: not top.RUN and not bottom.RUN)
+        for win in (top, bottom): win.CONFIRM = win.THOR = None; win.thor_at = 0; win.drop_deck(); win.SET = tandem.settings()
+        names = lambda: [h[3] for h in bottom.hits]
+        bottom.open_tab(4); self.wait(lambda: top.S['tab'] == 4 and bottom.SYS and bottom.THOR and top.THOR)
+        self.paint('settings')
+        self.assertTrue({'Bildschirme & Ton', 'Beleuchtung', 'Ein / Aus', 'Oben', 'vol', 'Schwarz nach:Nie'} <= set(names()))
+        # the controller: the list, into an area, change a value, back out
+        top.go('down'); top.go('down'); self.wait(lambda: bottom.S.get('page') == 'light')
+        top.go('ok'); top.go('down'); self.wait(lambda: bottom.S.get('pane') == 1 and bottom.S['i'] == 1)
+        self.paint('settings-light')
+        top.go('right'); self.wait(lambda: changes and changes[-1] == ('rgb', {'color': 'FF2000', 'enabled': True}))  # the next colour, sent once
+        top.go('up'); top.go('ok'); self.wait(lambda: changes[-1] == ('rgb', {'enabled': False}))  # A switches
+        top.go('back'); self.wait(lambda: bottom.S.get('pane') == 0)
+        top.go('back'); self.wait(lambda: bottom.S['tab'] == 0)  # B in the list: back to the library
+        bottom.open_tab(4); self.wait(lambda: top.S['tab'] == 4)
+        # the finger: a sub-page and its way back, always top left
+        self.tap('Controller & Tasten'); self.tap('Tastenbelegung'); self.wait(lambda: top.S.get('page') == 'controls>map')
+        self.paint('settings-map')
+        self.tap('nav-back'); self.wait(lambda: top.S.get('page') == 'controls' and top.S['i'] == 0)
+        self.tap('Bildschirme & Ton'); self.tap('Schwarz nach:Nie'); self.wait(lambda: tandem.public_config()['rest_min'] == 0)
+        self.tap('Schwarz nach:3 Min.'); self.wait(lambda: tandem.public_config()['rest_min'] == 3)
+        self.paint('settings-screens')
+        slider = next(h for h in bottom.hits if h[3] == 'vol'); slider[1](slider[0].right())
+        self.assertEqual(bottom.SET['vol'], 100)
+        self.tap('Ein / Aus'); self.tap('Ausschalten'); self.wait(lambda: top.CONFIRM and bottom.CONFIRM)  # power actions ask first, on both screens
+        self.paint('settings-power')
+        top.go('back'); self.wait(lambda: not bottom.CONFIRM)
+        self.tap('Standby'); self.wait(lambda: top.CONFIRM)
+        top.go('ok'); self.wait(lambda: self.actions[-1:] == ['suspend'] and not bottom.CONFIRM)
+        self.tap('Aussehen')
+        other = next(t for t in bottom.CFG['themes'] if t['id'] != 'toravo')
+        self.tap(other['name']); self.wait(lambda: tandem.public_config()['theme'] == other['id'] == ui.THEME['id'])
+        self.paint('settings-theme')
+        self.tap('Toravo'); self.wait(lambda: tandem.public_config()['theme'] == 'toravo' == ui.THEME['id'])
+        self.tap('Konten'); self.tap('Benutzername'); self.assertTrue(bottom.PROMPT)  # text: the keys on the bottom screen
+        for key in ('⇧', 'A', 'b', 'c', '⌫'): self.tap(key)
+        self.assertEqual(bottom.PROMPT['value'], 'Ab')
+        self.tap('Fertig'); self.wait(lambda: bottom.CFG.get('ra_user') == 'Ab')
+        self.tap('WLAN & Netzwerk'); self.tap('WLAN'); self.wait(lambda: top.S.get('page') == 'network>wifi')
+        self.paint('settings-wifi')
+        self.tap('Daheim'); self.assertIn('Daheim', bottom.PROMPT['title'])
+        self.tap('Abbrechen'); self.assertIsNone(bottom.PROMPT)
+        bottom.open_tab(1); self.wait(lambda: top.S['tab'] == 1)
 
 
 if __name__ == '__main__':

@@ -1,0 +1,46 @@
+#!/bin/bash
+# thor-record start|stop|status: records both screens (gamescope's PipeWire streams, hardware H.264) and the sound into
+# ~/Videos/Tandem/<time>-oben.mp4 (with sound) and <time>-unten.mp4. Runs the GStreamer/PipeWire tools in the distrobox
+# "thor-rec" (Fedora: pipewire-gstreamer, gstreamer1-plugins-good/-bad-free, pipewire-utils); ArmadaOS lacks pipewiresrc.
+# Prints one JSON line. Stops by PID with SIGINT so that the MP4 files get finished.
+set -u
+# onto the SD card when one is in: the hardware encoder ignores bitrate limits (~70 Mbit/s), the internal disk is small
+DIR="$HOME/Videos/Tandem"; for c in /run/media/*/*/; do [ -w "$c" ] && { DIR="${c}Videos/Tandem"; break; }; done; export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"; STATE="$XDG_RUNTIME_DIR/thor-record"
+BOX=thor-rec
+json() { printf '{"on": %s, "name": "%s", "last": "%s"}\n' "$1" "${2:-}" "${3:-}"; }
+running() { [ -f "$STATE/pids" ] && for p in $(cat "$STATE/pids"); do kill -0 "$p" 2>/dev/null && return 0; done; return 1; }
+last() { ls -t "$DIR"/*-oben.mp4 2>/dev/null | head -1 | xargs -r basename; }
+
+case "${1:-status}" in
+start)
+  running && { json true "$(cat "$STATE/name")"; exit 0; }
+  mkdir -p "$DIR" "$STATE"; rm -f "$STATE/pids"
+  name=$(date +%Y%m%d-%H%M%S); echo "$name" > "$STATE/name"
+  # inside the box: both gamescope nodes (lower serial = top screen, it starts first) and the default sink's sound
+  distrobox enter "$BOX" -- sh -c '
+    D="$1"; S="$2"; N="$3"
+    ids=$(pw-dump | python3 -c "import json,sys; print(*sorted(o[\"id\"] for o in json.load(sys.stdin) if ((o.get(\"info\") or {}).get(\"props\") or {}).get(\"node.name\") == \"gamescope\" and ((o.get(\"info\") or {}).get(\"props\") or {}).get(\"media.class\") == \"Video/Source\"))")
+    set -- $ids; top=${1:-}; bottom=${2:-}
+    [ -n "$top" ] || { echo "keine Bildquelle" >&2; exit 1; }
+    rec() { setsid gst-launch-1.0 -e -q pipewiresrc path="$1" do-timestamp=true ! videoconvert ! video/x-raw,format=NV12 ! v4l2h264enc ! h264parse ! mp4mux ! filesink location="$2" >/dev/null 2>&1 & echo $! >> "$S/pids"; }
+    rec "$top" "$D/$N-oben.v.mp4"
+    [ -n "$bottom" ] && rec "$bottom" "$D/$N-unten.mp4"
+    sink=$(pw-dump | python3 -c "import json,sys; d=json.load(sys.stdin); m=[o for o in d if o.get(\"type\")==\"PipeWire:Interface:Metadata\" and (o.get(\"props\") or {}).get(\"metadata.name\")==\"default\"]; v=[e[\"value\"] for e in (m[0][\"metadata\"] if m else []) if e.get(\"key\")==\"default.audio.sink\"]; print(v[0][\"name\"] if v else \"\")")
+    [ -n "$sink" ] && { setsid pw-record --target "$sink" -P stream.capture.sink=true "$S/$N.wav" >/dev/null 2>&1 & echo $! >> "$S/pids"; }
+    sleep 1' _ "$DIR" "$STATE" "$name" || { json false "" "$(last)"; exit 1; }
+  running && json true "$name" || { echo '{"error": "Aufnahme konnte nicht starten"}'; exit 1; }
+  ;;
+stop)
+  running || { json false "" "$(last)"; exit 0; }
+  name=$(cat "$STATE/name")
+  for p in $(cat "$STATE/pids"); do kill -INT "$p" 2>/dev/null; done
+  for _ in $(seq 1 40); do running || break; sleep .25; done
+  rm -f "$STATE/pids"
+  v="$DIR/$name-oben.v.mp4"; a="$STATE/$name.wav"
+  if [ -s "$a" ]; then ffmpeg -v error -y -i "$v" -i "$a" -c:v copy -c:a aac -b:a 192k "$DIR/$name-oben.mp4" && rm -f "$v" "$a"
+  else mv "$v" "$DIR/$name-oben.mp4"; fi
+  json false "" "$name-oben.mp4"
+  ;;
+status) running && json true "$(cat "$STATE/name")" "$(last)" || json false "" "$(last)" ;;
+*) echo "usage: thor-record start|stop|status" >&2; exit 2 ;;
+esac

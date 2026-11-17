@@ -1,0 +1,25 @@
+#!/bin/bash
+# run: starts Age of Kings (the engine OpenAoK from dist/, see build.sh).
+# The game data is the player's own, prepared from their CD by the engine's tools (a folder with assets/, fonts/ and
+# original_game_1999/), and is only read: the first of $OPENAOK_DATA, ~/OpenAoK-data, or an "OpenAoK-data" on a card
+# (looked for once, then remembered). Profile, saved games and own scenarios go to data/ next to this script.
+set -eu
+HERE="$(cd "$(dirname "$0")" && pwd)"
+BASE="$HERE/data"
+mkdir -p "$BASE/game/build"
+
+has() { [ -f "$1/assets/extracted_data/rules.json" ]; }
+DATA="${OPENAOK_DATA:-$(cat "$BASE/data-path" 2>/dev/null || true)}"
+if ! has "$DATA"; then
+    DATA=
+    for d in "$HOME/OpenAoK-data" $(find /run/media/"$USER" -maxdepth 3 -type d -name OpenAoK-data 2>/dev/null); do
+        if has "$d"; then DATA="$d"; echo "$d" > "$BASE/data-path"; break; fi
+    done
+fi
+[ -n "$DATA" ] || { echo "Age of Kings: no game data found (set OPENAOK_DATA or copy the prepared folder to ~/OpenAoK-data)" >&2; exit 1; }
+
+# The engine names its files from build/, as "../assets/...": a folder of links to the data, which stays untouched.
+for d in assets fonts original_game_1999; do ln -sfn "$DATA/$d" "$BASE/game/$d"; done
+export XDG_DATA_HOME="$BASE"  # where the engine keeps what it writes (data/OpenAoK/)
+cd "$BASE/game/build"
+exec "$HERE/dist/OpenAoK" --widescreen

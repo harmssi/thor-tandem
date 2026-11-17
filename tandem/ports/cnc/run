@@ -1,0 +1,49 @@
+#!/bin/bash
+# run [td|ra]: starts Command & Conquer (Tiberian Dawn, "td") or Red Alert ("ra") – the engine "Thor Conquer" from
+# dist/, see build.sh.
+# The game data is the player's own C&C Remastered Collection (its folder Data/CNCDATA with the original MIX files) and
+# is only read: the first of $CNC_DATA, ~/CNCDATA, the Steam library in the home folder, or a Steam folder
+# "CnCRemastered" on a card (looked for once, then remembered). The engine wants the files of the discs side by side
+# in sub folders, so data/<game>/files gets links to them. Settings and saved games go to data/<game>/home.
+# data/settings (optional, a shell file) may set THOR_POINTER_SPEED, THOR_SCROLL, THOR_SKIP_MOVIES, THOR_ZOOM, THOR_DEMO,
+# THOR_FPS (see the engine's common/thor_tandem.cpp).
+set -eu
+HERE="$(cd "$(dirname "$0")" && pwd)"
+GAME="${1:-ra}"
+BASE="$HERE/data"
+mkdir -p "$BASE"
+
+if [ "$GAME" = td ]; then NAME="Command & Conquer"; KEY=TIBERIAN_DAWN/CD1/CONQUER.MIX; else NAME="Red Alert"; KEY=RED_ALERT/CD1/REDALERT.MIX; fi
+DATA="${CNC_DATA:-$(cat "$BASE/data-path" 2>/dev/null || true)}"
+if ! [ -f "$DATA/$KEY" ]; then
+    DATA=
+    while IFS= read -r d; do
+        if [ -f "$d/$KEY" ]; then DATA="$d"; echo "$d" > "$BASE/data-path"; break; fi
+    done < <(echo "$HOME/CNCDATA"; echo "$HOME/.local/share/Steam/steamapps/common/CnCRemastered/Data/CNCDATA"
+             find /run/media/"$USER" -maxdepth 10 -type d -name CnCRemastered -printf '%p/Data/CNCDATA\n' 2>/dev/null)
+fi
+[ -n "$DATA" ] || { echo "$NAME: no game data found (set CNC_DATA or copy Data/CNCDATA of your C&C Remastered Collection to ~/CNCDATA)" >&2; exit 1; }
+
+link() {  # link <folder of the disc> <sub folder> <file>...: missing files (a disc that is not there) are left out
+    local from="$DATA/$1" to="$BASE/$GAME/files/$2"; shift 2
+    mkdir -p "$to"
+    for f in "$@"; do [ -f "$from/$f" ] && ln -sfn "$from/$f" "$to/$f"; done
+    return 0
+}
+if [ "$GAME" = td ]; then
+    link TIBERIAN_DAWN/CD1 . CONQUER.MIX CCLOCAL.MIX LOCAL.MIX TEMPERAT.MIX DESERT.MIX WINTER.MIX SOUNDS.MIX SPEECH.MIX SCORES.MIX TRANSIT.MIX \
+        UPDATE.MIX UPDATEC.MIX UPDATA.MIX TEMPICNH.MIX DESEICNH.MIX WINTICNH.MIX ZOUNDS.MIX SC-000.MIX SC-001.MIX
+    link TIBERIAN_DAWN/CD1 gdi GENERAL.MIX MOVIES.MIX
+    link TIBERIAN_DAWN/CD2 nod GENERAL.MIX MOVIES.MIX
+else
+    link RED_ALERT/CD1 . REDALERT.MIX EXPAND.MIX EXPAND2.MIX HIRES1.MIX LORES1.MIX
+    link RED_ALERT/CD1 allied MAIN.MIX
+    link RED_ALERT/COUNTERSTRIKE counterstrike MAIN.MIX
+    link RED_ALERT/AFTERMATH aftermath MAIN.MIX
+fi
+
+[ -f "$BASE/settings" ] && . "$BASE/settings"
+mkdir -p "$BASE/$GAME/home"
+export THOR_GAME="$GAME" THOR_DATA="$BASE/$GAME/files" THOR_HOME="$BASE/$GAME/home"
+export THOR_POINTER_SPEED THOR_SCROLL THOR_SKIP_MOVIES THOR_ZOOM THOR_DEMO THOR_FPS
+exec "$HERE/dist/vanilla$GAME"

@@ -1,7 +1,7 @@
 {
   "name": "Toravo",
-  "colors": {"bg": "#0a0c13", "panel": "#141824", "raised": "#1e2434", "line": "#2c3449", "text": "#eef0f6", "muted": "#8d94aa", "accent": "#ffb23e", "live": "#39d0b8", "warn": "#ff7a66"},
-  "fonts": {"display": ["Barlow Condensed", "Nimbus Sans Narrow"], "body": ["Barlow", "Noto Sans"]},
+  "colors": {"bg": "#07080b", "panel": "#15161b", "raised": "#202128", "line": "#2c2d35", "text": "#f5f5f7", "muted": "#9a9ba4", "accent": "#ffb23e", "live": "#34d399", "warn": "#ff6b5e"},
+  "fonts": {"ui": ["Inter", "Adwaita Sans", "Noto Sans"], "display": ["Barlow Condensed", "Nimbus Sans Narrow"], "body": ["Barlow", "Noto Sans"]},
   "radius": 1.0,
   "glow": 1.0,
   "gameAccent": true

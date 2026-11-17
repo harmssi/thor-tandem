@@ -20,15 +20,21 @@ os.environ.pop('QT_QPA_PLATFORMTHEME', None)  # the KDE theme plug-in would pull
 os.environ['XDG_CURRENT_DESKTOP'] = ''
 from PySide6.QtCore import QBuffer, QByteArray, QPointF, QRectF, QSize, Qt, QTimer, Signal  # noqa: E402
 from PySide6.QtGui import (QBrush, QColor, QFont, QFontDatabase, QFontMetricsF, QGuiApplication, QImage, QImageReader,  # noqa: E402
-                           QLinearGradient, QPainter, QPen, QRasterWindow)
+                           QLinearGradient, QPainter, QPainterPath, QPen, QRadialGradient, QRasterWindow)
 try: from PySide6.QtSvg import QSvgRenderer  # icons only; without it tiles show initials
 except ImportError: QSvgRenderer = None
+import settings_view  # noqa: E402  the Einstellungen tab (its own module: big, and changed on its own)
+settings_view.ui = sys.modules[__name__]
+import quick_view  # noqa: E402  the Thor key's quick menu on the bottom screen
+quick_view.ui = sys.modules[__name__]
+import lang  # noqa: E402  English texts (config lang 'en')
 
-INK, PANEL, RAISED, LINE, TEXT, MUTED, FOCUS, LIVE, WARN = (QColor(c) for c in ('#0a0c13', '#141824', '#1e2434', '#2c3449', '#eef0f6', '#8d94aa', '#ffb23e', '#39d0b8', '#ff7a66'))
+INK, PANEL, RAISED, LINE, TEXT, MUTED, FOCUS, LIVE, WARN = (QColor(c) for c in ('#07080b', '#15161b', '#202128', '#2c2d35', '#f5f5f7', '#9a9ba4', '#ffb23e', '#34d399', '#ff6b5e'))
 ON_ART = QColor('#eef0f6')  # text on covers and on their dark shade: light in every theme
-FAMILIES = {'d': ['Barlow Condensed', 'Nimbus Sans Narrow'], 'b': ['Barlow', 'Noto Sans'], 'm': ['Hack', 'Liberation Mono'],  # display, body, monospace
+FAMILIES = {'u': ['Inter', 'Adwaita Sans', 'Noto Sans'], 'd': ['Barlow Condensed', 'Nimbus Sans Narrow'], 'b': ['Barlow', 'Noto Sans'], 'm': ['Hack', 'Liberation Mono'],  # interface; display, body (decks); monospace
             'n': ['Arial Narrow', 'Nimbus Sans Narrow', 'Barlow Condensed'], 's': ['Georgia', 'Noto Serif', 'C059', 'Nimbus Roman']}  # for decks: narrow, serif
-TABS, COLS = ['Start', 'Systeme', 'Steam', 'Apps', 'System'], 5
+TABS, COLS = ['Start', 'Systeme', 'Steam', 'Apps', 'Einstellungen'], 5
+WEEKDAYS, MONTHS = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'], ['Jan.', 'Feb.', 'März', 'Apr.', 'Mai', 'Juni', 'Juli', 'Aug.', 'Sep.', 'Okt.', 'Nov.', 'Dez.']
 RA = [('save', 'Speichern'), ('load', 'Laden'), ('slot-', 'Slot −'), ('slot+', 'Slot +'), ('ff', 'Vorspulen'), ('pause', 'Pause'), ('menu', 'Menü'), ('shot', 'Foto')]
 ICONS = {'term': '<path d="M4 5h16v14H4z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M7 9l3 3-3 3M12 15h5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>',
          'web': '<circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M4 12h16M12 4c3 3 3 13 0 16M12 4c-3 3-3 13 0 16" fill="none" stroke="currentColor" stroke-width="1.6"/>',
@@ -62,7 +68,8 @@ KB_MODS = {42: 'shift', 29: 'ctrl', 56: 'alt', 100: 'altgr'}
 # and may use the window's helpers: hit(), scroller(), text(), box(), font(), width_of(), Images, http(), memo (a dict
 # that outlives the deck) and, for a scaled stage, window.xf / window.zoom (see hit()). Optional: press(pos or None) hears
 # a finger go down and up, ingame() paints the normal in-game panel below a deck's own tabs.
-# An emulated game with a companion pack (run['pack'], see find_pack in tandem.py) gets the deck 'pack'.
+# An emulated game with a companion pack (run['pack'], see find_pack in tandem.py) gets the deck 'pack'; a native port
+# names its deck itself (run['port'], see PORTS in tandem.py) and talks to it over a socket (decks/portsocket.py).
 DECKS = {'377840': 'ffix', '377160': 'pipboy'}  # Final Fantasy IX, Fallout 4
 POWER = {'suspend': ('In den Standby gehen?', 'Standby'), 'reboot': ('Thor neu starten?', 'Neu starten'), 'poweroff': ('Thor ausschalten?', 'Ausschalten'),
          'desktop': ('Zum Desktop wechseln?', 'Desktop')}
@@ -116,8 +123,8 @@ def faded(color, a): return QColor(color.red(), color.green(), color.blue(), rou
 # (same file name: the user's wins). The built-in values below are the Toravo look; a theme only says what differs.
 THEME_DIRS = [Path(__file__).resolve().parent / 'themes', Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config') / 'tandem/themes']
 DEFAULT_THEME = {'id': 'toravo', 'name': 'Toravo', 'radius': 1.0, 'glow': 1.0, 'gradient': None, 'background': None, 'gameAccent': True,
-                 'colors': {'bg': '#0a0c13', 'panel': '#141824', 'raised': '#1e2434', 'line': '#2c3449', 'text': '#eef0f6', 'muted': '#8d94aa', 'accent': '#ffb23e', 'live': '#39d0b8', 'warn': '#ff7a66'},
-                 'fonts': {'display': ['Barlow Condensed', 'Nimbus Sans Narrow'], 'body': ['Barlow', 'Noto Sans']}}
+                 'colors': {'bg': '#07080b', 'panel': '#15161b', 'raised': '#202128', 'line': '#2c2d35', 'text': '#f5f5f7', 'muted': '#9a9ba4', 'accent': '#ffb23e', 'live': '#34d399', 'warn': '#ff6b5e'},
+                 'fonts': {'ui': ['Inter', 'Adwaita Sans', 'Noto Sans'], 'display': ['Barlow Condensed', 'Nimbus Sans Narrow'], 'body': ['Barlow', 'Noto Sans']}}
 THEME = dict(DEFAULT_THEME)  # the active one, complete
 
 
@@ -153,7 +160,7 @@ def apply_theme(theme):
     THEME.clear(); THEME.update(theme)
     for color, key in ((INK, 'bg'), (PANEL, 'panel'), (RAISED, 'raised'), (LINE, 'line'), (TEXT, 'text'), (MUTED, 'muted'), (FOCUS, 'accent'), (LIVE, 'live'), (WARN, 'warn')):
         color.setRgba(QColor(theme['colors'][key]).rgba())
-    FAMILIES['d'][:], FAMILIES['b'][:] = theme['fonts']['display'], theme['fonts']['body']
+    FAMILIES['u'][:], FAMILIES['d'][:], FAMILIES['b'][:] = theme['fonts']['ui'], theme['fonts']['display'], theme['fonts']['body']
 
 
 # ---- a game's own accent colour (from its cover) -------------------------------------------------------------------------
@@ -289,7 +296,10 @@ class Tandem(QRasterWindow):
         self.setTitle('Toravo Tandem')
         self.L = {'systems': {}, 'games': [], 'apps': [], 'fav': [], 'played': {}}
         self.S, self.RUN, self.BATT, self.SET, self.CFG = {'tab': 0, 'sys': None, 'i': 0}, None, None, {'bt': None, 'bb': None, 'vol': None}, {}
-        self.ACH = self.PAIR = self.SYS = self.PROMPT = self.CONFIRM = self.OSD = self.SETUP = None
+        self.ACH = self.PAIR = self.SYS = self.PROMPT = self.CONFIRM = self.OSD = self.SETUP = self.QUICK = self.REC = None
+        self.THOR = self.CTRL = self.UPD = self.focus_seen = None  # the settings: Thor hardware, button layout, update check
+        self.thor_at = 0.0
+        self.ui_lock, self.ui_out, self.ui_busy = threading.Lock(), None, False
         self.TOAST, self.SUB, self.KM, self.asked = '', '', set(), False
         self.hits, self.scrolls, self.clip, self.off, self.maxoff, self.seen = [], [], None, {}, {}, None
         self.press = self.drag = self.scrolling = self.pending = self.deck = self.xf = None
@@ -298,7 +308,9 @@ class Tandem(QRasterWindow):
         self.fonts, self.svgs, self.u = {}, {}, 1.0
         self.images = Images(2 if screen == 'top' else 60, self.loaded)  # top: full-screen art; bottom: tiles
         self.thumbs = Images(6, self.loaded, workers=1)  # covers at 24 pixels, to find a game's colour
-        self.backdrop = None
+        self.backdrop, self.WIFI = None, None
+        self.hero = {'cur': None, 'prev': None, 't0': 0.0, 'key': None, 'kt': 0.0}  # top: picture cross-fade and title fade-in
+        self.lift = (None, 0.0)  # bottom: the selected tile rises (key, start)
         load_accents()
         self.active = time.time()  # last input, for resting()
         self.event.connect(self.on_event)
@@ -342,7 +354,7 @@ class Tandem(QRasterWindow):
     def pulse(self):
         def got(s):
             if not s: return
-            self.BATT, self.PAIR, self.CFG = s.get('battery'), s.get('pair'), s.get('config') or self.CFG
+            self.BATT, self.WIFI, self.PAIR, self.CFG = s.get('battery'), s.get('wifi'), s.get('pair'), s.get('config') or self.CFG
             self.follow_setup(s.get('setup'))
             self.follow_theme()
             if not self.drag: self.SET = s.get('settings') or self.SET
@@ -372,7 +384,7 @@ class Tandem(QRasterWindow):
         missing = [f'{m["name"]} ({m["n"]} Spiele) braucht {m["emu"] or "einen Emulator"}.' for m in s['missing']]
         emus = missing + ['Tandem kann das Fehlende jetzt installieren.' if s['install'] or all(m['extra'] for m in s['missing']) else 'Bitte im Desktop-Modus im Armada Store installieren.'] if missing else ['Für alle gefundenen Spiele ist ein Emulator da.']
         net = ['WLAN: ' + (s['wifi'] or 'nicht verbunden'), 'Erfolge (RetroAchievements): ' + ((s['ra_user'] + (' · angemeldet' if s['ra_login'] else '')) if s['ra_user'] else 'kein Konto'),
-               'Ändern kannst du beides jederzeit unter „System“ – oder bequem vom Handy über die dort gezeigte Adresse.']
+               'Ändern kannst du beides jederzeit unter „Einstellungen“ – oder bequem vom Handy über die dort gezeigte Adresse.']
         return [('Willkommen bei Tandem', ['Oben läuft dein Spiel, unten liegt die Bedienung.', 'Vier kurze Schritte zeigen, was Tandem auf diesem Gerät gefunden hat.', 'A oder „Weiter“ geht voran, B zurück.']),
                 ('Deine Spiele', games), ('Emulatoren', emus), ('Netz und Konto', net)]
 
@@ -385,17 +397,17 @@ class Tandem(QRasterWindow):
         u, W, H, step = self.u, self.width(), self.height(), min(3, self.SETUP['step'])
         title, rows = self.setup_pages()[step]
         x0, cw = 5 * u, W - 10 * u
-        y = 5 * u + self.text(p, f'EINRICHTUNG · SCHRITT {step + 1} VON 4', x0, 5 * u, ('d', 2.2, 700, .08), FOCUS) + 1.5 * u
-        y += self.text(p, title.upper(), x0, y, ('d', 5 if self.side == 'top' else 4.4, 700), TEXT, cw, lh=1.1, lines=None) + 2 * u
+        y = 5 * u + self.text(p, f'EINRICHTUNG · SCHRITT {step + 1} VON 4', x0, 5 * u, ('u', 1.6 if self.side == 'top' else 1.9, 700, .14), FOCUS) + 1.5 * u
+        y += self.text(p, title, x0, y, ('u', 4.4 if self.side == 'top' else 4, 700, -.025), TEXT, cw, lh=1.1, lines=None) + 2 * u
         if self.side == 'top':
-            for row in rows: y += self.text(p, row, x0, y, ('b', 2.6), MUTED, cw, lh=1.4, lines=None) + 1.2 * u
+            for row in rows: y += self.text(p, row, x0, y, ('u', 2), MUTED, cw, lh=1.45, lines=None) + 1.2 * u
             return
         can = step == 2 and any(m['store'] or m['extra'] for m in self.SETUP.get('missing', ()))
         names = ([('Zurück', 'back')] if step else []) + ([('Installieren', 'install')] if can else []) + [('Fertig' if step == 3 else 'Weiter', 'ok')]
         w = (cw - 1.4 * u * (len(names) - 1)) / len(names)
         for n, (label, a) in enumerate(names):
             last = a == 'ok'
-            self.button(p, QRectF(x0 + n * (w + 1.4 * u), H - 2.6 * u - 6.3 * u, w, 6.3 * u), label.upper(), lambda a=a: self.setup_go(a), ('d', 2.6, 700, .06), INK if last else MUTED, FOCUS if last else PANEL, FOCUS if last else LINE, 1.4)
+            self.button(p, QRectF(x0 + n * (w + 1.4 * u), H - 2.6 * u - 6.3 * u, w, 6.3 * u), label, lambda a=a: self.setup_go(a), ('u', 2.2, 600), INK if last else TEXT, FOCUS if last else PANEL, None, 1.4)
 
     def resting(self):
         """OLED care: black screen with a wandering clock once nobody has touched Tandem for the configured minutes."""
@@ -409,11 +421,21 @@ class Tandem(QRasterWindow):
 
     def on_event(self, m):
         kind = m.get('kind')
-        if kind not in ('library', 'config') and self.wake(): return self.update()
+        # a key that ends the rest only wakes the screen; news from the service (a game started, the other screen moved)
+        # must still be taken over, or the bottom screen keeps showing the library instead of the game's deck
+        if kind not in ('library', 'config') and self.wake() and kind == 'key': return self.update()
         if kind == 'toast': return self.toast(m.get('text', ''))
+        if kind == 'quick':  # the Thor key: its menu lives on the bottom screen
+            if self.side == 'bottom': self.wake(); quick_view.toggle(self)
+            return
+        if kind == 'rec': self.REC = m.get('rec'); return self.update()
         if kind == 'library': return self.load()
         if kind == 'key':
+            if self.playing() and (self.RUN.get('port') or {}).get('pad'):  # a media app: its deck has the controller (decks/media.py)
+                if self.deck and hasattr(self.deck, 'key') and not self.PROMPT: self.deck.key(m['a'])
+                return self.update()
             if m['a'] == 'home': self.SUB, self.PROMPT = '', None
+            if self.side == 'bottom' and settings_view.open_now(self) and m['a'] == 'ok' and not self.PROMPT: settings_view.bottom_ok(self)  # typing happens down here
             if self.side == 'top':  # one window acts on the controller, the other follows through the service
                 if m['a'] == 'home': self.S = {'tab': 0, 'sys': None, 'i': 0}; self.push()
                 else: self.go(m['a'])
@@ -428,6 +450,7 @@ class Tandem(QRasterWindow):
             self.CFG = m['config']
             self.follow_theme()
             return self.pulse()
+        if kind == 'thor': self.THOR = m.get('thor'); return self.update()
         if kind == 'settings':
             if m.get('from') != self.me and not self.drag: self.SET = m['settings']
             if m.get('osd'):
@@ -483,7 +506,7 @@ class Tandem(QRasterWindow):
 
     def show_deck(self, p):
         """The running game's own bottom screen, if there is a native one. Loaded on first use, see DECKS."""
-        name = DECKS.get(str(self.RUN.get('appid'))) or ('pack' if self.RUN.get('pack') else None)
+        name = DECKS.get(str(self.RUN.get('appid'))) or (self.RUN.get('port') or {}).get('deck') or ('pack' if self.RUN.get('pack') else None)
         if not name or self.deck is False: return False
         if self.deck is None:
             try: self.deck = (importlib.import_module('decks.' + name), name)[0].Deck(self)
@@ -537,7 +560,18 @@ class Tandem(QRasterWindow):
 
     def push(self):
         self.update()
-        self.post('api/ui', {**self.S, 'from': self.me})
+        with self.ui_lock:
+            self.ui_out, start = {**self.S, 'from': self.me}, not self.ui_busy
+            self.ui_busy = True
+        if start: threading.Thread(target=self.send_ui, daemon=True).start()
+
+    def send_ui(self):  # one sender, newest state last: parallel requests reached the service out of order on fast input
+        while True:
+            with self.ui_lock:
+                data, self.ui_out = self.ui_out, None
+                if data is None: self.ui_busy = False; return
+            try: fetch('api/ui', data)
+            except OSError: pass
 
     def unconfirm(self):  # the question shows on both screens: tell the other one
         self.CONFIRM = None
@@ -578,7 +612,7 @@ class Tandem(QRasterWindow):
     def go(self, a):
         items, S = self.items(), self.S
         n = len(items)
-        S['i'] = max(0, min(S['i'], n - 1))
+        if not settings_view.open_now(self): S['i'] = max(0, min(S['i'], n - 1))  # the settings keep their own row
         it = items[S['i']] if n else None
         if self.SETUP and not self.RUN:
             if a in ('ok', 'back'): self.setup_go(a)
@@ -591,7 +625,7 @@ class Tandem(QRasterWindow):
         if self.playing():
             if a == 'back' and self.RUN['s'] != 'term': self.toast('Zum Beenden unten „Spiel beenden“ tippen.')
             return
-        if a == 'ok' and S['tab'] == 4 and not S['sys']: return self.next_theme()  # the System tab's one controller action
+        if settings_view.open_now(self) and a not in ('prev', 'next'): return settings_view.key(self, a)
         if a == 'left': S['i'] = max(0, S['i'] - 1)
         elif a == 'right': S['i'] = min(n - 1, S['i'] + 1)
         elif a == 'up': S['i'] -= COLS if S['i'] >= COLS else 0
@@ -632,7 +666,8 @@ class Tandem(QRasterWindow):
 
     def term_key(self, code):
         if code in KB_MODS: self.KM ^= {KB_MODS[code]}; return
-        self.post('api/key', {'code': code, 'mods': sorted(self.KM)}, then=lambda r: r and r.get('error') and self.toast(r['error']))
+        text = self.key_label(code, 'us' if self.CFG.get('kb_layout') == 'us' else 'de')  # for pasting AltGr characters into Wine
+        self.post('api/key', {'code': code, 'mods': sorted(self.KM), 'text': text}, then=lambda r: r and r.get('error') and self.toast(r['error']))
         self.KM = set()
 
     def set_value(self, key, x, left, width):
@@ -652,7 +687,8 @@ class Tandem(QRasterWindow):
                 self.CFG = c
                 self.toast(c.get('error') or ('Angemeldet und eingetragen in: ' + ', '.join(c['applied']) if c.get('applied') else 'Gespeichert.'))
             self.post('api/config', {key: value}, then=saved)
-        self.ask({'ra_user': 'Benutzername bei RetroAchievements', 'ra_password': 'Passwort bei RetroAchievements', 'ra_key': 'Web-API-Schlüssel'}[key], key != 'ra_user', done)
+        self.ask({'ra_user': 'Benutzername bei RetroAchievements', 'ra_password': 'Passwort bei RetroAchievements', 'ra_key': 'Web-API-Schlüssel',
+                  'bnet_email': 'E-Mail bei Battle.net', 'bnet_password': 'Passwort bei Battle.net'}[key], key not in ('ra_user', 'bnet_email'), done)
 
     def wifi(self, net):
         def connect(password=''):
@@ -718,10 +754,12 @@ class Tandem(QRasterWindow):
             self.fonts[key] = (f, QFontMetricsF(f))
         return self.fonts[key]
 
-    def width_of(self, text, f): return self.font(*f)[1].horizontalAdvance(text)
+    def tr(self, text): return lang.tr(text) if self.CFG.get('lang') == 'en' else text  # every text passes here: see lang.py
+
+    def width_of(self, text, f): return self.font(*f)[1].horizontalAdvance(self.tr(text))
 
     def wrap(self, text, f, w, lines=None):
-        fm, out, line = self.font(*f)[1], [], ''
+        fm, out, line, text = self.font(*f)[1], [], '', self.tr(text)
         for word in text.split():
             trial = f'{line} {word}' if line else word
             if line and fm.horizontalAdvance(trial) > w: out.append(line); line = word
@@ -732,7 +770,7 @@ class Tandem(QRasterWindow):
 
     def text(self, p, text, x, y, f, color, w=None, align=0, lh=1.2, lines=1):
         """Draws text with its top at y (align 0 left, 1 centre, 2 right inside w; wraps when lines != 1). Returns its height."""
-        font, fm = self.font(*f)
+        font, fm, text = *self.font(*f), self.tr(text)
         rows = [text] if w is None else self.wrap(text, f, w, lines) if lines != 1 else [fm.elidedText(text, Qt.TextElideMode.ElideRight, w)]
         step = f[1] * self.u * lh
         p.setFont(font); p.setPen(color)
@@ -759,8 +797,8 @@ class Tandem(QRasterWindow):
         if self.xf is not None: rect = self.xf.mapRect(rect)  # a deck paints on a scaled stage: taps arrive in window pixels
         if not rect.isEmpty(): self.hits.append((rect, fn, drag, name))
 
-    def button(self, p, rect, label, fn, f, fg=TEXT, bg=RAISED, border=LINE, radius=1.2):
-        self.box(p, rect, radius * self.u, bg, border)
+    def button(self, p, rect, label, fn, f, fg=TEXT, bg=RAISED, border=None, radius=1.2):
+        self.box(p, rect, min(rect.height() / 2, radius * 1.5 * self.u), bg, border)
         self.text(p, label, rect.x(), rect.y(), f, fg, rect.width(), 1, rect.height() / (f[1] * self.u))
         self.hit(rect, fn, name=label)
 
@@ -770,6 +808,80 @@ class Tandem(QRasterWindow):
         if key not in self.svgs:
             self.svgs[key] = QSvgRenderer(QByteArray(f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">{ICONS[name].replace("currentColor", color.name())}</svg>'.encode()))
         self.svgs[key].render(p, rect)
+
+    def ease(self, start, secs):
+        """0 … 1 (eased out) since start. Asks for the next frame only while it runs: when nothing moves, nothing repaints."""
+        t = (time.time() - start) / secs
+        if t >= 1: return 1.0
+        QTimer.singleShot(16, self.update)
+        return 1 - (1 - max(0.0, t)) ** 3
+
+    def capsule(self, p, rect, fill, border=None):  # always fully round, whatever the theme's radius
+        p.setPen(QPen(border, 1) if border else Qt.PenStyle.NoPen)
+        p.setBrush(fill)
+        p.drawRoundedRect(rect, rect.height() / 2, rect.height() / 2)
+
+    def glyph_wifi(self, p, cx, base, size, signal, color):
+        """Wi-Fi as a dot and two arcs (line icon); signal 0-100 lights 1-3 of them, None: no Wi-Fi link at all."""
+        bars = 0 if not signal else 3 if signal >= 65 else 2 if signal >= 40 else 1
+        dim = faded(color, color.alphaF() * .3)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        for n, r in enumerate((.62, 1.0)):
+            p.setPen(QPen(color if bars >= n + 2 else dim, .15 * size, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            p.drawArc(QRectF(cx - r * size, base - r * size, 2 * r * size, 2 * r * size), 48 * 16, 84 * 16)
+        p.setPen(Qt.PenStyle.NoPen); p.setBrush(color if bars else dim)
+        dot = QPainterPath(QPointF(cx, base))
+        dot.arcTo(QRectF(cx - .3 * size, base - .3 * size, .6 * size, .6 * size), 45, 90)
+        dot.closeSubpath()
+        p.drawPath(dot)
+
+    def glyph_battery(self, p, x, mid, h, level, charging, color):
+        """A battery outline filled to the level; green while charging (with a bolt), red when low."""
+        w, line = 2.05 * h, .09 * h
+        body = QRectF(x, mid - h / 2, w, h)
+        p.setPen(QPen(faded(color, color.alphaF() * .55), line)); p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawRoundedRect(body, .3 * h, .3 * h)
+        p.setPen(Qt.PenStyle.NoPen); p.setBrush(faded(color, color.alphaF() * .55))
+        p.drawRoundedRect(QRectF(body.right() + .07 * h, mid - .18 * h, .12 * h, .36 * h), .06 * h, .06 * h)
+        inner = body.adjusted(.17 * h, .17 * h, -.17 * h, -.17 * h)
+        fill = LIVE if charging else WARN if level <= 20 else color
+        p.setBrush(fill)
+        p.drawRoundedRect(QRectF(inner.x(), inner.y(), max(inner.height() * .5, inner.width() * max(0, min(100, level)) / 100), inner.height()), .14 * h, .14 * h)
+        if charging:
+            bolt = QPainterPath()
+            pts = [(.56, -.08), (.22, .56), (.47, .56), (.42, 1.08), (.8, .4), (.54, .4), (.62, -.08)]
+            bolt.moveTo(body.x() + pts[0][0] * w, body.y() + pts[0][1] * h)
+            for bx, by in pts[1:]: bolt.lineTo(body.x() + bx * w, body.y() + by * h)
+            bolt.closeSubpath()
+            p.setPen(QPen(QColor(0, 0, 0, 200), .1 * h)); p.setBrush(QColor(255, 255, 255, round(color.alphaF() * 255)))
+            p.drawPath(bolt)
+        return w + .2 * h
+
+    def status_bar(self, p):
+        """The 3DS line at the top: date, time, Wi-Fi and battery in a dark glass capsule. OLED care: it is dimmed, sits
+        on the changing game art, and wanders a few pixels every five minutes, so no pixel lights the same for years."""
+        u, W = self.u, self.width()
+        spot = random.Random(int(time.time() // 300)).random
+        dx, dy = (spot() - .5) * .9 * u, (spot() - .5) * .6 * u
+        ink, dim, f, fb = rgba(236, 237, 242, .85), rgba(236, 237, 242, .58), ('u', 1.3, 400), ('u', 1.3, 600)
+        t = time.localtime()
+        date = f'{WEEKDAYS[t.tm_wday]} {t.tm_mday}. {MONTHS[t.tm_mon - 1]}'
+        batt = f'{self.BATT["level"]} %' if self.BATT else ''
+        h, pad, ic = 3.0 * u, 1.5 * u, 1.05 * u
+        w = pad + self.width_of(date, f) + .8 * u + self.width_of(clock(), fb) + 1.6 * u + (1.9 * u + 1.2 * u if self.WIFI is not None else 0) + \
+            ((self.width_of(batt, f) + .6 * u + 2.05 * ic + .2 * ic) if self.BATT else 0) + pad
+        rect = QRectF(W - 2.4 * u - w + dx, 1.6 * u + dy, w, h)
+        self.capsule(p, rect, rgba(8, 9, 12, .46), rgba(255, 255, 255, .08))
+        x, y = rect.x() + pad, rect.y() + (h - 1.3 * u * 1.2) / 2
+        self.text(p, date, x, y, f, dim); x += self.width_of(date, f) + .8 * u
+        self.text(p, clock(), x, y, fb, ink); x += self.width_of(clock(), fb) + 1.6 * u
+        mid = rect.center().y()
+        if self.WIFI is not None:
+            self.glyph_wifi(p, x + .95 * u, mid + .55 * u, 1.05 * u, self.WIFI.get('signal') if self.WIFI.get('ssid') or self.WIFI.get('signal') else 0, ink)
+            x += 1.9 * u + 1.2 * u
+        if self.BATT:
+            self.text(p, batt, x, y, f, ink); x += self.width_of(batt, f) + .6 * u
+            self.glyph_battery(p, x, mid, ic, self.BATT['level'], self.BATT.get('charging'), ink)
 
     def paint_of(self, it, rect):  # the coloured gradient that stands in for missing art
         h = 212 if it['s'] == 'steam' else 160 if it['s'] in ('app', 'term') else (self.L['systems'].get(it['s']) or {'hue': 200})['hue']
@@ -801,10 +913,10 @@ class Tandem(QRasterWindow):
         if self.resting():  # black pixels are off on an OLED; the clock moves every minute
             p.fillRect(0, 0, self.width(), self.height(), QColor(0, 0, 0))
             spot = random.Random(int(time.time() // 60) + (self.side == 'top')).random
-            self.text(p, clock(), (8 + 70 * spot()) * self.u, (5 + 80 * spot()) * self.height() / 100, ('b', 3, 400), QColor(70, 70, 80))
+            self.text(p, clock(), (8 + 70 * spot()) * self.u, (5 + 80 * spot()) * self.height() / 100, ('u', 3, 400), QColor(70, 70, 80))
             return p.end()
         items = self.items()
-        self.S['i'] = max(0, min(self.S['i'], len(items) - 1))
+        if not settings_view.open_now(self): self.S['i'] = max(0, min(self.S['i'], len(items) - 1))
         p.fillRect(0, 0, self.width(), self.height(), INK)
         if THEME['background']:  # the theme's picture, toned down so that text stays readable
             if self.backdrop is None:
@@ -820,133 +932,184 @@ class Tandem(QRasterWindow):
         FOCUS.setRgba((self.game_accent(items) or QColor(THEME['colors']['accent'])).rgba())  # highlights take the colour of the game in front
         if self.SETUP and not self.RUN: self.draw_setup(p)
         else: (self.draw_top if self.side == 'top' else self.draw_bottom)(p, items)
+        if self.QUICK and self.side == 'bottom': quick_view.draw(self, p)
         if self.TOAST and not (self.side == 'bottom' and (self.PROMPT or self.CONFIRM)): self.draw_toast(p)
         if self.OSD is not None: self.draw_osd(p)
         p.end()
 
     def draw_toast(self, p):
-        u, W, H, f = self.u, self.width(), self.height(), ('b', 2.6 if self.side == 'bottom' else 1.9)
-        rows = self.wrap(self.TOAST, f, 76 * u, None)
-        w, h = max(self.width_of(r, f) for r in rows) + 4 * u, len(rows) * f[1] * u * 1.35 + 2.4 * u
-        rect = QRectF((W - w) / 2, H - 4 * u - h, w, h)
-        self.box(p, rect, 1.2 * u, RAISED, WARN)
-        for n, row in enumerate(rows): self.text(p, row, rect.x() + 2 * u, rect.y() + 1.2 * u + n * f[1] * u * 1.35, f, TEXT, lh=1.35)
+        u, W, H, f = self.u, self.width(), self.height(), ('u', 2.3 if self.side == 'bottom' else 1.6, 500)
+        rows = self.wrap(self.TOAST, f, 70 * u, None)
+        lh = f[1] * u * 1.35
+        w, h = max(self.width_of(r, f) for r in rows) + 6.2 * u, len(rows) * lh + 2.6 * u
+        # top screen: a banner below the status line; bottom: above the volume display when that shows
+        rect = QRectF((W - w) / 2, 6 * u if self.side == 'top' else H - (16.7 * u if self.OSD is not None else 4 * u) - h, w, h)
+        self.box(p, rect, min(h / 2, 2.2 * u), faded(RAISED, .97), faded(TEXT, .08))
+        p.setPen(Qt.PenStyle.NoPen); p.setBrush(FOCUS)
+        p.drawEllipse(QPointF(rect.x() + 2.4 * u, rect.y() + 1.3 * u + lh / 2), .5 * u, .5 * u)
+        for n, row in enumerate(rows): self.text(p, row, rect.x() + 3.8 * u, rect.y() + 1.3 * u + n * lh, f, TEXT, lh=1.35)
 
     def draw_osd(self, p):  # volume indicator for the hardware keys
         u, W, H, big = self.u, self.width(), self.height(), self.side == 'bottom'
-        w, ico, size, bar = (70, 5, 3.6, 1.6) if big else (44, 3.4, 2.4, 1)
+        w, ico, size, bar = (64, 4.4, 2.6, 1.3) if big else (40, 3, 1.8, .9)
         h = (ico + 2.8) * u
         rect = QRectF((W - w * u) / 2, H - (8 if big else 6) * u - h, w * u, h)
-        self.box(p, rect, h / 2, faded(PANEL, .94), LINE)
+        self.capsule(p, rect, faded(RAISED, .96), faded(TEXT, .08))
         x, mid = rect.x() + 2.4 * u, rect.center().y()
         self.icon(p, 'vol2' if self.OSD > 50 else 'vol1' if self.OSD > 0 else 'vol0', QRectF(x, mid - ico * u / 2, ico * u, ico * u), TEXT)
-        num = (size * 1.7) * u
-        track = QRectF(x + (ico + 1.6) * u, mid - bar * u / 2, rect.right() - 2.4 * u - num - 1.6 * u - (x + (ico + 1.6) * u), bar * u)
-        self.box(p, track, bar * u / 2, LINE)
-        if self.OSD > 0: self.box(p, QRectF(track.x(), track.y(), track.width() * self.OSD / 100, track.height()), bar * u / 2, self.accent_fill(track))
-        self.text(p, str(self.OSD), rect.right() - 2.4 * u - num, mid - size * u * .6, ('d', size, 700), TEXT, num, 2)
+        num = (size * 2) * u
+        track = QRectF(x + (ico + 1.6) * u, mid - bar * u / 2, rect.right() - 2.6 * u - num - 1.6 * u - (x + (ico + 1.6) * u), bar * u)
+        self.capsule(p, track, faded(TEXT, .14))
+        if self.OSD > 0: self.capsule(p, QRectF(track.x(), track.y(), max(track.height(), track.width() * self.OSD / 100), track.height()), TEXT)
+        self.text(p, str(self.OSD), rect.right() - 2.6 * u - num, mid - size * u * .6, ('u', size, 600), TEXT, num, 2)
+
+    def keycap(self, p, x, y, d, letter, fill):
+        p.setPen(Qt.PenStyle.NoPen); p.setBrush(fill)
+        p.drawEllipse(QRectF(x, y, d, d))
+        self.text(p, letter, x, y, ('u', d / self.u * .5, 700), INK, d, 1, 2)
 
     def pads(self, p, x, y, hints, size=1.7, gap=2.4):
-        """Controller hints: a round key cap and its meaning."""
-        u, d = self.u, 2.6 * self.u * size / 1.7
-        for letter, label in hints:
-            p.setPen(Qt.PenStyle.NoPen); p.setBrush(TEXT)
-            p.drawEllipse(QRectF(x, y, d, d))
-            self.text(p, letter, x, y, ('d', 1.5 * size / 1.7, 700), INK, d, 1, d / (1.5 * size / 1.7 * u))
-            x += d + .7 * u
-            self.text(p, label, x, y, ('b', size), MUTED, lh=d / (size * u))
-            x += self.width_of(label, ('b', size)) + gap * u
-        return x - gap * u
+        """Controller hints as glass capsules: a round key cap and its meaning; the first is the main action."""
+        u, f = self.u, ('u', 1.6 * size / 1.7, 500)
+        h = 3.6 * u * size / 1.7
+        d = h - 1.1 * u * size / 1.7
+        for n, (letter, label) in enumerate(hints):
+            w = (h - d) / 2 + d + .9 * u + self.width_of(label, f) + 1.5 * u
+            self.capsule(p, QRectF(x, y, w, h), faded(TEXT, .16 if n == 0 else .08), faded(TEXT, .1))
+            self.keycap(p, x + (h - d) / 2, y + (h - d) / 2, d, letter, FOCUS if n == 0 else faded(TEXT, .85))
+            self.text(p, label, x + (h - d) / 2 + d + .9 * u, y, f if n else (f[0], f[1], 600), TEXT, lh=h / (f[1] * u))
+            x += w + gap * u * .5
+        return x
 
     def draw_top(self, p, items):
         u, W, H, RUN, P, L = self.u, self.width(), self.height(), self.RUN, self.playing(), self.L
+        if not P and settings_view.open_now(self): return (settings_view.draw_top(self, p), self.draw_confirm(p))
         it = RUN if P else items[self.S['i']] if items else None
-        full = QRectF(0, 0, W, H)
+        full, hero = QRectF(0, 0, W, H), self.hero
+        if (it or {}).get('id') != hero['key']: hero['key'], hero['kt'] = (it or {}).get('id'), time.time()
         art = self.images.get(it['hero'], W, H) if it and it.get('hero') else False
+        if art and art is not hero['cur']: hero['prev'], hero['cur'], hero['t0'] = hero['cur'], art, time.time()
         if it:
-            if art: p.drawImage(0, 0, art); p.fillRect(full, faded(INK, .25))
+            shown = art or (hero['cur'] if art is None else None)  # while the next picture loads, the last one stays
+            if shown:
+                t = self.ease(hero['t0'], .32)
+                if t < 1 and hero['prev'] is not None: p.drawImage(0, 0, hero['prev'])
+                else: hero['prev'] = None  # the fade is over: let go of the old picture
+                p.setOpacity(t); p.drawImage(0, 0, shown); p.setOpacity(1)
+                p.fillRect(full, faded(INK, .18))
             else:
+                hero['cur'] = hero['prev'] = None
                 p.fillRect(full, QBrush(self.paint_of(it, full)))
-                if art is False: self.text(p, it['t'][:2], W - 3 * u - 60 * u, H / 2 - 18 * u, ('d', 30, 700, -.02), rgba(255, 255, 255, .13), 60 * u, 2)
+                if art is False: self.text(p, it['t'][:1].upper(), W - 52 * u, H / 2 - 22 * u, ('u', 34, 700), rgba(255, 255, 255, .08), 44 * u, 2)
             g = QLinearGradient(0, 0, W, 0)
-            g.setColorAt(0, faded(INK, .92)); g.setColorAt(.45, faded(INK, .55)); g.setColorAt(.8, faded(INK, 0))
+            g.setColorAt(0, faded(INK, .9)); g.setColorAt(.4, faded(INK, .5)); g.setColorAt(.75, faded(INK, 0))
             p.fillRect(full, QBrush(g))
             g = QLinearGradient(0, H, 0, 0)
-            g.setColorAt(0, faded(INK, .85)); g.setColorAt(.55, faded(INK, 0))
+            g.setColorAt(0, faded(INK, .9)); g.setColorAt(.6, faded(INK, 0))
             p.fillRect(full, QBrush(g))
-        b, m = ('b', 1.7, 500), ('b', 1.8)
-        status = ([('Akku ', b, MUTED), (f'{self.BATT["level"]} %{" ⚡" if self.BATT.get("charging") else ""}', b, TEXT), ('     ', b, TEXT)] if self.BATT else []) + [(clock(), b, TEXT)]
-        self.spans(p, W - 3 * u - sum(self.width_of(t, f) for t, f, _ in status), 2.2 * u, status)
+            g = QLinearGradient(0, 0, 0, 9 * u)
+            g.setColorAt(0, rgba(0, 0, 0, .35)); g.setColorAt(1, rgba(0, 0, 0, 0))
+            p.fillRect(QRectF(0, 0, W, 9 * u), QBrush(g))
+        else:  # nothing in front: a soft light in the accent colour instead of a flat black wall
+            g = QRadialGradient(QPointF(.12 * W, 1.05 * H), .75 * W)
+            g.setColorAt(0, faded(FOCUS, .16)); g.setColorAt(1, faded(FOCUS, 0))
+            p.fillRect(full, QBrush(g))
+        self.status_bar(p)
         held = bool(it and RUN and RUN.get('paused') and it['id'] == RUN['id'])
         sysinfo = L['systems'].get(it['s']) if it else None
-        if not it and self.S['tab'] == 4: label, name, meta, hints, miss = 'System', f'Aussehen: {THEME["name"]}', [[('Helligkeit, WLAN und Konten stehen unten.', m, MUTED)]], [('A', 'Aussehen wechseln')], None
-        elif not it: label, name, meta, hints, miss = 'Toravo Tandem', 'Noch nichts hier', [[('Mit RB zu den Systemen wechseln.', m, MUTED)]], [], None
+        m, mv = ('u', 1.5, 400), ('u', 1.5, 600)
+        if not it: label, name, meta, hints, miss = 'Toravo Tandem', 'Noch nichts hier', [[('Mit R zu den Systemen wechseln.', m, MUTED)]], [], None
         else:
-            label, name = ('Läuft · ' if P else 'Pausiert · ' if held else '') + self.sys_name(it), it['t']
-            fact = lambda key, value: [(key + ' ', m, MUTED), (str(value), ('b', 1.8, 500), TEXT)]
+            label, name = ('Läuft · ' if P else 'Pausiert · ' if held else '') + ('System' if it.get('kind') == 'sys' else self.sys_name(it)), it['t']
+            fact = lambda key, value: [(key + ' ', m, MUTED), (str(value), mv, TEXT)]
             played = L['played'].get(it['id']) or {}
             if P: meta = [fact('Emulator', RUN['emu']), fact('Läuft seit', hours(time.time() - RUN['since']))]
-            elif it.get('kind') == 'sys': meta = [[(str(it['n']), ('b', 1.8, 500), TEXT), (' Spiele', m, MUTED)], fact('Emulator', sysinfo.get('emu') or 'fehlt')]
+            elif it.get('kind') == 'sys': meta = [[(str(it['n']), mv, TEXT), (' Spiele', m, MUTED)], fact('Emulator', sysinfo.get('emu') or 'fehlt')]
             else: meta = ([fact('Zuletzt', ago(played['last']))] if played.get('last') else []) + ([fact('Spielzeit', hours(played['secs']))] if played.get('secs') else []) + \
-                        ([fact('Emulator', sysinfo.get('emu') or 'fehlt')] if sysinfo else []) + ([[('★ Favorit', ('b', 1.8, 500), TEXT)]] if it['id'] in L['fav'] else [])
+                        ([fact('Emulator', sysinfo.get('emu') or 'fehlt')] if sysinfo else []) + ([[('★ Favorit', mv, FOCUS)]] if it['id'] in L['fav'] else [])
             miss = sysinfo.get('missing') if sysinfo and not P else None
             if P: hints = [('B', 'Beenden (unten bestätigen)')]
             else:
                 inst = it.get('inst')
                 hints = [('A', 'Öffnen' if it.get('kind') == 'sys' else 'Fortsetzen' if held else 'Installieren' if inst == 'no' else 'Lädt noch' if inst == 'load' else 'Starten')] + \
                         ([('X', 'Beenden')] if held else []) + [('B', 'Zurück')] + ([] if it.get('kind') or it['s'] in ('app', 'term') else [('Y', 'Favorit')])
-        nf, mf = ('d', 6.2, 700), ('m', 1.45, 500)
-        rows = self.wrap(name.upper(), nf, 62 * u, None)
-        cmd = self.wrap(miss, mf, 71.6 * u, None) if miss else []
-        height = 2.3 * u + .6 * u + len(rows) * 6.2 * u * 1.02 + 1.2 * u + 2.2 * u + (1.6 * u + len(cmd) * 1.45 * u * 1.4 + 1.8 * u if cmd else 0) + (2.2 * u + 2.6 * u if hints else 0)
-        x, y = 4 * u, H - 4 * u - height
-        y += self.text(p, label.upper(), x, y, ('d', 1.9, 700, .14), LIVE if P else FOCUS) + .6 * u
-        for row in rows: y += self.text(p, row, x, y, nf, TEXT, lh=1.02)
-        y += 1.2 * u
+        nf, mf = ('u', 4.6, 700, -.025), ('m', 1.3, 500)
+        if len(self.wrap(name, nf, 60 * u)) > 2: nf = ('u', 3.7, 700, -.02)  # long names get smaller, not taller
+        rows = self.wrap(name, nf, 60 * u, 3)
+        cmd = self.wrap(miss, mf, 70 * u, None) if miss else []
+        height = 2 * u + .9 * u + len(rows) * nf[1] * u * 1.08 + 1.4 * u + 1.8 * u + (1.6 * u + len(cmd) * 1.3 * u * 1.4 + 1.8 * u if cmd else 0) + (2.6 * u + 3.6 * u if hints else 0)
+        t = self.ease(hero['kt'], .38)  # a new title slides up into place
+        x, y = 4.2 * u, H - 4.2 * u - height + (1 - t) * 1.2 * u
+        p.setOpacity(.15 + .85 * t)
+        y += self.text(p, label.upper(), x, y, ('u', 1.4, 700, .16), LIVE if P else FOCUS, lh=2 / 1.4) + .9 * u
+        for row in rows: y += self.text(p, row, x, y, nf, TEXT, lh=1.08)
+        y += 1.4 * u
         mx = x
-        for part in meta: mx = self.spans(p, mx, y, part) + 2.4 * u
-        y += 2.2 * u
+        for n, part in enumerate(meta):
+            if n: mx = self.spans(p, mx, y, [('   ·   ', m, faded(MUTED, .6))])
+            mx = self.spans(p, mx, y, part)
+        y += 1.8 * u
         if cmd:
             y += 1.6 * u
-            box = QRectF(x, y, max(self.width_of(r, mf) for r in cmd) + 2.4 * u, len(cmd) * 1.45 * u * 1.4 + 1.8 * u)
-            self.box(p, box, .8 * u, faded(INK, .7), LINE)
-            for n, row in enumerate(cmd): self.text(p, row, x + 1.2 * u, y + .9 * u + n * 1.45 * u * 1.4, mf, WARN, lh=1.4)
+            box = QRectF(x, y, max(self.width_of(r, mf) for r in cmd) + 2.4 * u, len(cmd) * 1.3 * u * 1.4 + 1.8 * u)
+            self.box(p, box, u, faded(INK, .72), faded(WARN, .35))
+            for n, row in enumerate(cmd): self.text(p, row, x + 1.2 * u, y + .9 * u + n * 1.3 * u * 1.4, mf, WARN, lh=1.4)
             y = box.bottom()
-        if hints: self.pads(p, x, y + 2.2 * u, hints)
+        if hints: self.pads(p, x, y + 2.6 * u, hints)
+        p.setOpacity(1)
+        self.draw_confirm(p)
+
+    def draw_confirm(self, p):
+        u, W, H = self.u, self.width(), self.height()
         if self.CONFIRM:  # the question shows here too: the controller answers it
-            p.fillRect(full, faded(INK, .88))
-            f = ('d', 3.6, 700)
-            rows = self.wrap(self.CONFIRM['text'].upper(), f, 70 * u, None)
-            y = (H - len(rows) * 3.6 * u * 1.2 - 2.4 * u - 3.1 * u) / 2
+            p.fillRect(QRectF(0, 0, W, H), faded(INK, .9))
+            f = ('u', 3.4, 700, -.02)
+            rows = self.wrap(self.CONFIRM['text'], f, 64 * u, None)
+            y = (H - len(rows) * 3.4 * u * 1.2 - 3 * u - 4.2 * u) / 2
             for row in rows: y += self.text(p, row, 0, y, f, TEXT, W, 1)
             hints = [('A', self.CONFIRM['yes']), ('B', 'Abbrechen')]
-            w = sum(3.1 * u + .7 * u + self.width_of(l, ('b', 2)) for _, l in hints) + 3 * u
-            self.pads(p, (W - w) / 2, y + 2.4 * u, hints, 2, 3)
+            f = ('u', 1.6 * 2 / 1.7, 500)
+            h, d = 3.6 * u * 2 / 1.7, (3.6 - 1.1) * u * 2 / 1.7
+            w = sum((h - d) / 2 + d + .9 * u + self.width_of(l, f) + 1.5 * u for _, l in hints) + 1.5 * u
+            self.pads(p, (W - w) / 2, y + 3 * u, hints, 2, 3)
 
     # bottom screen ---------------------------------------------------------------------------------------------------
     def tabs(self, p, title=None, buttons=None):
-        """The top row: the five tabs, or a title with buttons on the right [(label, on, fn)]. Returns the y below it."""
-        u, f = self.u, ('d', 3, 700, .08)
-        x, y, h = 2.6 * u, 2.6 * u, 5.2 * u
-        if title is None:  # a theme's wider font must not push the tabs into the count on the right
-            need = sum(self.width_of(label.upper(), f) + 4.2 * u for label in TABS)
-            if need > 76 * u: f = ('d', round(3 * 76 * u / need, 2), 700, .08)
-        def tab(x, label, on, fn):
-            w = self.width_of(label.upper(), f) + 3.2 * u
-            rect = QRectF(x, y, w, h)
-            if on: self.box(p, rect, u, TEXT)
-            self.text(p, label.upper(), x, y, f, INK if on else MUTED, w, 1, h / (f[1] * u))
-            self.hit(rect, fn, name=label)
-            return w
+        """The top row: the five tabs as a segmented control (L/R at its ends), or a title with buttons on the right
+        [(label, on, fn)]. Returns the y below it."""
+        u, f = self.u, ('u', 2.1, 600)
+        x, y, h = 2.6 * u, 2.4 * u, 5.4 * u
         if title is None:
-            for n, label in enumerate(TABS): x += tab(x, label, n == self.S['tab'] and not self.S['sys'], lambda n=n: self.open_tab(n)) + u
+            pad, cap = .45 * u, 3.4 * u
+            need = sum(self.width_of(label, f) + 3.6 * u for label in TABS)
+            if need > 62 * u: f = ('u', round(2.1 * 62 * u / need, 2), 600)  # a wide theme font must not reach the count
+            widths = [self.width_of(label, f) + 3.6 * u for label in TABS]
+            track = QRectF(x, y, 2 * cap + sum(widths) + 2 * pad, h)
+            self.capsule(p, track, faded(PANEL, .94), faded(TEXT, .06))
+            for n, (key, a) in enumerate((('L', 'prev'), ('R', 'next'))):
+                kx = track.x() + pad + (0 if not n else cap + sum(widths))
+                key_rect = QRectF(kx + .5 * u, y + 1.35 * u, cap - 1 * u, h - 2.7 * u)
+                self.box(p, key_rect, .7 * u, None, faded(MUTED, .5), .1 * u)
+                self.text(p, key, key_rect.x(), key_rect.y(), ('u', 1.35, 700), MUTED, key_rect.width(), 1, key_rect.height() / (1.35 * u))
+                self.hit(QRectF(kx, y, cap, h), lambda a=a: self.go(a), name=a)
+            tx = track.x() + pad + cap
+            for n, label in enumerate(TABS):
+                rect = QRectF(tx, y + pad, widths[n], h - 2 * pad)
+                on = n == self.S['tab'] and not self.S['sys']
+                if on: self.capsule(p, rect, faded(TEXT, .15))
+                self.text(p, label, rect.x(), rect.y(), f, TEXT if on else MUTED, rect.width(), 1, rect.height() / (f[1] * u))
+                self.hit(rect, lambda n=n: self.open_tab(n), name=label)
+                tx += widths[n]
         else:
             right = self.width() - 2.6 * u
             for label, on, fn in reversed(buttons):
-                right -= self.width_of(label.upper(), f) + 3.2 * u
-                tab(right, label, on, fn)
+                w = self.width_of(label, f) + 4 * u
+                right -= w
+                self.capsule(p, QRectF(right, y, w, h), FOCUS if on else faded(TEXT, .1))
+                self.text(p, label, right, y, f, INK if on else TEXT, w, 1, h / (f[1] * u))
+                self.hit(QRectF(right, y, w, h), fn, name=label)
                 right -= u
-            self.text(p, title, x, y, ('b', 2.3), MUTED, right - x, lh=h / (2.3 * u))
+            self.text(p, title, x, y, ('u', 2.2, 600), TEXT, right - x - u, lh=h / (2.2 * u))
         return y + h + 2.2 * u
 
     def open_tab(self, n):
@@ -955,28 +1118,37 @@ class Tandem(QRasterWindow):
         self.push()
 
     def sliders(self, p, y):
+        """Brightness and volume in one grouped card; returns the y below it."""
         u, x0, cw = self.u, 2.6 * self.u, self.width() - 5.2 * self.u
-        for key, label in (('bt', 'Helligkeit oben'), ('bb', 'Helligkeit unten'), ('vol', 'Lautstärke')):
-            value = self.SET.get(key)
-            if value is None: continue
-            self.text(p, label, x0, y, ('b', 2.5), MUTED, lh=2)
-            left, width, low = x0 + 27 * u + 1.5 * u, cw - 27 * u - 11 * u - 3 * u, 0 if key == 'vol' else 5
-            part = (value - low) / (100 - low)
-            self.box(p, QRectF(left, y + 2.05 * u, width, .9 * u), .45 * u, LINE)
-            self.box(p, QRectF(left, y + 2.05 * u, width * part, .9 * u), .45 * u, self.accent_fill(QRectF(left, 0, width, 1)))
-            p.setBrush(FOCUS)
-            p.drawEllipse(QPointF(left + width * part, y + 2.5 * u), 1.5 * u, 1.5 * u)
-            self.text(p, f'{value} %', x0 + cw - 9 * u, y, ('b', 2.5), TEXT, 9 * u, 2, 2)
-            self.hit(QRectF(left - 1.5 * u, y - .5 * u, width + 3 * u, 6 * u), lambda x, key=key, left=left, width=width: self.set_value(key, x, left, width), True, key)
-            y += 5 * u + 1.8 * u
-        return y
+        rows = [(key, label) for key, label in (('bt', 'Helligkeit oben'), ('bb', 'Helligkeit unten'), ('vol', 'Lautstärke')) if self.SET.get(key) is not None]
+        if not rows: return y
+        rh = 6.2 * u
+        self.box(p, QRectF(x0, y, cw, len(rows) * rh + 1.2 * u), 2 * u, PANEL)
+        y += .6 * u
+        for n, (key, label) in enumerate(rows):
+            value = self.SET[key]
+            if n: p.fillRect(QRectF(x0 + 2 * u, y, cw - 4 * u, max(1.0, .08 * u)), faded(TEXT, .07))
+            self.text(p, label, x0 + 2 * u, y, ('u', 2.1, 500), TEXT, lh=rh / (2.1 * u))
+            left, width, low = x0 + 27 * u, cw - 27 * u - 11 * u, 0 if key == 'vol' else 5
+            part = max(0.0, min(1.0, (value - low) / (100 - low)))
+            mid = y + rh / 2
+            self.capsule(p, QRectF(left, mid - .5 * u, width, u), faded(TEXT, .12))
+            self.capsule(p, QRectF(left, mid - .5 * u, max(u, width * part), u), self.accent_fill(QRectF(left, 0, width, 1)))
+            p.setPen(Qt.PenStyle.NoPen); p.setBrush(rgba(0, 0, 0, .35))
+            p.drawEllipse(QPointF(left + width * part, mid + .15 * u), 1.55 * u, 1.55 * u)
+            p.setBrush(QColor('#ffffff'))
+            p.drawEllipse(QPointF(left + width * part, mid), 1.45 * u, 1.45 * u)
+            self.text(p, f'{value} %', x0 + cw - 9 * u, y, ('u', 2.1, 500), MUTED, 7 * u, 2, rh / (2.1 * u))
+            self.hit(QRectF(left - 1.5 * u, y, width + 3 * u, rh), lambda x, key=key, left=left, width=width: self.set_value(key, x, left, width), True, key)
+            y += rh
+        return y + .6 * u + 1.8 * u
 
-    def row_buttons(self, p, y, buttons, cols=4, f=('d', 2.6, 700, .06), fg=MUTED, bg=PANEL):
+    def row_buttons(self, p, y, buttons, cols=4, f=('u', 2.1, 600), fg=TEXT, bg=PANEL):
         """A grid of equal buttons [(label, fn)]; returns the y below it."""
         u, x0, cw, h = self.u, 2.6 * self.u, self.width() - 5.2 * self.u, 6.3 * self.u
         w = (cw - (cols - 1) * 1.2 * u) / cols
         for n, (label, fn) in enumerate(buttons):
-            self.button(p, QRectF(x0 + (n % cols) * (w + 1.2 * u), y + (n // cols) * (h + 1.2 * u), w, h), label.upper(), fn, f, fg, bg, LINE, 1.4)
+            self.button(p, QRectF(x0 + (n % cols) * (w + 1.2 * u), y + (n // cols) * (h + 1.2 * u), w, h), label, fn, f, fg, bg, None, 1.4)
         return y + ((len(buttons) + cols - 1) // cols) * (h + 1.2 * u) - 1.2 * u
 
     def keyboard(self, p, y, press, skip=()):
@@ -991,71 +1163,83 @@ class Tandem(QRasterWindow):
             for code in row:
                 w = unit * (5 if code == 57 else 1)
                 on, label = KB_MODS.get(code) in self.KM, self.key_label(code, layout)
-                self.button(p, QRectF(x, y + r * (h + 1.1 * u), w, h), label, lambda code=code: press(code), ('b', 3.4 if len(label) < 3 else 2.4, 600), INK if on else TEXT, FOCUS if on else RAISED, FOCUS if on else LINE)
+                self.button(p, QRectF(x, y + r * (h + 1.1 * u), w, h), label, lambda code=code: press(code), ('u', 3 if len(label) < 3 else 2.1, 500), INK if on else TEXT, FOCUS if on else RAISED, None, .8)
                 x += w + u
 
     def draw_bottom(self, p, items):
         u, W, H, RUN, P = self.u, self.width(), self.height(), self.RUN, self.playing()
         x0, cw, bottom = 2.6 * u, W - 5.2 * u, H - 2.6 * u
-        act = lambda label, fn, x, w, quit=False: self.button(p, QRectF(x, bottom - 6.3 * u, w, 6.3 * u), label.upper(), fn, ('d', 2.6, 700, .06), INK if quit else MUTED, WARN if quit else PANEL, WARN if quit else LINE, 1.4)
+        act = lambda label, fn, x, w, quit=False: self.button(p, QRectF(x, bottom - 6.3 * u, w, 6.3 * u), label, fn, ('u', 2.2, 600), INK if quit else TEXT, WARN if quit else PANEL, None, 1.4)
         if self.PROMPT:
             def close(ok):
                 P_, self.PROMPT = self.PROMPT, None
                 if ok: P_['done'](P_['value'])
             y = self.tabs(p, self.PROMPT['title'], [('Abbrechen', False, lambda: close(False)), ('Fertig', True, lambda: close(True))])
             value = '•' * len(self.PROMPT['value']) if self.PROMPT['secret'] else self.PROMPT['value']
-            self.box(p, QRectF(x0, y, cw, 9 * u), 1.4 * u, PANEL, FOCUS)
-            end = x0 + 2 * u + self.width_of(value, ('b', 4, 500))
-            self.text(p, value, x0 + 2 * u, y, ('b', 4, 500), TEXT, lh=9 / 4)
-            p.fillRect(QRectF(min(end + .4 * u, x0 + cw - 2 * u), y + 2.5 * u, .4 * u, 4 * u), FOCUS)
+            self.box(p, QRectF(x0, y, cw, 9 * u), 1.8 * u, PANEL, FOCUS, .2 * u)
+            end = x0 + 2.4 * u + self.width_of(value, ('u', 3.6, 500))
+            self.text(p, value, x0 + 2.4 * u, y, ('u', 3.6, 500), TEXT, lh=9 / 3.6)
+            p.fillRect(QRectF(min(end + .4 * u, x0 + cw - 2 * u), y + 2.5 * u, .35 * u, 4 * u), FOCUS)
             return self.keyboard(p, y + 9 * u + 2.2 * u, self.prompt_key, skip=(29, 56, 1, 103, 105, 108, 106, 15, 58))
         if self.CONFIRM:
             c = self.CONFIRM
-            self.text(p, c['text'].upper(), x0, x0, ('d', 4.4, 700), TEXT, cw, lh=1.1, lines=None)
+            f = ('u', 3.6, 700, -.02)
+            self.text(p, c['text'], x0, H * .38 - len(self.wrap(c['text'], f, cw, None)) * 3.6 * u * .6, f, TEXT, cw, 1, lh=1.2, lines=None)
             half = (cw - 1.4 * u) / 2
             act('Abbrechen', self.unconfirm, x0, half)
             return act(c['yes'], lambda: (self.unconfirm(), c['run']()), x0 + half + 1.4 * u, half, True)
-        if P and RUN['s'] == 'term':
+        if P and (RUN['s'] == 'term' or RUN.get('keys')):  # keys: a launcher (Battle.net) that wants a login
             layout = RUN.get('layout') if RUN.get('layout') in KB else 'us'
-            y = self.tabs(p, 'Linux-Shell', [(f'Tastatur: {"Deutsch" if layout == "de" else "Englisch"}', False, lambda: self.post('api/layout', {'layout': 'us' if layout == 'de' else 'de'})),
+            y = self.tabs(p, RUN['t'] if RUN.get('keys') else 'Linux-Shell', [(f'Tastatur: {"Deutsch" if layout == "de" else "Englisch"}', False, lambda: self.post('api/layout', {'layout': 'us' if layout == 'de' else 'de'})),
                                              ('Schließen', False, lambda: self.post('api/quit'))])
             return self.keyboard(p, y, self.term_key)
         if P and self.show_deck(p): return  # HOOK: native deck, see DECKS above
+        g = QLinearGradient(0, 0, 0, H * .55)  # a breath of the game's colour from the top: ties both screens together
+        g.setColorAt(0, faded(FOCUS, .13)); g.setColorAt(1, faded(FOCUS, 0))
+        p.fillRect(QRectF(0, 0, W, H * .55), QBrush(g))
         if P: return self.ingame(p)
-        if self.S['tab'] == 4 and not self.S['sys']: return self.draw_system(p)
+        if settings_view.open_now(self): return settings_view.draw(self, p)
         y = self.tabs(p)
-        crumb = f'{self.sys_name({"s": self.S["sys"]})} · {len(items)} Spiele' if self.S['sys'] else f'{len(items)} Einträge'
-        self.text(p, crumb, x0, 2.6 * u, ('b', 2.3), MUTED, cw, 2, 5.2 / 2.3)
+        crumb = f'{self.sys_name({"s": self.S["sys"]})} · {len(items)} Spiele' if self.S['sys'] else f'{len(items)} Eintrag' if len(items) == 1 else f'{len(items)} Einträge'
+        self.text(p, crumb, x0, 2.4 * u, ('u', 1.9, 500), MUTED, cw, 2, 5.4 / 1.9)
         if RUN and RUN.get('paused'):
-            rect = QRectF(x0, y, cw, 6.6 * u)
-            self.box(p, rect, 1.4 * u, RAISED, LIVE)
-            f, wq, wr = ('d', 2.4, 700, .06), self.width_of('BEENDEN', ('d', 2.4, 700, .06)) + 4 * u, self.width_of('FORTSETZEN', ('d', 2.4, 700, .06)) + 4 * u
-            self.button(p, QRectF(rect.right() - 1.6 * u - wq, y + 1.2 * u, wq, 4.2 * u), 'BEENDEN', lambda: self.post('api/quit'), f, TEXT, PANEL, LINE, 1.1)
-            self.button(p, QRectF(rect.right() - 1.6 * u - wq - 1.4 * u - wr, y + 1.2 * u, wr, 4.2 * u), 'FORTSETZEN', self.resume, f, INK, LIVE, LIVE, 1.1)
-            x = self.spans(p, x0 + 1.6 * u, y, [('⏸ ', ('b', 2.5), MUTED)], 6.6 / 2.5)
-            room = rect.right() - 1.6 * u - wq - wr - 3 * u - x - self.width_of(' ist pausiert', ('b', 2.5))
-            title = self.font('b', 2.5, 500)[1].elidedText(RUN['t'], Qt.TextElideMode.ElideRight, room)
-            self.spans(p, x, y, [(title, ('b', 2.5, 500), TEXT), (' ist pausiert', ('b', 2.5), MUTED)], 6.6 / 2.5)
-            y += 6.6 * u + 2.2 * u
+            rect = QRectF(x0, y, cw, 7 * u)
+            self.box(p, rect, 2 * u, PANEL, faded(LIVE, .35))
+            f, bh = ('u', 1.9, 600), 4.4 * u
+            wq, wr = self.width_of('Beenden', f) + 4 * u, self.width_of('Fortsetzen', f) + 4 * u
+            by = y + (7 * u - bh) / 2
+            for label, fn, bx, w, fg, bg in (('Beenden', lambda: self.post('api/quit'), rect.right() - 1.3 * u - wq, wq, TEXT, faded(TEXT, .1)),
+                                             ('Fortsetzen', self.resume, rect.right() - 1.3 * u - wq - u - wr, wr, INK, LIVE)):
+                self.capsule(p, QRectF(bx, by, w, bh), bg)
+                self.text(p, label, bx, by, f, fg, w, 1, bh / (f[1] * u))
+                self.hit(QRectF(bx, by, w, bh), fn, name=label)
+            p.setPen(Qt.PenStyle.NoPen); p.setBrush(LIVE)
+            for k in (0, 1): p.drawRoundedRect(QRectF(x0 + 2 * u + k * .9 * u, y + 2.6 * u, .55 * u, 1.8 * u), .2 * u, .2 * u)
+            x = x0 + 4.6 * u
+            room = rect.right() - 1.3 * u - wq - wr - 3 * u - x - self.width_of(' ist pausiert', ('u', 2.1))
+            title = self.font('u', 2.1, 600)[1].elidedText(RUN['t'], Qt.TextElideMode.ElideRight, room)
+            self.spans(p, x, y, [(title, ('u', 2.1, 600), TEXT), (' ist pausiert', ('u', 2.1), MUTED)], 7 / 2.1)
+            y += 7 * u + 2 * u
         if not items:
-            empty = ('Hier erscheinen zuletzt gespielte Spiele und Favoriten. Wechsle mit RB zu den Systemen und starte etwas.' if self.S['tab'] == 0 else
+            empty = ('Hier erscheinen zuletzt gespielte Spiele und Favoriten. Wechsle mit R zu den Systemen und starte etwas.' if self.S['tab'] == 0 else
                      'Keine installierten Steam-Spiele gefunden.' if self.S['tab'] == 2 else 'Keine Spiele gefunden. Lege ROMs in ROMs/<System> ab und lies die Bibliothek unter Apps neu ein.')
-            return self.text(p, empty, x0 + u, y + 4 * u, ('b', 2.4), MUTED, cw - 2 * u, lh=1.5, lines=None)
-        gap = 1.8 * u
+            return self.text(p, empty, x0 + u, y + 4 * u, ('u', 2.2), MUTED, cw - 2 * u, lh=1.5, lines=None)
+        gap, edge = 2 * u, 2.6 * u  # edge: room for the raised tile's glow inside the clipped view
         size = (cw - (COLS - 1) * gap) / COLS
-        view = QRectF(x0 - .8 * u, y - .8 * u, cw + 1.6 * u, bottom - y + 1.6 * u)
+        view = QRectF(x0 - edge, y - edge, cw + 2 * edge, bottom - y + 2 * edge)
         seen, i = (self.S['tab'], self.S['sys'], self.S['i'], len(items)), self.S['i']
         if seen != self.seen:  # keep the selection in view (the grid follows the controller)
             top = (i // COLS) * (size + gap)
-            self.maxoff['grid'] = max(0, (len(items) + COLS - 1) // COLS * (size + gap) - gap + 1.6 * u - view.height())
-            self.off['grid'], self.seen = max(min(self.off.get('grid', 0), top), top + size + 1.6 * u - view.height()), seen
+            self.maxoff['grid'] = max(0, (len(items) + COLS - 1) // COLS * (size + gap) - gap + 2 * edge - view.height())
+            self.off['grid'], self.seen = max(min(self.off.get('grid', 0), top), top + size + 2 * edge - view.height()), seen
+        if self.lift[0] != seen[:3]: self.lift = (seen[:3], time.time())
         def grid(y):
             for n, x in enumerate(items):
-                rect = QRectF(x0 + (n % COLS) * (size + gap), y + .8 * u + (n // COLS) * (size + gap), size, size)
+                rect = QRectF(x0 + (n % COLS) * (size + gap), y + edge + (n // COLS) * (size + gap), size, size)
                 if n != i and rect.bottom() > view.top() and rect.top() < view.bottom(): self.tile(p, rect, x, n, False)
             n = i
-            self.tile(p, QRectF(x0 + (n % COLS) * (size + gap), y + .8 * u + (n // COLS) * (size + gap), size, size), items[n], n, True)  # on top: it is larger
-            return y + .8 * u + (len(items) + COLS - 1) // COLS * (size + gap) - gap + .8 * u
+            self.tile(p, QRectF(x0 + (n % COLS) * (size + gap), y + edge + (n // COLS) * (size + gap), size, size), items[n], n, True)  # on top: it is larger
+            return y + edge + (len(items) + COLS - 1) // COLS * (size + gap) - gap + edge
         self.scroller(p, 'grid', view, grid)
 
     def ingame(self, p, top=None, ach=True):
@@ -1063,117 +1247,103 @@ class Tandem(QRasterWindow):
         own shows it below them (top) and may keep the achievements for a tab of their own (ach=False)."""
         u, RUN = self.u, self.RUN
         x0, cw, bottom = 2.6 * u, self.width() - 5.2 * u, self.height() - 2.6 * u
-        y = (x0 if top is None else top) + self.text(p, RUN['t'].upper(), x0, x0 if top is None else top, ('d', 4.4, 700), TEXT, cw, lh=1.0, lines=2) + .8 * u
-        y += self.text(p, 'läuft auf dem oberen Bildschirm', x0, y, ('b', 2.2, 500), LIVE) + 1.8 * u
+        y = (x0 if top is None else top)
+        y += self.text(p, '● LÄUFT OBEN', x0, y, ('u', 1.5, 700, .14), LIVE, lh=1.6) + .4 * u
+        y += self.text(p, RUN['t'], x0, y, ('u', 3.8, 700, -.02), TEXT, cw, lh=1.1, lines=2) + .6 * u
         tip = f'{self.sys_name(RUN)} · {RUN["emu"]} · seit {hours(time.time() - RUN["since"])} · {clock()}' + (f' · Akku {self.BATT["level"]} %{" (lädt)" if self.BATT.get("charging") else ""}' if self.BATT else '')
-        y += self.text(p, tip, x0, y, ('b', 2.2), MUTED, cw, lh=1.45, lines=None) + 1.8 * u
+        y += self.text(p, tip, x0, y, ('u', 2), MUTED, cw, lh=1.45, lines=None) + 2 * u
         y = self.sliders(p, y)
         if RUN['emu'] == 'RetroArch': y = self.row_buttons(p, y, [(label, lambda k=k: self.post('api/retroarch', {'name': k})) for k, label in RA]) + 1.8 * u
         if self.ACH and ach: self.scroller(p, 'ach', QRectF(x0, y, cw, bottom - 6.3 * u - 1.8 * u - y), lambda y: self.achievements(p, y))
-        return self.button(p, QRectF(x0, bottom - 6.3 * u, cw, 6.3 * u), 'SPIEL BEENDEN', lambda: self.post('api/quit'), ('d', 2.6, 700, .06), INK, WARN, WARN, 1.4)
+        # tinted, not filled: it stays on screen for the whole game (OLED)
+        return self.button(p, QRectF(x0, bottom - 6.3 * u, cw, 6.3 * u), 'Spiel beenden', lambda: self.post('api/quit'), ('u', 2.2, 600), WARN, faded(WARN, .14), None, 1.4)
 
     def achievements(self, p, y):
         """The running game's RetroAchievements from y on; returns the y below them (for scroller())."""
         A, u, x0, cw = self.ACH, self.u, 2.6 * self.u, self.width() - 5.2 * self.u
-        f, w = ('b', 2.1), cw - 2.8 * u
-        if A.get('note'): return y + self.text(p, A['note'], x0, y, ('b', 2.2), MUTED, cw, lh=1.45, lines=None)
-        self.spans(p, x0, y, [(f'Erfolge {A["earned"]} / {A["total"]}', ('b', 2.2, 500), TEXT), (f' · {A["points"]} Punkte', ('b', 2.2), MUTED)], 1.45)
-        y += 2.2 * u * 1.45 + u
+        f, w = ('u', 1.9), cw - 3.2 * u
+        if A.get('note'): return y + self.text(p, A['note'], x0, y, ('u', 2), MUTED, cw, lh=1.45, lines=None)
+        self.spans(p, x0, y, [(f'Erfolge {A["earned"]} / {A["total"]}', ('u', 2, 600), TEXT), (f' · {A["points"]} Punkte', ('u', 2), MUTED)], 1.45)
+        y += 2 * u * 1.45 + u
         for a in A.get('list') or []:
             rows = self.wrap(a.get('d') or '', f, w, None)
-            h = (1 + len(rows)) * 2.1 * u * 1.25 + 2 * u
-            self.box(p, QRectF(x0, y, cw, h), u, PANEL)
-            self.text(p, ('✓ ' if a.get('e') else '') + a['t'], x0 + 1.4 * u, y + u, ('b', 2.1, 500), LIVE if a.get('e') else TEXT, w - 8 * u, lh=1.25)
-            self.text(p, str(a.get('p', '')), x0 + 1.4 * u, y + u, f, FOCUS, w, 2, 1.25)
-            for n, row in enumerate(rows): self.text(p, row, x0 + 1.4 * u, y + u + (n + 1) * 2.1 * u * 1.25, f, MUTED, lh=1.25)
+            h = (1 + len(rows)) * 1.9 * u * 1.3 + 2.2 * u
+            self.box(p, QRectF(x0, y, cw, h), 1.6 * u, PANEL)
+            self.text(p, ('✓ ' if a.get('e') else '') + a['t'], x0 + 1.6 * u, y + 1.1 * u, ('u', 1.9, 600), LIVE if a.get('e') else TEXT, w - 8 * u, lh=1.3)
+            self.text(p, str(a.get('p', '')), x0 + 1.6 * u, y + 1.1 * u, ('u', 1.9, 600), FOCUS, w, 2, 1.3)
+            for n, row in enumerate(rows): self.text(p, row, x0 + 1.6 * u, y + 1.1 * u + (n + 1) * 1.9 * u * 1.3, f, MUTED, lh=1.3)
             y += h + u
         return y - u
 
     def tile(self, p, rect, x, n, on):
-        u, RUN = self.u, self.RUN
+        """A rounded tile with the cover. The selected one rises a little (eased), with a glow in the game's colour, a
+        ring and a soft sheen, in the manner of the 3DS home menu."""
+        u, RUN, base = self.u, self.RUN, rect
+        t = self.ease(self.lift[1], .24) if on else 0
         if on:
-            rect = rect.adjusted(-.02 * rect.width(), -.02 * rect.height(), .02 * rect.width(), .02 * rect.height())
-            if THEME['glow']: self.box(p, rect.adjusted(-.35 * u, -.35 * u, .35 * u, .35 * u), 1.9 * u, faded(FOCUS, .25 * THEME['glow']))
-        size = round(rect.width())
+            grow, rise = .02 + .045 * t, .5 * u * t
+            rect = rect.adjusted(-grow * rect.width(), -grow * rect.height() - rise, grow * rect.width(), grow * rect.height() - rise)
+        r = .12 * rect.width()
+        if on:
+            for k, a in ((1.6, .08), (.9, .12)): self.box(p, rect.adjusted(-k * u, -k * u + .9 * u, k * u, k * u + .9 * u), r + k * u, rgba(0, 0, 0, a * t))
+            if THEME['glow']: self.box(p, rect.adjusted(-1.1 * u, -1.1 * u, 1.1 * u, 1.1 * u), r + 1.1 * u, faded(FOCUS, .2 * THEME['glow'] * t))
+        size = round(base.width())
         cover = self.images.get(x['cover'], size, size) if x.get('cover') else False
-        self.box(p, rect, 1.6 * u, QBrush(self.paint_of(x, rect)))
         if cover:
+            self.box(p, rect, r, PANEL)
             brush = QBrush(cover)
-            brush.setTransform(brush.transform().translate(rect.x(), rect.y()))
+            k = rect.width() / cover.width()
+            brush.setTransform(brush.transform().translate(rect.x(), rect.y()).scale(k, k))
             if x.get('inst'): p.setOpacity(.4)  # not installed (yet): dimmed
-            self.box(p, rect.adjusted(.35 * u, .35 * u, -.35 * u, -.35 * u), 1.25 * u, brush)  # the tile's colour stays as a thin frame
+            self.box(p, rect, r, brush)
             p.setOpacity(1)
-        elif cover is False:
-            name = None if x['s'] != 'app' else 'term' if x['id'] == 'term' else 'scan' if x['id'] == 'rescan' else 'play' if x['id'] == 'act:steam' else 'desk' if x['id'] == 'act:desktop' else 'get' if x['id'].startswith('upd:') else \
-                'web' if 'firefox' in x['t'].lower() or 'browser' in x['t'].lower() else 'pad'
-            if name and QSvgRenderer: self.icon(p, name, QRectF(rect.x() + .22 * rect.width(), rect.y() + .14 * rect.height(), .56 * rect.width(), .56 * rect.height()), rgba(255, 255, 255, .85))
-            else: self.text(p, x['t'][:2], rect.x() + 1.2 * u, rect.y() + .4 * u, ('d', 7, 700), rgba(255, 255, 255, .28), lh=1)
-        rows = self.wrap(x['t'], ('b', 1.75, 500), rect.width() - 2.2 * u, 2)
-        lh = 1.75 * u * 1.15
-        shade = QRectF(rect.x(), rect.bottom() - 3.9 * u - len(rows) * lh, rect.width(), 3.9 * u + len(rows) * lh)
-        g = QLinearGradient(0, shade.bottom(), 0, shade.top())
-        g.setColorAt(0, rgba(0, 0, 0, .78)); g.setColorAt(1, rgba(0, 0, 0, 0))
-        p.save(); p.setClipRect(shade)
-        self.box(p, rect, 1.6 * u, QBrush(g))
-        p.restore()
-        for k, row in enumerate(rows): self.text(p, row, rect.x() + 1.1 * u, shade.bottom() - .9 * u - (len(rows) - k) * lh, ('b', 1.75, 500), ON_ART, lh=1.15)
+        else:
+            self.box(p, rect, r, QBrush(self.paint_of(x, rect)))
+            if cover is False:
+                name = None if x['s'] != 'app' else 'term' if x['id'] == 'term' else 'scan' if x['id'] == 'rescan' else 'play' if x['id'] == 'act:steam' else 'desk' if x['id'] == 'act:desktop' else 'get' if x['id'].startswith('upd:') else \
+                    'web' if 'firefox' in x['t'].lower() or 'browser' in x['t'].lower() else 'pad'
+                if name and QSvgRenderer: self.icon(p, name, QRectF(rect.x() + .3 * rect.width(), rect.y() + .17 * rect.height(), .4 * rect.width(), .4 * rect.height()), rgba(255, 255, 255, .92))
+                else: self.text(p, x['t'][:1].upper(), rect.x() + 1.4 * u, rect.y() + .6 * u, ('u', 6, 700), rgba(255, 255, 255, .22), lh=1)
+                rows = self.wrap(x['t'], ('u', 1.6, 600), rect.width() - 2.8 * u, 2)
+                lh = 1.6 * u * 1.2
+                for k, row in enumerate(rows): self.text(p, row, rect.x() + 1.4 * u, rect.bottom() - 1.3 * u - (len(rows) - k) * lh, ('u', 1.6, 600), ON_ART, lh=1.2)
+        self.box(p, rect, r, None, rgba(255, 255, 255, .1), 1.0)  # a hairline edge, like glass
+        if on and t > 0:
+            path = QPainterPath(); path.addRoundedRect(rect, r * THEME['radius'], r * THEME['radius'])
+            p.save(); p.setClipPath(path, Qt.ClipOperation.IntersectClip)
+            g = QLinearGradient(rect.topLeft(), QPointF(rect.x() + rect.width() * .55, rect.y() + rect.height() * .6))
+            g.setColorAt(0, rgba(255, 255, 255, .22 * t)); g.setColorAt(.55, rgba(255, 255, 255, .05 * t)); g.setColorAt(1, rgba(255, 255, 255, 0))
+            p.fillRect(rect, QBrush(g))
+            p.restore()
         badge = str(x['n']) if x.get('kind') == 'sys' else ('↓' if x['inst'] == 'no' else '…' if x.get('pct') is None else f'{x["pct"]} %') if x.get('inst') else None
         if badge:
-            w = self.width_of(badge, ('d', 1.9, 700)) + 1.6 * u
-            self.box(p, QRectF(rect.right() - u - w, rect.y() + u, w, 2.5 * u), .8 * u, rgba(0, 0, 0, .55))
-            self.text(p, badge, rect.right() - u - w, rect.y() + u, ('d', 1.9, 700), ON_ART, w, 1, 2.5 / 1.9)
-        star = '⏸' if RUN and RUN.get('paused') and x['id'] == RUN['id'] else '★' if x['id'] in self.L['fav'] else ''
-        if star: self.text(p, star, rect.right() - 4 * u, rect.y() + u, ('b', 2.4), FOCUS, 3 * u, 2)
-        if on: self.box(p, rect, 1.6 * u, None, FOCUS, .35 * u)
+            f = ('u', 1.5, 700)
+            w = self.width_of(badge, f) + 1.8 * u
+            self.capsule(p, QRectF(rect.right() - .9 * u - w, rect.y() + .9 * u, w, 2.6 * u), rgba(0, 0, 0, .62))
+            self.text(p, badge, rect.right() - .9 * u - w, rect.y() + .9 * u, f, ON_ART, w, 1, 2.6 / 1.5)
+        held = RUN and RUN.get('paused') and x['id'] == RUN['id']
+        if held or x['id'] in self.L['fav']:
+            c = QPointF(rect.x() + 2.2 * u, rect.y() + 2.2 * u)
+            p.setPen(Qt.PenStyle.NoPen); p.setBrush(rgba(0, 0, 0, .62))
+            p.drawEllipse(c, 1.35 * u, 1.35 * u)
+            p.setBrush(LIVE if held else FOCUS)
+            if held:
+                for k in (-1, 1): p.drawRoundedRect(QRectF(c.x() + k * .32 * u - .2 * u, c.y() - .55 * u, .4 * u, 1.1 * u), .12 * u, .12 * u)
+            else:
+                star = QPainterPath()
+                for k in range(10):
+                    rr, ang = (.78 if k % 2 == 0 else .34) * u, math.radians(-90 + 36 * k)
+                    pt = QPointF(c.x() + rr * math.cos(ang), c.y() + rr * math.sin(ang))
+                    star.lineTo(pt) if k else star.moveTo(pt)
+                star.closeSubpath()
+                p.drawPath(star)
+        if on:
+            ring = rect.adjusted(-.5 * u, -.5 * u, .5 * u, .5 * u)
+            self.box(p, ring, r + .5 * u, None, faded(FOCUS, .35 + .65 * t), .3 * u)
         def tap(n=n):
             if n == self.S['i']: self.go('ok')
             else: self.S['i'] = n; self.push()
-        self.hit(rect, tap, name=x['t'])
-
-    def draw_system(self, p):
-        u, x0, cw, bottom, SYS, CFG = self.u, 2.6 * self.u, self.width() - 5.2 * self.u, self.height() - 2.6 * self.u, self.SYS, self.CFG
-        if not SYS and not self.asked: self.asked = True; self.load_sys()
-        y = self.sliders(p, self.tabs(p))
-        f, bf = ('b', 2.5), ('d', 2.3, 700, .06)
-        foot = bottom - 6.3 * u
-        if self.SUB == 'wifi':
-            def nets(y):
-                for n in (SYS or {}).get('networks') or []:
-                    rect = QRectF(x0, y, cw, 6 * u)
-                    self.box(p, rect, 1.2 * u, RAISED, LINE)
-                    self.text(p, n['ssid'], x0 + 1.8 * u, y, ('b', 2.6, 500), TEXT, cw * .55, lh=6 / 2.6)
-                    self.text(p, ('verbunden · ' if n.get('active') else '') + f'{n["signal"]} %' + (' · geschützt' if n.get('secure') else ''), x0, y, ('b', 2.6, 500), MUTED, cw - 1.8 * u, 2, 6 / 2.6)
-                    self.hit(rect, lambda n=n: self.wifi(n), name=n['ssid'])
-                    y += 7 * u
-                if not (SYS or {}).get('networks'): y += self.text(p, 'Keine Netze gefunden.', x0, y, ('b', 2.2), MUTED, lh=1.45) + u
-                self.button(p, QRectF(x0, y, cw, 6 * u), 'Zurück', lambda: setattr(self, 'SUB', ''), ('b', 2.6, 500), TEXT, RAISED, LINE)
-                return y + 6 * u
-            self.scroller(p, 'wifi', QRectF(x0, y, cw, foot - 1.8 * u - y), nets)
-        else:
-            def line(y, label, value, buttons=()):
-                right = x0 + cw
-                for text, fn in reversed(buttons):
-                    w = self.width_of(text.upper(), bf) + 3.6 * u
-                    self.button(p, QRectF(right - w, y, w, 5.6 * u), text.upper(), fn, bf)
-                    right -= w + 1.4 * u
-                self.text(p, label, x0, y, f, MUTED, lh=5.6 / 2.5)
-                self.text(p, value, x0 + 26.4 * u, y, ('b', 2.5, 500), TEXT, right - x0 - 26.4 * u, lh=5.6 / 2.5)
-                return y + 5.6 * u + 1.8 * u
-            def scan():
-                self.SUB = 'wifi'
-                self.toast('Suche Netze …')
-                self.load_sys(True)
-            y = line(y, 'WLAN', (SYS.get('ssid') or 'nicht verbunden') if SYS else '…', [('Netze', scan)])
-            y = line(y, 'Speicher', ' · '.join(f'{s["name"]} {round(s["free"] / 1e9)} von {round(s["total"] / 1e9)} GB frei' for s in SYS['storage']) if SYS else '…')
-            y = line(y, 'Erfolge', (CFG.get('ra_user') or 'kein Konto') + (' · angemeldet' if CFG.get('ra_login') else ''),
-                     [('Name', lambda: self.ask_account('ra_user')), ('Passwort', lambda: self.ask_account('ra_password')), ('Schlüssel' + (' ✓' if CFG.get('ra_key_set') else ''), lambda: self.ask_account('ra_key'))])
-            y = line(y, 'Aussehen', THEME['name'], [('Wechseln', self.next_theme)])
-            y = line(y, 'Tandem', 'Version ' + str(CFG.get('version', '')), [('Einrichtung', lambda: self.post('api/setup', {'open': True}))])
-            if self.PAIR and self.PAIR.get('url'):
-                own = self.PAIR.get('own')  # the owner's own address for the settings page comes first
-                self.spans(p, x0, y, [('Bequemer vom Handy oder PC' + ('' if own else ' im selben WLAN') + ': ', ('b', 2.2), MUTED), (own or self.PAIR['url'], ('b', 2.2, 500), TEXT), (' · PIN ', ('b', 2.2), MUTED), (str(self.PAIR['pin']), ('b', 2.2, 500), TEXT)])
-                self.text(p, f'Im Heimnetz auch: {self.PAIR["url"]} · {self.PAIR["ip_url"]}' if own else f'Falls der Name nicht gefunden wird: {self.PAIR["ip_url"]}', x0, y + 3.4 * u, ('b', 2.2), MUTED, self.width() - 5.2 * u)
-        self.row_buttons(p, foot, [(POWER[name][1], lambda name=name: self.confirm_action(name)) for name in POWER])
+        self.hit(base, tap, name=x['t'])
 
 
 def main():

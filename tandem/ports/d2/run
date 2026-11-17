@@ -1,0 +1,66 @@
+#!/bin/bash
+# run: Diablo II + Lord of Destruction 1.13d with the Thor D2 mod (fork of D2Android) under the Proton (ARM64, FEX)
+# of the Steam installation, see build.sh. Not installed yet: dist/setup.py installs from Blizzard's own installers with
+# the player's CD keys first (progress on the deck). Game, saves and Wine prefix stay in data/ (game/, save/, prefix/).
+# The mod sends its data by UDP to 127.0.0.1:7957 (pad.py, the controller), which passes it on to the deck on 7958
+# (ui/decks/d2.py); both send commands to the mod on 7959.
+set -u
+HERE="$(cd "$(dirname "$0")" && pwd)"
+DATA="$HERE/data"; GAME="$DATA/game"; DIST="$HERE/dist"
+mkdir -p "$DATA/save"
+# a quit saves and ends Wine in the background (setup.py --play, below): a start right after it waits for that, else the
+# old play's wineserver -k (same prefix) ends the new game. The lock goes with the last process that inherited it.
+exec 8>"$DATA/play.lock"; flock -w 60 8
+
+WINE=$(ls -d "$HOME"/.local/share/Steam/steamapps/common/Proton*ARM64*/files/bin-arm64/wine /run/media/"$USER"/*/steamapps/common/Proton*ARM64*/files/bin-arm64/wine \
+       /run/media/"$USER"/*/SteamLibrary/steamapps/common/Proton*ARM64*/files/bin-arm64/wine 2>/dev/null | sort -V | tail -1)
+[ -n "$WINE" ] || { echo "Diablo II: no Proton (ARM64) found – install one in Steam (e.g. run any Windows game once)" >&2; exit 1; }
+P="$(dirname "$(dirname "$WINE")")"
+export PATH="$P/bin-arm64:$PATH" WINESERVER="$P/bin-arm64/wineserver" WINELOADER="$WINE" WINEDLLPATH="$P/lib/vkd3d:$P/lib/wine" \
+       WINEPREFIX="$DATA/prefix" D2MOD_APP_PORT=7957 WINEDEBUG=-all WINEDLLOVERRIDES="mscoree,mshtml=;d3d11,dxgi=n,b"
+
+python3 "$DIST/setup.py" || { sleep 30; exit 1; }
+[ -f "$DATA/fps" ] && export DXVK_HUD=fps,frametimes  # data/fps (empty file): frame rate on the top screen  # the error stays on the deck a while (Tandem ends the port anyway)
+
+# D2DX draws with Direct3D 11: DXVK from the same Proton
+cp -f "$P/lib/wine/dxvk/i386-windows/d3d11.dll" "$P/lib/wine/dxvk/i386-windows/dxgi.dll" "$WINEPREFIX/drive_c/windows/syswow64/"
+# the mod, D2DX and PlugY go into the game folder at every start (an update of the port brings new ones)
+cp -f "$DIST"/mod/* "$DIST/glide3x.dll" "$DIST/PlugY.dll" "$DIST/PlugY.ini" "$GAME/"
+mkdir -p "$GAME/PlugY"; cp -f "$DIST"/PlugY/* "$GAME/PlugY/"
+printf '[window]\r\nscale=1\r\nposition=[-1,-1]\r\nframeless=true\r\n\r\n[game]\r\nsize=[960,540]\r\nfiltering=0\r\n\r\n[optouts]\r\nnologo=true\r\nnocompatmodefix=true\r\n' > "$GAME/d2dx.cfg"
+# data/ is drive P: (setup.py makes the link; Z: is the read-only system root, where Wine sees no free space)
+ln -sfn "$DATA" "$WINEPREFIX/dosdevices/p:"
+regdos() { local r="${1#"$DATA"}"; printf 'P:%s' "${r//\//\\\\}"; }  # P:\\game, as .reg files want it
+cat > "$DATA/d2.reg" <<EOF
+REGEDIT4
+
+[HKEY_CURRENT_USER\\Software\\Blizzard Entertainment\\Diablo II]
+"InstallPath"="$(regdos "$GAME")\\\\"
+"Save Path"="$(regdos "$DATA/save")\\\\"
+"Mini Panel"=dword:00000001
+
+[HKEY_CURRENT_USER\\Software\\Blizzard Entertainment\\Diablo II\\VideoConfig]
+"Render"=dword:00000000
+
+; Windows 7 for the game: from Windows 8 on (Wine's default) critical sections have no debug info, which Fog.dll checks
+; ("Unrecoverable internal error", then a stack overflow); D2DX wants at least Windows 7
+[HKEY_CURRENT_USER\\Software\\Wine\\AppDefaults\\Game.exe]
+"Version"="win7"
+EOF
+
+# the controller as Thor D2 plays it (dist/pad.py): the mod's packets come to it (D2MOD_APP_PORT above) and go on to the deck
+[ -f "$DATA/pad-trace" ] && export D2PAD_TRACE="$DATA/pad.log"  # data/pad-trace (empty file): what the pad sends, in data/pad.log
+python3 "$DIST/pad.py" &
+PAD=$!
+done_() {
+    trap - TERM INT EXIT
+    [ -n "${PLAY:-}" ] && kill -TERM "$PLAY" 2>/dev/null  # saves first, then ends Wine (setup.py: save_before_quit, reap)
+    kill -TERM "$PAD" 2>/dev/null
+    exit 0
+}
+trap done_ TERM INT EXIT
+# a session of its own: Tandem's SIGKILL for the group after 5 s must not cut the save on quitting short
+setsid python3 "$DIST/setup.py" --play &  # waits for Game.exe and then ends Wine's leftovers (see play and reap there)
+PLAY=$!
+wait $PLAY
+done_

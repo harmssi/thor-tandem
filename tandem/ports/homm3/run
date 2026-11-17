@@ -1,0 +1,38 @@
+#!/bin/bash
+# run: starts Heroes of Might and Magic III (the VCMI fork "Heroes III Thor Edition" from dist/, see build.sh).
+# The game data is the player's own Steam "Heroes of Might & Magic III - HD Edition" folder (the one with
+# "HOMM3 2.0.exe") and is only read: the first of $HOMM3_DATA, ~/HoMM3-HD, the Steam library in the home folder, or
+# that Steam folder on a card (looked for once, then remembered). dist/setup.py makes VCMI data of it in data/vcmi
+# (links, converted tables, campaigns). Settings, saved games and the log go to data/ next to this script.
+set -eu
+HERE="$(cd "$(dirname "$0")" && pwd)"
+BASE="$HERE/data"
+mkdir -p "$BASE/config/vcmi"
+
+NAME="Heroes of Might & Magic III - HD Edition"
+has() { [ -f "$1/HOMM3 2.0.exe" ] && [ -d "$1/data" ]; }
+DATA="${HOMM3_DATA:-$(cat "$BASE/data-path" 2>/dev/null || true)}"
+if ! has "$DATA"; then
+    DATA=
+    while IFS= read -r d; do
+        if has "$d"; then DATA="$d"; echo "$d" > "$BASE/data-path"; break; fi
+    done < <(echo "$HOME/HoMM3-HD"; echo "$HOME/.local/share/Steam/steamapps/common/$NAME"
+             find /run/media/"$USER" -maxdepth 9 -type d -name "$NAME" 2>/dev/null)
+fi
+[ -n "$DATA" ] || { echo "Heroes III: no game data found (set HOMM3_DATA or copy your HD Edition folder to ~/HoMM3-HD)" >&2; exit 1; }
+python3 "$HERE/dist/setup.py" "$DATA" "$BASE/vcmi" "$BASE/config/vcmi"
+
+# First start: a window as large as the screen, the interface as large as it gets (as on Android: the map of a handheld
+# wants large tiles) and VCMI's own texts in the language of the game data; the launcher that asks for these is not part
+# of the port. Not VCMI's borderless full screen: under the handheld's sdl2-compat it comes up 0 x 0 and the game stops.
+if [ ! -f "$BASE/config/vcmi/settings.json" ]; then
+    case "$(ls "$DATA/data/LOC" 2>/dev/null | head -1 | tr a-z A-Z)" in DE) LANGUAGE=german;; FR) LANGUAGE=french;; ES) LANGUAGE=spanish;; IT) LANGUAGE=italian;; PL) LANGUAGE=polish;; RU) LANGUAGE=russian;; *) LANGUAGE=english;; esac
+    read -r W H < <(xrandr 2>/dev/null | sed -n 's/.*current \([0-9]*\) x \([0-9]*\).*/\1 \2/p'; echo "1920 1080")
+    SCALE=$((W * 100 / 800)); [ $((H * 100 / 600)) -lt "$SCALE" ] && SCALE=$((H * 100 / 600))  # the game's own screen is 800 x 600
+    echo "{ \"general\" : { \"language\" : \"$LANGUAGE\" }, \"video\" : { \"fullscreen\" : false, \"resolution\" : { \"width\" : $W, \"height\" : $H, \"scaling\" : $SCALE } } }" > "$BASE/config/vcmi/settings.json"
+fi
+
+export XDG_DATA_HOME="$BASE" XDG_CONFIG_HOME="$BASE/config" XDG_CACHE_HOME="$BASE/cache"  # where VCMI keeps what it writes (each + /vcmi)
+export LD_LIBRARY_PATH="$HERE/dist${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"  # the libraries built with the game, see build.sh
+cd "$HERE/dist"  # VCMI finds its own files (config, Mods, AI) from here
+exec ./vcmiclient

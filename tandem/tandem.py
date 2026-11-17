@@ -10,6 +10,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
+import thor  # the Thor's own hardware: stick lights, gyro, performance profile
+
 HOME = Path.home()
 HERE = Path(__file__).resolve().parent
 STATE = Path(os.environ.get('XDG_STATE_HOME', HOME / '.local/state')) / 'tandem'
@@ -58,11 +60,34 @@ SYSTEMS = {
     'arcade': ('Arcade', 5, 'zip 7z', [('RetroArch', ra('fbneo', 'mame2003_plus'))]),
     'fbneo': ('FinalBurn Neo', 5, 'zip 7z', [('RetroArch', ra('fbneo'))]),
     'switch': ('Switch', 355, 'nsp xci nsz', [('Eden', app('Eden*.AppImage', '-f', '-g'))]),  # not in the Armada Store: Tandem's own updater fetches it
+    'port': ('Ports', 28, '', []),  # no folder of ROMs: the games in PORTS
 }
+# Native ports: games built for this device (ports/<folder>/build.sh), which install.sh puts next to Tandem's own folder.
+# id -> (title, folder, argument for the folder's "run" script, the game's bottom screen in ui/decks or None).
+# A port is listed once its folder is installed; its game data is the player's own and "run" finds it.
+PORTS_DIR = Path(os.environ.get('XDG_DATA_HOME', HOME / '.local/share')) / 'tandem-ports'
+PORTS = {'halflife': ('Half-Life', 'halflife', 'valve', 'hev'), 'opfor': ('Half-Life: Opposing Force', 'halflife', 'gearbox', 'hev'),
+         'bshift': ('Half-Life: Blue Shift', 'halflife', 'bshift', 'hev'), 'aok': ('Age of Kings', 'aok', '', 'aok'),
+         'ra2': ('Red Alert 2', 'ra2', 'ra2', 'ra2'), 'ra2yr': ("Red Alert 2: Yuri's Revenge", 'ra2', 'yr', 'ra2'),
+         'cnc': ('Command & Conquer', 'cnc', 'td', 'cnc'), 'cncra': ('Command & Conquer: Red Alert', 'cnc', 'ra', 'cnc'),
+         'homm3': ('Heroes of Might and Magic III', 'homm3', '', 'homm3'), 'kknd2': ('KKnD 2: Krossfire', 'kknd2', '', 'kknd2'),
+         'd2': ('Diablo II', 'd2', '', 'd2')}
+# The Steam release each port's data comes from: its artwork in Steam's library cache gives the port its tile.
+PORT_ART = {'halflife': 70, 'opfor': 50, 'bshift': 130, 'aok': 221380, 'ra2': 2229850, 'ra2yr': 2229850, 'cnc': 1213210, 'cncra': 1213210,
+            'homm3': 297000, 'kknd2': 1292180}
+# Where a port's game listens for its deck (ports/tandem_deck.h, see README "Deck-Socket"); one game runs at a time.
+DECK_SOCKET = Path(os.environ.get('XDG_RUNTIME_DIR') or STATE) / 'tandem-deck.sock'
 # Apps offered in the Apps tab when installed: (label, kind, target, args)
 APPS = [('Firefox', 'cmd', 'firefox', ()), ('Heroic', 'cmd', 'heroic', ('--no-sandbox',)), ('ES-DE', 'appimage', 'ES-DE*.AppImage', ()),
         ('Moonlight', 'flatpak', 'com.moonlight_stream.Moonlight', ()), ('Chiaki', 'flatpak', 'io.github.streetpea.Chiaki4deck', ()),
         ('RetroArch', 'flatpak', RA_REF, ()), ('Prism Launcher', 'flatpak', 'org.prismlauncher.PrismLauncher', ())]
+# Media apps: mpv (Flathub io.mpv.Mpv) plays full screen on top, the app's deck (ui/decks/<deck>.py) browses and steers it
+# over mpv's IPC socket and gets the controller's navigation. The socket is in /tmp: mpv's sandbox sees the host's /tmp.
+MEDIA_SOCKET = Path(f'/tmp/tandem-mpv-{os.getuid()}.sock')
+MPV_ARGS = ('--idle=yes', '--force-window=yes', '--fullscreen', f'--input-ipc-server={MEDIA_SOCKET}', '--hwdec=v4l2m2m-copy', '--ytdl=no',
+            '--really-quiet', '--script-opts=osc-idlescreen=no', '--cache=yes', '--demuxer-max-bytes=150MiB', '--sub-auto=no')  # quiet: no addresses in launch.log
+MEDIA_APPS = {'YouTube': 'youtube', 'Plex': 'plex'}
+APPS += [(name, 'flatpak', 'io.mpv.Mpv', MPV_ARGS) for name in MEDIA_APPS]
 def steam_apps(path):
     """Names, kinds and install folders from Steam's appinfo.vdf (binary). Only the first 'name', 'type' and 'installdir'
     of each entry are read; that is enough for a list of the library."""
@@ -90,6 +115,19 @@ def steam_apps(path):
             if at >= 0: entry[key] = blob[at + len(mark):blob.index(b'\0', at + len(mark))].decode(errors='replace')
         if entry.get('name'): apps[str(appid)] = entry
     return apps
+
+
+def steam_shortcuts(steam):
+    """(appid, name, grid folder) of each non-Steam shortcut in Steam's shortcuts.vdf (binary), Tandem's own left out."""
+    import struct
+    found = []
+    for path in glob.glob(str(steam / 'userdata/[0-9]*/config/shortcuts.vdf')):
+        try: data = Path(path).read_bytes()
+        except OSError: continue
+        for m in re.finditer(rb'\x02appid\x00(.{4})\x01(?i:appname)\x00([^\x00]*)\x00', data, re.S):
+            name = m[2].decode(errors='replace')
+            if name != 'Toravo Tandem': found.append((str(struct.unpack('<I', m[1])[0]), name, Path(path).parent / 'grid'))
+    return found
 
 
 STEAM_TOOLS = re.compile(r'^(Proton|Steam Linux Runtime|Steamworks Common|SteamVR|Steam Controller)', re.I)
@@ -200,6 +238,7 @@ def wide_core(cmd, pack, on):
 
 def emulator(system):
     """(label, command prefix) of the first usable emulator, or (None, what to install)."""
+    if system == 'port': return 'Port', []
     emus = SYSTEMS[system][3]
     if not emus: return None, 'Für dieses System bietet der Armada Store keinen Emulator.'
     reasons = []
@@ -273,7 +312,7 @@ class Library:
 
     def _system_art(self, system):
         """Platform artwork of a Cocoon theme on the card (assets/smart_folders/<pack>/smart_folders/by_platform/<system>/)."""
-        names = [system] + {'megadrive': ['genesis'], 'genesis': ['megadrive'], 'n3ds': ['3ds'], 'gc': ['gamecube'], 'psx': ['ps1']}.get(system, [])
+        names = [system] + {'megadrive': ['genesis'], 'genesis': ['megadrive'], 'n3ds': ['3ds'], 'gc': ['gamecube'], 'psx': ['ps1'], 'port': ['windows']}.get(system, [])
         for root in self.roots:
             for name in names:
                 for folder in sorted(glob.glob(str(Path(root).parent / f'Cocoon/assets/smart_folders/*/smart_folders/by_platform/{name}'))):
@@ -314,6 +353,15 @@ class Library:
             games[gid] = {'id': gid, 't': name[1], 's': 'steam', 'appid': appid[1], 'cover': self._image(art('library_600x900.jpg') and str(art('library_600x900.jpg'))),
                           'hero': self._image(art('library_hero.jpg') and str(art('library_hero.jpg')))}
             if loading: games[gid].update(inst='load', pct=round(100 * done / total) if total else None)
+        for appid, name, grid in steam_shortcuts(self.steam):  # Battle.net and other launchers: they want a login, keys go along
+            art = lambda n: self._image(str(grid / n)) if (grid / n).is_file() else None
+            games['steam' + appid] = {'id': 'steam' + appid, 't': name, 's': 'steam', 'appid': appid, 'gameid': str(int(appid) << 32 | 0x02000000),
+                                      'keys': True, 'cover': art(f'{appid}p.png') or art(f'{appid}p.jpg'), 'hero': art(f'{appid}_hero.png') or art(f'{appid}_hero.jpg')}
+        for port, (title, folder, _, deck) in PORTS.items():
+            if not (PORTS_DIR / folder / 'run').is_file(): continue
+            own = PORTS_DIR / folder / 'dist/art/cover.png'  # art the port brings itself (no Steam release to borrow from)
+            art = lambda n: (lambda f: self._image(str(f)) if f.is_file() else None)(own if own.is_file() else self.steam / f'appcache/librarycache/{PORT_ART.get(port)}/{n}')
+            games['port-' + port] = {'id': 'port-' + port, 't': title, 's': 'port', 'port': port, 'cover': art('library_600x900.jpg'), 'hero': art('library_hero.jpg')}
         # The rest of the Steam library, read from Steam's own files: these can be installed from here.
         for appid, app in steam_apps(self.steam / 'appcache/appinfo.vdf').items():
             cover = self.steam / f'appcache/librarycache/{appid}/library_600x900.jpg'
@@ -413,7 +461,8 @@ class Tandem:
             except queue.Full: pass
 
     def command(self, game):
-        if game['s'] == 'steam': return 'Steam', ['steam', '-silent', f'steam://rungameid/{game["appid"]}']  # no Steam window, only the game
+        if game['s'] == 'steam': return 'Steam', ['steam', '-silent', f'steam://rungameid/{game.get("gameid") or game["appid"]}']  # no Steam window, only the game
+        if game['s'] == 'port': return 'Port', [str(PORTS_DIR / PORTS[game['port']][1] / 'run'), PORTS[game['port']][2]]
         label, cmd = emulator(game['s'])
         return (label, cmd + [game['path']]) if label else (None, cmd)
 
@@ -429,6 +478,7 @@ class Tandem:
             elif gid.startswith('app') and gid[3:].isdigit() and int(gid[3:]) < len(APPS):
                 entry = APPS[int(gid[3:])]
                 game, (label, (cmd, why)) = {'id': gid, 't': entry[0], 's': 'app'}, (entry[0], resolve(*entry[1:]))
+                if entry[0] in MEDIA_APPS: game['media'] = {'deck': MEDIA_APPS[entry[0]], 'socket': str(MEDIA_SOCKET), 'pad': True}
                 if not cmd: label, cmd = None, why
             else:
                 game = self.library.games.get(gid)
@@ -437,6 +487,8 @@ class Tandem:
                 if game.get('inst') == 'no': return self.steam_install(game)
                 label, cmd = self.command(game)
                 if game['s'] == 'steam': self.steam_show = time.time() + 300
+                if game['t'] == 'WoW Forever' and not self.dry: wow_login()  # its own login, as under Android (no Battle.net hand-over on ARM64)
+                if game.get('keys'): game = {**game, 'layout': region_layout()}; run_quiet(['setxkbmap', game['layout']])  # as for the terminal
             if not label: return {'error': cmd}
             pack, wide = find_pack(game) if label == 'RetroArch' else None, None  # the native bottom screen runs it (ui/decks/pack.py)
             if pack: cmd, wide = wide_core(cmd, pack, self.saved.get('wide', {}).get(gid, False))
@@ -446,18 +498,28 @@ class Tandem:
                 if not self.dry:
                     env = None
                     if game['s'] == 'wiiu': env = {**os.environ, 'DISABLE_GAMESCOPE_WSI': '1'}; cemu_pad_window()  # see mirror_pad
+                    if game['s'] == 'port': env = {**os.environ, 'TANDEM_DECK_SOCKET': str(DECK_SOCKET)}
+                    stopping = getattr(self, 'steam_stopping', None)
+                    if game['s'] == 'steam' and stopping and stopping.is_alive():  # a start sent to a Steam that is shutting down is lost
+                        stopping.join(60)
+                        for _ in range(30):  # 'steam -shutdown' can return before the client is gone
+                            try: alive = os.path.isdir('/proc/' + (HOME / '.steam/steam.pid').read_text().strip())
+                            except OSError: alive = False
+                            if not alive: break
+                            time.sleep(1)
                     try: self.proc = subprocess.Popen(cmd, stdout=log, stderr=log, stdin=subprocess.DEVNULL, start_new_session=True, env=env)
                     except OSError as error: return {'error': f'Start fehlgeschlagen: {error}'}
                     if game['s'] not in ('steam', 'app'): (STATE / 'running').write_text(f'{self.proc.pid} {start_time(self.proc.pid)}')
             played = self.saved.setdefault('played', {}).setdefault(gid, {'secs': 0})
             played['last'] = int(time.time())
             self.save()
-            tracked = game['s'] != 'app'  # apps hand off to another process right away
+            tracked = game['s'] != 'app' or 'media' in game  # apps hand off to another process right away; the player stays
             if tracked:
                 self.run = {'id': gid, 't': game['t'], 's': game['s'], 'emu': label, 'since': int(time.time()), 'hero': game.get('hero'),
-                            'layout': game.get('layout'), 'appid': game.get('appid'),
+                            'layout': game.get('layout'), 'appid': game.get('appid'), 'keys': game.get('keys'),
                             'deck': f'deck/{game["appid"]}.html' if game.get('appid') and (HERE / f'decks/{game["appid"]}.html').is_file() else None,
-                            'pack': pack, 'wide': wide}
+                            'pack': pack, 'wide': wide,
+                            'port': game.get('media') or ({'deck': PORTS[game['port']][3], 'socket': str(DECK_SOCKET)} if game['s'] == 'port' else None)}
                 if not self.dry: threading.Thread(target=self.watch, args=(self.proc, gid, game.get('appid')), daemon=True).start()
                 if not self.dry and game['s'] == 'wiiu': threading.Thread(target=self.mirror_pad, args=(gid,), daemon=True).start()
         self.publish()
@@ -494,7 +556,8 @@ class Tandem:
     def steam_rest(self):
         """Steam takes about 2 GB of memory while it idles in the background: end it when nothing needs it."""
         if self.dry or (self.run and self.run.get('appid')) or any(g.get('inst') == 'load' for g in self.library.games.values()): return
-        threading.Thread(target=run_quiet, args=(['steam', '-shutdown'], 60), daemon=True).start()
+        self.steam_stopping = threading.Thread(target=run_quiet, args=(['steam', '-shutdown'], 60), daemon=True)
+        self.steam_stopping.start()
 
     def steam_watch(self):
         """While a Steam download runs, read its progress every 20 s and tell the pages."""
@@ -725,6 +788,98 @@ def run_quiet(cmd, timeout=5):
     except (OSError, subprocess.SubprocessError): return ''
 
 
+def record(tandem, action):
+    """Both screens and the sound into ~/Videos/Tandem (thor-record); both windows learn the state."""
+    if action not in ('start', 'stop', 'status'): return {'error': 'unbekannte Aktion'}
+    out = run_quiet([str(HERE / 'thor-record'), action], timeout=60).strip().splitlines()
+    try: state = json.loads(out[-1])
+    except (IndexError, ValueError): return {'error': 'Aufnahme nicht möglich'}
+    if action != 'status' and 'error' not in state: tandem.publish('rec', {'rec': state})
+    return state
+
+
+def wow_folders():
+    """WoW Forever's client folders (…/World of Warcraft/_forever_) on the card or in the home folder."""
+    return [Path(p) for p in sorted(set(glob.glob('/run/media/*/*/Battle.net/World of Warcraft/_forever_') + glob.glob(str(HOME / '*/World of Warcraft/_forever_'))))]
+
+
+def wow_pick_account(cfg, name):
+    """Makes `name` the preselected game account: WoW keeps the list as SET accountList "A|!B|" ('!' = last chosen)."""
+    if not cfg.exists(): return
+    lines = cfg.read_text(errors='surrogateescape').splitlines()
+    old = next((l for l in lines if l.startswith('SET accountList ')), None)
+    names = [n.lstrip('!') for n in (old.split('"')[1] if old and old.count('"') >= 2 else '').split('|') if n]
+    if name not in names: names.append(name)
+    new = 'SET accountList "' + ''.join(('!' if n == name else '') + n + '|' for n in names) + '"'
+    if old == new: return
+    lines = [new if l == old else l for l in lines] if old else lines + [new]
+    cfg.write_bytes(('\r\n'.join(lines) + '\r\n').encode(errors='surrogateescape'))
+
+
+def wow_login(timeout=600):
+    """Signs WoW Forever in the way its Android launcher does: the client reads <_forever_>/login.txt (e-mail, password,
+    one per line) at start. The file holds the password in plain text, so it is overwritten and removed as soon as
+    Connection.log shows the login form was sent (success or not), or after timeout. Returns False when no login is set up."""
+    config = load_config()
+    if not (config.get('bnet_email') and config.get('bnet_password')): return False
+    files = []
+    sent = lambda f: 'logon form submission' in ((f.parent / 'Logs/Connection.log').read_text(errors='replace') if (f.parent / 'Logs/Connection.log').exists() else '')
+    for folder in wow_folders():
+        if config.get('wow_account'): wow_pick_account(folder / 'WTF/Config.wtf', config['wow_account'])
+        (folder / 'Logs/Connection.log').unlink(missing_ok=True)
+        path = folder / 'login.txt'
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, 'w') as handle: handle.write(f'{config["bnet_email"]}\n{config["bnet_password"]}\n')
+        files.append(path)
+
+    def clean():
+        until = time.time() + timeout
+        while time.time() < until and not any(sent(f) for f in files):
+            time.sleep(2)
+        time.sleep(3)  # WoW reads the file a few times around the login
+        for f in files:
+            try:
+                f.write_bytes(bytes(min(f.stat().st_size, 4096))); f.unlink()
+            except OSError: pass
+    threading.Thread(target=clean, daemon=True).start()
+    want = config.get('wow_account')
+    rows = [n.lstrip('!') for f in files for l in (f.parent / 'WTF/Config.wtf').read_text(errors='replace').splitlines()
+            if l.startswith('SET accountList "') for n in l.split('"')[1].split('|') if n] if want else []
+    if want in rows:  # the chooser always marks the first account (accountList's '!' is ignored), so pick it on screen
+        import wowpick
+        env = {**os.environ, 'XDG_RUNTIME_DIR': f'/run/user/{os.getuid()}', 'WAYLAND_DISPLAY': 'gamescope-0'}
+        threading.Thread(target=wowpick.pick, args=(rows.index(want), lambda c: KEYBOARD.press(c, []), env), daemon=True).start()
+    return True
+
+
+LSFG_LAYER = HOME / '.local/share/vulkan/implicit_layer.d/VkLayer_LSFGVK_frame_generation.json'
+
+
+def frame_gen(on=None):
+    """Lossless Scaling frame generation (lsfg-vk layer, profiles in ~/.config/lsfg-vk/conf.toml) on or off: the layer's
+    file is set aside while off, so it counts from the next game start. None: only report."""
+    off = LSFG_LAYER.with_suffix('.json.off')
+    if on is not None:
+        src, dst = (off, LSFG_LAYER) if on else (LSFG_LAYER, off)
+        if src.exists(): src.rename(dst)
+    return {'on': LSFG_LAYER.exists(), 'there': LSFG_LAYER.exists() or off.exists()}
+
+
+def screenshot():
+    """Both screens as PNG into ~/Pictures/Tandem, the way gamescope takes them."""
+    folder = HOME / 'Pictures/Tandem'
+    folder.mkdir(parents=True, exist_ok=True)
+    name = time.strftime('%Y%m%d-%H%M%S')
+    env = {**os.environ, 'XDG_RUNTIME_DIR': f'/run/user/{os.getuid()}'}
+    for cmd, path in ((['gamescopectl', 'screenshot'], folder / f'{name}-oben.png'), (['armada-run-bottom', '--', 'gamescopectl', 'screenshot'], folder / f'{name}-unten.png')):
+        try: subprocess.run(cmd + [str(path)], env={**env, 'WAYLAND_DISPLAY': 'gamescope-0'} if cmd[0] == 'gamescopectl' else env, capture_output=True, timeout=10)
+        except (OSError, subprocess.SubprocessError): pass
+    for _ in range(30):  # gamescope writes the file a moment later
+        if (folder / f'{name}-oben.png').exists(): return {'ok': True, 'name': name}
+        time.sleep(.1)
+    return {'error': 'Bildschirmfoto fehlgeschlagen'}
+
+
 def settings():
     """Brightness of both panels and the volume, each 0-100, or None where the device has no such control."""
     out = {}
@@ -744,10 +899,7 @@ def change(key, value):
         base = Path('/sys/class/backlight') / BACKLIGHTS[key]
         try: raw = max(1, round(int((base / 'max_brightness').read_text()) * value / 100))  # never fully dark
         except (OSError, ValueError): return {'error': 'Diese Helligkeit lässt sich hier nicht einstellen.'}
-        if key == 'bt': run_quiet([PRIV_WRITE, str(base / 'brightness'), str(raw)])
-        # ArmadaOS's helper steers every backlight write to the top panel; the bottom one goes to logind directly.
-        else: run_quiet(['busctl', '--system', 'call', 'org.freedesktop.login1', '/org/freedesktop/login1/session/auto',
-                         'org.freedesktop.login1.Session', 'SetBrightness', 'ssu', 'backlight', BACKLIGHTS[key], str(raw)])
+        set_raw(key, raw)
     elif key == 'vol':
         run_quiet(['wpctl', 'set-volume', '@DEFAULT_AUDIO_SINK@', f'{value}%'])
     else: return {'error': 'unbekannte Einstellung'}
@@ -762,7 +914,50 @@ def retroarch(name):
     return {'ok': True}
 
 
+# panel -> raw brightness before a doze; empty while awake. Kept in a file too: a Tandem restart during a doze left both
+# panels at 0 with nothing to wake them (17.11.)
+DOZE_FILE = Path(os.environ.get('XDG_RUNTIME_DIR') or '/tmp') / 'tandem-doze.json'
+try: DOZE = {k: int(v) for k, v in json.loads(DOZE_FILE.read_text()).items()}
+except (OSError, ValueError, AttributeError): DOZE = {}
+
+
+def on_power():
+    """True while a charger or a computer feeds the Thor over USB."""
+    for supply in Path('/sys/class/power_supply').glob('*'):
+        try:
+            if supply.name != 'battery' and (supply / 'online').read_text().strip() == '1': return True
+        except OSError: pass
+    return False
+
+
+def set_raw(key, raw):
+    base = Path('/sys/class/backlight') / BACKLIGHTS[key]
+    if key == 'bt': run_quiet([PRIV_WRITE, str(base / 'brightness'), str(raw)])
+    # ArmadaOS's helper steers every backlight write to the top panel; the bottom one goes to logind directly.
+    else: run_quiet(['busctl', '--system', 'call', 'org.freedesktop.login1', '/org/freedesktop/login1/session/auto',
+                     'org.freedesktop.login1.Session', 'SetBrightness', 'ssu', 'backlight', BACKLIGHTS[key], str(raw)])
+
+
+def doze(on):
+    """Standby on a charger: both panels dark, the Thor stays reachable (its Wi-Fi cannot wake it from a real suspend)."""
+    if on and not DOZE:
+        for key, name in BACKLIGHTS.items():
+            try: DOZE[key] = int((Path('/sys/class/backlight') / name / 'brightness').read_text())
+            except (OSError, ValueError): continue
+            set_raw(key, 0)
+        try: DOZE_FILE.write_text(json.dumps(DOZE))
+        except OSError: pass
+    elif not on:
+        for key, raw in list(DOZE.items()): set_raw(key, raw)
+        DOZE.clear()
+        DOZE_FILE.unlink(missing_ok=True)
+    return {'ok': True, 'doze': bool(DOZE)}
+
+
 def action(name):
+    if name == 'suspend' and on_power(): return doze(True)
+    if name == 'wake': return doze(False)
+    if name == 'sleep': name = 'suspend'  # a real suspend even on a charger
     if name == 'steam':  # one session with Steam (PC games, system updates); the next start is Tandem again
         flag = HOME / '.config/tandem/steam-once'
         flag.parent.mkdir(parents=True, exist_ok=True); flag.touch()
@@ -788,9 +983,16 @@ def save_config(data):
     for key in ('ra_user', 'ra_key'):
         value = data.get(key)
         if isinstance(value, str) and value.strip(): config[key] = value.strip()[:80]
+    # Battle.net login for WoW Forever's login.txt (see wow_login); like ra_key it never goes back to the page
+    for key in ('bnet_email', 'bnet_password'):
+        value = data.get(key)
+        if isinstance(value, str) and value.strip() and '\n' not in value: config[key] = value.strip()[:128]
+    if data.get('bnet_forget'): config.pop('bnet_email', None); config.pop('bnet_password', None)
     if data.get('kb_layout') in ('de', 'us'): config['kb_layout'] = data['kb_layout']
+    if data.get('lang') in ('de', 'en'): config['lang'] = data['lang']
     if data.get('theme') in [t['id'] for t in themes()]: config['theme'] = data['theme']
-    if data.get('rest_min') in (0, 1, 3, 10): config['rest_min'] = data['rest_min']  # minutes until the screens go black to spare the OLED, 0 = never
+    if data.get('rest_min') in (0, 1, 3, 10): config['rest_min'] = data['rest_min']
+    if data.get('perf_profile') in thor.PROFILES: config['perf_profile'] = data['perf_profile']  # set again at every start  # minutes until the screens go black to spare the OLED, 0 = never
     source = data.get('update_url')  # where Tandem looks for new versions of itself (see self_update)
     if isinstance(source, str):
         source = source.strip().rstrip('/')
@@ -931,7 +1133,8 @@ def self_update(apply=False):
 def public_config():
     config, looks = load_config(), themes()
     return {'ra_user': config.get('ra_user', ''), 'ra_key_set': bool(config.get('ra_key')), 'ra_login': bool(config.get('ra_token')),
-            'kb_layout': config.get('kb_layout', ''), 'remote_url': config.get('remote_url', ''), 'rest_min': config.get('rest_min', 3), 'version': VERSION, 'update_url': config.get('update_url', UPDATE_URL), 'theme': config.get('theme') if config.get('theme') in [t['id'] for t in looks] else 'toravo', 'themes': looks}
+            'bnet_set': bool(config.get('bnet_email') and config.get('bnet_password')),
+            'kb_layout': config.get('kb_layout', ''), 'lang': 'en' if config.get('lang') == 'en' else 'de', 'remote_url': config.get('remote_url', ''), 'rest_min': config.get('rest_min', 3), 'version': VERSION, 'update_url': config.get('update_url', UPDATE_URL), 'theme': config.get('theme') if config.get('theme') in [t['id'] for t in looks] else 'toravo', 'themes': looks}
 
 
 RA_CONSOLES = {'megadrive': 1, 'genesis': 1, 'n64': 2, 'snes': 3, 'gb': 4, 'gba': 5, 'gbc': 6, 'nes': 7, 'pcengine': 8, 'segacd': 9,
@@ -962,7 +1165,7 @@ def achievements(game):
     """Progress for one game: {'total', 'earned', 'points', 'list'} or {'note': why there is nothing to show}."""
     config = load_config()
     console = RA_CONSOLES.get(game.get('s'))
-    if not config.get('ra_key') or not config.get('ra_user'): return {'note': 'RetroAchievements ist nicht eingerichtet (System › Konto).'}
+    if not config.get('ra_key') or not config.get('ra_user'): return {'note': 'RetroAchievements ist nicht eingerichtet (Einstellungen › Konten).'}
     if not console: return {'note': 'Für dieses System gibt es hier keine Erfolge.'}
     now = time.time()
     cached = RA_CACHE.get(('list', console))
@@ -1081,6 +1284,20 @@ class Keyboard:
 
 
 KEYBOARD = Keyboard()
+# Wine ignores AltGr from a virtual keyboard (@ came out as q in Battle.net's login): such a character goes in by pasting.
+CLIP = '''import sys
+from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QTimer
+app = QApplication(sys.argv); app.clipboard().setText(sys.argv[1]); QTimer.singleShot(30000, app.quit); app.exec()'''
+
+
+def paste(text):
+    for display in (':0', ':1'):  # top and bottom Xwayland: the clipboard belongs to the one Wine runs on
+        try: subprocess.Popen(['python3', '-c', CLIP, text], env={**os.environ, 'DISPLAY': display, 'QT_QPA_PLATFORM': 'xcb'},
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        except OSError as error: return {'error': f'Einfügen geht nicht: {error}'}
+    time.sleep(0.8)  # the helpers need a moment to own the clipboard
+    return KEYBOARD.press(47, ['ctrl'])
 TERMINALS = [('konsole', ('--hide-menubar', '--hide-tabbar', '-p', 'Font=Monospace,17')), ('foot', ()), ('xterm', ('-fa', 'monospace', '-fs', '16'))]
 
 
@@ -1225,6 +1442,23 @@ def wifi_connect(ssid, password=''):
     return {'ok': True} if done.returncode == 0 else {'error': 'Verbinden fehlgeschlagen – Passwort prüfen.'}
 
 
+LINK = {'at': 0, 'value': None}
+
+
+def wifi_link():
+    """{'ssid', 'signal' 0-100} of the Wi-Fi link for the status bar, None without Wi-Fi. 'iw … link' asks the driver
+    (a few ms, never a scan); the answer is kept for 20 s because both screens ask every 30 s."""
+    if time.time() - LINK['at'] < 20: return LINK['value']
+    iface = next((Path(d).parent.name for d in sorted(glob.glob('/sys/class/net/*/wireless'))), None)
+    value = None
+    if iface:
+        out = run_quiet(['iw', 'dev', iface, 'link'], timeout=2)
+        ssid, dbm = re.search(r'SSID: (.*)', out), re.search(r'signal: (-?\d+)', out)
+        value = {'ssid': ssid[1].strip() if ssid else '', 'signal': max(0, min(100, 2 * (int(dbm[1]) + 100))) if dbm else 0}
+    LINK.update(at=time.time(), value=value)
+    return value
+
+
 def battery():
     for supply in glob.glob('/sys/class/power_supply/*/capacity'):
         try:
@@ -1232,6 +1466,34 @@ def battery():
             return {'level': int(Path(supply).read_text()), 'charging': status in ('Charging', 'Full')}
         except (OSError, ValueError): pass
     return None
+
+
+def thor_change(tandem, data):
+    """One Thor setting from either screen or the settings page; both screens hear the new state."""
+    key = str(data.get('key', ''))
+    result = thor.change(key, data.get('value'))
+    if 'error' not in result:
+        if key == 'profile': save_config({'perf_profile': data.get('value')})
+        tandem.publish('thor', {'thor': result})
+    return result
+
+
+def controls_info():
+    """The one button layout for everything under Tandem (controls.py) and where an emulator still differs."""
+    try: import controls
+    except ImportError: return {'table': [], 'off': []}
+    try: off = controls.check()
+    except Exception: off = []  # an unreadable emulator file must not cost the overview
+    return {'table': controls.TABLE, 'off': off}
+
+
+def controls_apply():
+    try:
+        import controls
+        done = controls.apply()
+    except ImportError: return {'error': 'Die Tastenbelegung ist in dieser Version nicht enthalten.'}
+    except OSError as error: return {'error': f'Angleichen fehlgeschlagen: {error}'}
+    return {'text': ('Angeglichen: ' + ', '.join(done)) if done else 'Alle Emulatoren haben schon die Tandem-Belegung.'}
 
 
 def handler(tandem):
@@ -1257,13 +1519,17 @@ def handler(tandem):
             if re.fullmatch(r'/deck/\d+\.html', path):  # a game's own page for the bottom screen
                 file = HERE / 'decks' / path[6:]
                 return self.send(200, file.read_bytes(), 'text/html; charset=utf-8') if file.is_file() else self.send(404, {'error': 'kein Begleiter'})
-            if path == '/api/state': return self.send(200, {**tandem.snapshot(), 'battery': battery(), 'settings': settings(), 'config': public_config(), 'pair': pair_info()})
+            if path == '/api/state': return self.send(200, {**tandem.snapshot(), 'battery': battery(), 'wifi': wifi_link(), 'settings': settings(), 'config': public_config(), 'pair': pair_info()})
             if path.startswith('/media/'):
                 file = tandem.library.media.get(path[7:])  # only files the scan indexed, never a path from the request
                 if file and os.path.isfile(file): return self.send(200, Path(file).read_bytes(), IMAGES[Path(file).suffix.lower()], 'max-age=86400')
                 return self.send(404, {'error': 'kein Bild'})
             if path == '/api/setup': return self.send(200, {**tandem.setup, **setup_info(tandem)})
             if path == '/api/system': return self.send(200, system_info(tandem.library.roots, 'scan' in self.path))
+            if path == '/api/thor': return self.send(200, thor.state())
+            if path == '/api/record': return self.send(200, record(tandem, 'status'))
+            if path == '/api/framegen': return self.send(200, frame_gen())
+            if path == '/api/controls': return self.send(200, controls_info())
             if path == '/api/achievements':
                 run = tandem.run and tandem.library.games.get(tandem.run['id'])
                 return self.send(200, achievements(run) if run else {'note': 'Es läuft kein Spiel.'})
@@ -1294,7 +1560,9 @@ def handler(tandem):
             path = urlparse(self.path).path
             if path == '/api/ui':
                 system = data.get('sys')
-                tandem.ui = {'tab': int(data.get('tab', 0)), 'sys': system if isinstance(system, str) and system in SYSTEMS else None, 'i': int(data.get('i', 0))}
+                page = data.get('page')  # the settings: which page and whether the focus is on its list (0) or on the page (1)
+                tandem.ui = {'tab': int(data.get('tab', 0)), 'sys': system if isinstance(system, str) and system in SYSTEMS else None, 'i': int(data.get('i', 0)),
+                             'page': page if isinstance(page, str) and re.fullmatch(r'[a-z>]{0,30}', page) else '', 'pane': 1 if data.get('pane') == 1 else 0}
                 tandem.publish('state', {**tandem.snapshot(), 'from': data.get('from')})  # the sender skips its own echo
                 return self.send(200, {'ok': True})
             if path == '/api/launch':
@@ -1307,6 +1575,9 @@ def handler(tandem):
                 return self.send(200, {'ok': True})
             if path == '/api/quit': return self.send(200, tandem.quit())
             if path == '/api/pause': return self.send(200, tandem.pause())
+            if path == '/api/record': return self.send(200, record(tandem, data.get('action')))
+            if path == '/api/shot': return self.send(200, screenshot())
+            if path == '/api/framegen': return self.send(200, frame_gen(bool(data.get('on'))))
             if path == '/api/resume': return self.send(200, tandem.resume())
             if path == '/api/set':
                 result = change(str(data.get('key', '')), data.get('value', 0) if isinstance(data.get('value', 0), (int, float)) else 0)
@@ -1319,20 +1590,27 @@ def handler(tandem):
                     tandem.publish('library')
                 threading.Thread(target=work, daemon=True).start()
                 return self.send(200, {'ok': True})
+            if path == '/api/quick':  # the Thor key's menu, for scripted takes (the daemon reads only the Thor's own keys)
+                tandem.publish('quick', {}); return self.send(200, {'ok': True})
             if path == '/api/key':
                 code = data.get('code')
-                return self.send(200, KEYBOARD.press(code if isinstance(code, int) else 0, [m for m in data.get('mods', []) if isinstance(m, str)]))
+                mods, text = [m for m in data.get('mods', []) if isinstance(m, str)], data.get('text')
+                if 'altgr' in mods and isinstance(text, str) and len(text) == 1 and (tandem.run or {}).get('keys'): return self.send(200, paste(text))
+                return self.send(200, KEYBOARD.press(code if isinstance(code, int) else 0, mods))
             if path == '/api/layout':  # switch the on-screen keyboard's layout while the terminal is open
                 result = save_config({'kb_layout': data.get('layout')})
                 layout = region_layout()
                 run_quiet(['setxkbmap', layout])
-                if tandem.run and tandem.run.get('s') == 'term': tandem.run['layout'] = layout
+                if tandem.run and (tandem.run.get('s') == 'term' or tandem.run.get('keys')): tandem.run['layout'] = layout
                 tandem.publish()
                 return self.send(200, {**result, 'layout': layout})
             if path == '/api/config':
                 result = save_config(data)
                 tandem.publish('config', {'config': public_config()})  # both screens follow (theme)
                 return self.send(200, result)
+            if path == '/api/thor': return self.send(200, thor_change(tandem, data))
+            if path == '/api/controls': return self.send(200, controls_apply())
+            if path == '/api/selfupdate': return self.send(200, self_update(bool(data.get('apply'))))
             if path == '/api/wide': return self.send(200, tandem.wide(str(data.get('on', ''))))
             if path == '/api/retroarch': return self.send(200, retroarch(str(data.get('name', ''))))
             if path == '/api/action': return self.send(200, action(str(data.get('name', ''))))
@@ -1352,7 +1630,7 @@ PAIR = {'pin': '', 'tries': 0, 'port': 8378, 'tls': False}
 DEVICES = CONFIG.parent / 'devices.json'  # browsers that may use the settings page: the SHA-256 of each one's token, never the token
 TLS_FILES = (CONFIG.parent / 'tls.crt', CONFIG.parent / 'tls.key')  # both there: the settings page is served over HTTPS
 # The settings page for phone and computer lives in remote.html: shared head, then the PIN view, then the page itself.
-_REMOTE = (HERE / 'remote.html').read_text().split('<!--SPLIT-->')
+_REMOTE = (HERE / 'remote.html').read_text().replace('__EN__', (HERE / 'ui/en.json').read_text()).split('<!--SPLIT-->')
 PAIR_PAGE, REMOTE_PAGE = _REMOTE[0] + _REMOTE[1], _REMOTE[0] + _REMOTE[2]
 
 
@@ -1422,10 +1700,10 @@ def pair_handler(tandem):
             if path == '/api/all':
                 if not self.allowed(): return self.reply(401, {'error': 'nicht angemeldet'}, 'application/json')
                 run = tandem.run and tandem.library.games.get(tandem.run['id'])
-                return self.reply(200, {'settings': settings(), 'config': public_config(), 'layout': region_layout(), 'battery': battery(),
+                return self.reply(200, {'settings': settings(), 'config': public_config(), 'layout': region_layout(), 'battery': battery(), 'thor': thor.state(), 'controls': controls_info(),
                                         'system': system_info(tandem.library.roots), 'games': len(tandem.library.games),
                                         'run': (run or {}).get('name') or (tandem.run or {}).get('id')}, 'application/json')
-            self.reply(200, REMOTE_PAGE if self.allowed() else PAIR_PAGE.replace('__MSG__', ''))
+            self.reply(200, (REMOTE_PAGE if self.allowed() else PAIR_PAGE.replace('__MSG__', '')).replace('__LANG__', public_config()['lang']))
 
         def do_POST(self):
             import hmac, secrets, urllib.parse
@@ -1436,7 +1714,7 @@ def pair_handler(tandem):
                 if not hmac.compare_digest(form.get('pin', ''), PAIR['pin']):
                     PAIR['tries'] += 1
                     if PAIR['tries'] >= 5: new_pin(); tandem.publish()  # a fresh PIN after five wrong ones
-                    return self.reply(200, PAIR_PAGE.replace('__MSG__', '<p><b>Die PIN stimmt nicht.</b></p>'))
+                    return self.reply(200, PAIR_PAGE.replace('__MSG__', '<p><b>Die PIN stimmt nicht.</b></p>').replace('__LANG__', public_config()['lang']))
                 token = secrets.token_hex(16)
                 save_devices(devices() + [token_hash(token)]); new_pin(); tandem.publish()  # one PIN, one use
                 return self.reply(303, b'', extra=(('Location', '/'), self.cookie(token, 365 * 86400)))
@@ -1447,6 +1725,9 @@ def pair_handler(tandem):
             except ValueError: return self.reply(400, {'error': 'kein JSON'}, 'application/json')
             what = path[5:]
             if what == 'config':
+                # the Battle.net password only over an encrypted way (the owner's https proxy); plain http in the Wi-Fi could be read along
+                if data.get('bnet_password') and self.headers.get('X-Forwarded-Proto') != 'https':
+                    return self.reply(403, {'error': 'Das Passwort nur über die https-Adresse eintragen.'}, 'application/json')
                 result = save_config(data); tandem.publish('config', {'config': public_config()})
             elif what == 'layout': result = save_config({'kb_layout': data.get('layout')})
             elif what == 'set':
@@ -1460,20 +1741,23 @@ def pair_handler(tandem):
             elif what == 'update':
                 result = {'text': update_extra(data.get('id') if data.get('id') in EXTRAS else 'eden', tandem.library.roots)}; tandem.publish('library')
             elif what == 'quit': result = tandem.quit()
+            elif what == 'thor': result = thor_change(tandem, data)
+            elif what == 'controls': result = controls_apply()
             elif what == 'selfupdate': result = self_update(bool(data.get('apply')))
             elif what in ('logout', 'logout-all'):
                 mine = token_hash(re.search(r'tandem=([0-9a-f]{32})', self.headers.get('Cookie') or '')[1])
                 save_devices([h for h in devices() if h != mine] if what == 'logout' else [])
                 return self.reply(200, {'text': 'Abgemeldet.'}, 'application/json', (self.cookie('', 0),))
-            elif what == 'action' and data.get('name') in ('suspend', 'reboot', 'poweroff'): result = action(data['name'])
+            elif what == 'action' and data.get('name') in ('suspend', 'sleep', 'wake', 'reboot', 'poweroff'): result = action(data['name'])
             else: return self.reply(404, {'error': 'unbekannt'}, 'application/json')
             self.reply(200, result, 'application/json')
     return Pair
 
 
-# Controller buttons as measured on the Thor (evdev codes of the emulated "Microsoft X-Box 360 pad"; the Thor prints them
-# Nintendo-style, so BTN_EAST is the printed A): A ok, B back, X close, Y favourite, LB/RB previous/next tab.
-PAD_KEYS = {305: 'ok', 304: 'back', 307: 'close', 308: 'fav', 310: 'prev', 311: 'next'}
+# Controller buttons as they arrive (evdev codes of the emulated "Microsoft X-Box 360 pad"; the Thor prints them
+# Nintendo-style): A ok (right, BTN_EAST), B back (bottom, BTN_SOUTH), X close (top: 308, the Thor's InputPlumber map swaps
+# top and left like a real Xbox pad, see controls.py), Y favourite (left: 307), LB/RB previous/next tab.
+PAD_KEYS = {305: 'ok', 304: 'back', 308: 'close', 307: 'fav', 310: 'prev', 311: 'next'}
 
 
 class PadNav:
@@ -1510,9 +1794,15 @@ def watch_buttons(tandem):
     wanted = lambda name: name in ('InputPlumber Keyboard', 'gpio-keys', 'pmic_resin') or (('X-Box' in name or 'Xbox' in name or 'DualSense' in name) and not re.search(r' \d+$', name))
     fds, nodes, scanned = {}, {}, 0  # fd -> PadNav (None for key devices), node -> fd
     size = struct.calcsize('llHHi')
-    nav = lambda actions: [tandem.publish('key', {'a': a}) for a in actions if not tandem.run or tandem.run.get('paused')]
+    free = lambda: not tandem.run or tandem.run.get('paused') or (tandem.run.get('port') or {}).get('pad')  # a media app's deck takes the pad
+    nav = lambda actions: [tandem.publish('key', {'a': a}) for a in actions if free()]
+    slept = lambda: time.clock_gettime(time.CLOCK_BOOTTIME) - time.monotonic()  # grows by every suspend
+    asleep = slept()
     while True:
         now = time.time()
+        if slept() - asleep > 1:  # back from a real suspend (the power key during a doze): panels on again
+            asleep = slept()
+            if DOZE: doze(False)
         if now - scanned > 2:  # controllers come and go (InputPlumber sets its pad up after the service has started)
             scanned = now
             try: blocks = Path('/proc/bus/input/devices').read_text().split('\n\n')
@@ -1536,6 +1826,7 @@ def watch_buttons(tandem):
                 os.close(fd); del fds[fd]; nodes = {n: f for n, f in nodes.items() if f != fd}; continue
             for start in range(0, len(data) - size + 1, size):
                 _, _, kind, code, value = struct.unpack('llHHi', data[start:start + size])
+                if DOZE and kind == 1 and value == 1: doze(False); continue  # any button ends the doze and does nothing else
                 if fds[fd]: nav(fds[fd].event(kind, code, value, time.time()))
                 if kind != 1 or value == 0: continue
                 if code in (114, 115):  # volume down / up, repeats while held
@@ -1543,8 +1834,10 @@ def watch_buttons(tandem):
                     if vol is not None:
                         tandem.publish('settings', {'settings': change('vol', vol + (5 if code == 115 else -5)), 'osd': 'vol'})
                 elif value == 1 and code == 184:  # Back
-                    if not tandem.run or tandem.run.get('paused'): tandem.publish('key', {'a': 'back'})
-                elif value == 1 and code in (185, 316):  # Home: freeze the game and show Tandem; again: back into the game
+                    if free(): tandem.publish('key', {'a': 'back'})
+                elif value == 1 and code == 185:  # the Thor key: its quick menu on the bottom screen (Zu Tandem is in there)
+                    tandem.publish('quick', {})
+                elif value == 1 and code == 316:  # Home (a pad's guide button): freeze the game and show Tandem; again: back into the game
                     if tandem.run and tandem.run.get('paused'): tandem.resume()
                     elif tandem.run:
                         result = tandem.pause()
@@ -1580,6 +1873,8 @@ def main():
             if found.get('new'): tandem.publish('toast', {'text': found['text'] + ' Installieren: Einstellungsseite › Gerät.'})
             time.sleep(86400)
     threading.Thread(target=look_for_update, daemon=True).start()
+    profile = load_config().get('perf_profile')  # armada-powerd forgets it over a restart
+    if profile and not args.dry_run: threading.Thread(target=thor.change, args=('profile', profile), daemon=True).start()
     if not args.dry_run: threading.Thread(target=hide_steam, args=(tandem,), daemon=True).start()
     new_pin()
     if not args.dry_run: kill_stale()

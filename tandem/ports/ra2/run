@@ -1,0 +1,28 @@
+#!/bin/bash
+# run [ra2|yr]: starts Red Alert 2 (the engine "Thor RA2" from dist/, see build.sh). "ra2" hides Yuri in the skirmish
+# lobby, "yr" (Yuri's Revenge) offers him; the engine plays the Yuri's Revenge rules either way.
+# The game data is the player's own install folder (the one with ra2.mix and ra2md.mix, e.g. Steam's
+# "Command & Conquer Red Alert II") and is only read: the first of $RA2_DATA, ~/RA2, the Steam library in the home
+# folder, or that Steam folder on a card (looked for once, then remembered). Settings, saved games and the log go to
+# data/ next to this script.
+set -eu
+HERE="$(cd "$(dirname "$0")" && pwd)"
+BASE="$HERE/data"
+mkdir -p "$BASE"
+
+has() { [ -f "$1/ra2.mix" ] && [ -f "$1/ra2md.mix" ]; }
+DATA="${RA2_DATA:-$(cat "$BASE/data-path" 2>/dev/null || true)}"
+if ! has "$DATA"; then
+    DATA=
+    while IFS= read -r d; do
+        if has "$d"; then DATA="$d"; echo "$d" > "$BASE/data-path"; break; fi
+    done < <(echo "$HOME/RA2"; echo "$HOME/.local/share/Steam/steamapps/common/Command & Conquer Red Alert II"
+             find /run/media/"$USER" -maxdepth 9 -type d -name "Command & Conquer Red Alert II" 2>/dev/null)
+fi
+[ -n "$DATA" ] || { echo "Red Alert 2: no game data found (set RA2_DATA or copy your install folder to ~/RA2)" >&2; exit 1; }
+
+export RA2_INSTALL_DIR="$DATA"
+export XDG_DATA_HOME="$BASE"  # where the engine keeps what it writes (data/ra2engine/RA2/)
+export THOR_RA2_MODE="${1:-yr}"
+export LD_LIBRARY_PATH="$HERE/dist${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"  # the SDL2 built with the engine, see build.sh
+exec "$HERE/dist/ra2engine"

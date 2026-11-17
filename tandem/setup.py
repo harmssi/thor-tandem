@@ -16,14 +16,17 @@ EMULATORS = ['retroarch', 'duckstation', 'dolphin', 'ppsspp', 'armsx2', 'azahar'
 CORES = ['gambatte', 'mgba', 'nestopia', 'mesen', 'fceumm', 'snes9x', 'mupen64plus_next', 'parallel_n64', 'genesis_plus_gx', 'picodrive',
          'swanstation', 'pcsx_rearmed', 'fbneo', 'mame2003_plus', 'mednafen_pce_fast', 'mednafen_saturn', 'melondsds', 'flycast']
 RA = HOME / '.var/app/org.libretro.RetroArch/config/retroarch'
+EN = not os.environ.get('LANG', 'de').lower().startswith('de')  # the terminal's language; Tandem starts in it too (see language)
+sys.path.insert(0, str(HERE / 'ui'))
+from lang import tr  # noqa: E402
 
 
-def say(text=''): print(text, flush=True)
+def say(text=''): print(tr(text) if EN else text, flush=True)
 
 
 def ask(question, default=True):
     if AUTO: return default
-    answer = input(f'{question} [{"J/n" if default else "j/N"}] ').strip().lower()
+    answer = input(f'{tr(question) if EN else question} [{("Y/n" if default else "y/N") if EN else "J/n" if default else "j/N"}] ').strip().lower()
     return default if not answer else answer in ('j', 'ja', 'y', 'yes')
 
 
@@ -43,6 +46,12 @@ def install_tandem():
     step('Toravo Tandem installieren')
     done = run(['bash', str(HERE / 'install.sh')])
     say(done.stdout.strip().splitlines()[0] if done.stdout.strip() else done.stderr.strip())
+
+
+def language():
+    sys.path.insert(0, str(HERE))
+    import tandem
+    if 'lang' not in tandem.load_config(): tandem.save_config({'lang': 'en' if EN else 'de'})
 
 
 def own_session():
@@ -138,13 +147,13 @@ def quiet_first_runs():
 def main():
     say('Toravo Tandem – Einrichtung'); say('Jeder Schritt fragt vorher. Abbrechen mit Strg+C.')
     if not shutil.which('armada-run-bottom'): say('Hinweis: Das sieht nicht nach ArmadaOS aus. Tandem selbst läuft trotzdem.')
-    for part in (install_tandem, own_session, game_card, emulators, retroarch, quiet_first_runs):
+    for part in (install_tandem, language, own_session, game_card, emulators, retroarch, quiet_first_runs):
         try: part()
         except KeyboardInterrupt: say('\nAbgebrochen.'); return
         except Exception as error: say(f'Dieser Schritt ist fehlgeschlagen: {error}')
     step('Fertig')
     say('Spielmodus neu starten (oder Gerät neu starten), dann erscheint Tandem.')
-    say('Konto für RetroAchievements, WLAN und Tastatur stellst du in Tandem unter „System“ ein – oder vom Handy/PC über die dort gezeigte Adresse.')
+    say('Konto für RetroAchievements, WLAN und Tastatur stellst du in Tandem unter „Einstellungen“ ein – oder vom Handy/PC über die dort gezeigte Adresse.')
 
 
 if __name__ == '__main__':

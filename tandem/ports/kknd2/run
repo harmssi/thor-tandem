@@ -1,0 +1,26 @@
+#!/bin/bash
+# run: starts KKnD 2: Krossfire ("KKND2 Thor": OpenRA with the mod OpenKrush) from dist/, see build.sh.
+# The game data is the player's own, already prepared for OpenKrush: the folder Content with openkrush_gen2/ (levels/,
+# music/, fmv/) as the Android version of KKND2 Thor keeps it. It is only read: the first of $KKND2_DATA, ~/KKND2/Content,
+# or such a folder on a card (looked for once, then remembered). Settings, logs, saved games and the maps made from the
+# levels go to data/support; data/support/launch-args.txt (optional) adds OpenRA settings, one Key=Value per line.
+set -eu
+HERE="$(cd "$(dirname "$0")" && pwd)"
+BASE="$HERE/data"
+SUPPORT="$BASE/support"
+KEY=openkrush_gen2/levels/sprite.lpk
+mkdir -p "$SUPPORT"
+
+DATA="${KKND2_DATA:-$(cat "$BASE/data-path" 2>/dev/null || true)}"
+if ! [ -f "$DATA/$KEY" ]; then
+    DATA=
+    while IFS= read -r d; do
+        if [ -f "$d/$KEY" ]; then DATA="$d"; echo "$d" > "$BASE/data-path"; break; fi
+    done < <(echo "$HOME/KKND2/Content"
+             find /run/media/"$USER" -maxdepth 10 -name sprite.lpk -path "*/Content/$KEY" -printf '%h\n' 2>/dev/null | sed 's|/openkrush_gen2/levels$||')
+fi
+[ -n "$DATA" ] || { echo "KKnD 2: no game data found (set KKND2_DATA to a folder Content with openkrush_gen2/levels/sprite.lpk in it)" >&2; exit 1; }
+
+ln -sfn "$DATA" "$SUPPORT/Content"  # the engine reads the game files from its support folder
+export KKND2_SUPPORT="$SUPPORT"
+exec "$HERE/dist/ThorKKND2"
