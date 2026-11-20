@@ -216,8 +216,12 @@ def _row(group, what, pad, where): return {'group': group, 'what': what, 'pad': 
 TABLE = [
     _row('Tandem', 'Bestätigen', 'A', 'in Tandem'), _row('Tandem', 'Zurück', 'B', 'in Tandem'),
     _row('Tandem', 'Beenden', 'X', 'in Tandem'), _row('Tandem', 'Favorit', 'Y', 'in Tandem'),
+    _row('Tandem', 'Spiele suchen', 'Select', 'in Tandem'),
     _row('Tandem', 'Reiter wechseln', 'L1 / R1', 'in Tandem'),
     _row('Tandem', 'Tandem zeigen oder Spiel pausieren', 'Home-Taste', 'überall'),
+    _row('Tandem', 'Schnellmenü öffnen', 'Thor-Taste', 'überall'),
+    _row('Tandem', 'Standby / Aufwecken', 'Ein-Taste (kurz)', 'überall'),
+    _row('Tandem', 'Ein-/Aus-Menü', 'Ein-Taste (halten)', 'überall'),
     _row('In jedem Spiel', 'Tasten nach Position: A rechts, B unten, X oben, Y links', 'A / B / X / Y', 'Nintendo-Systeme, Switch, 3DS, DS'),
     _row('In jedem Spiel', 'Kreuz unten, Kreis rechts, Dreieck oben, Viereck links', 'B / A / X / Y', 'PlayStation, PS2, PSP'),
     _row('In jedem Spiel', 'Wie ein Xbox-Controller: „A“ unten, „B“ rechts', 'B / A (gedruckt)', 'Steam-Spiele und Ports'),

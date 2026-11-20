@@ -6,7 +6,7 @@ value of each watched property. options() packs per-file options for loadfile.
 """
 import json, socket, threading, time
 
-WATCH = ('pause', 'time-pos', 'duration', 'track-list', 'idle-active', 'paused-for-cache', 'eof-reached')
+WATCH = ('pause', 'time-pos', 'duration', 'track-list', 'idle-active', 'paused-for-cache', 'eof-reached', 'speed')
 
 
 def options(values):
@@ -38,8 +38,8 @@ class Mpv:
 
     def listen(self):
         while self.alive:
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             try:
-                sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                 sock.connect(self.path)
                 self.sock, buf = sock, b''
                 for n, name in enumerate(WATCH): self.command('observe_property', n + 1, name)
@@ -50,6 +50,9 @@ class Mpv:
                     *lines, buf = (buf + chunk).split(b'\n')
                     for line in lines: self.take(line)
             except OSError: pass
+            finally:
+                try: sock.close()
+                except OSError: pass
             if self.sock:
                 self.sock = None
                 self.heard({'event': 'gone'})

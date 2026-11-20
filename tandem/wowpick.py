@@ -9,9 +9,13 @@ ROW = 20  # pixels between account rows
 
 
 def chooser_up(im):
-    """Blue mark on the first row and the red "Annehmen" button below the list."""
-    r, g, b = im.getpixel((1000, 496)); r2, g2, b2 = im.getpixel((894, 664))
-    return b > 150 and r < 80 and r2 > 120 and g2 < 40
+    """Blue mark on the first row and, below it, the red "Annehmen" button. The dialog's height (and so its place)
+    changes with what the login form shows, so both are searched in a band instead of at fixed pixels."""
+    def find(x, ys, ok):
+        return next((y for y in ys if ok(*im.getpixel((x, y)))), None)
+    blue = find(1000, range(380, 640, 2), lambda r, g, b: b > 150 and r < 80)
+    red = find(894, range(560, 860, 2), lambda r, g, b: r > 120 and g < 40 and b < 40)
+    return blue is not None and red is not None and red - blue > 120
 
 
 def pick(index, press, env, timeout=480):

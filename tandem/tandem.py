@@ -10,6 +10,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
+import bluetooth  # BlueZ over D-Bus: headphones and a second gamepad, for the settings
+import saves  # rolling local + SSH savegame backups (SD card + optional SSH host)
 import thor  # the Thor's own hardware: stick lights, gyro, performance profile
 
 HOME = Path.home()
@@ -22,7 +24,7 @@ RA_CORES = [HOME / '.var/app' / RA_REF / 'config/retroarch/cores', HOME / '.conf
 RA_WIDE_CORE = RA_CORES[0] / 'tandem-wide/mgba_libretro.so'
 RA_WIDE = RA_CORES[0].parent / 'system/tandem-wide'  # what it reads: the pack's game.lua and the switch "on"
 FLATPAK_DIRS = [Path('/var/lib/flatpak/app'), HOME / '.local/share/flatpak/app']
-IMAGES = {'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp'}
+IMAGES = {'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.svg': 'image/svg+xml'}
 
 
 def app(pattern, *args): return ('appimage', pattern, args)
@@ -73,7 +75,8 @@ PORTS = {'halflife': ('Half-Life', 'halflife', 'valve', 'hev'), 'opfor': ('Half-
          'homm3': ('Heroes of Might and Magic III', 'homm3', '', 'homm3'), 'kknd2': ('KKnD 2: Krossfire', 'kknd2', '', 'kknd2'),
          'd2': ('Diablo II', 'd2', '', 'd2')}
 # The Steam release each port's data comes from: its artwork in Steam's library cache gives the port its tile.
-PORT_ART = {'halflife': 70, 'opfor': 50, 'bshift': 130, 'aok': 221380, 'ra2': 2229850, 'ra2yr': 2229850, 'cnc': 1213210, 'cncra': 1213210,
+PORT_ART = {'halflife': 70, 'opfor': 50, 'bshift': 130, 'aok': 221380, 'ra2': 2229850, 'ra2yr': 2229850, 'cnc': 2229830, 'cncra': 2229840,  # the 1995/96 originals (C&C Ultimate Collection), not the Remastered
+           
             'homm3': 297000, 'kknd2': 1292180}
 # Where a port's game listens for its deck (ports/tandem_deck.h, see README "Deck-Socket"); one game runs at a time.
 DECK_SOCKET = Path(os.environ.get('XDG_RUNTIME_DIR') or STATE) / 'tandem-deck.sock'
@@ -84,9 +87,10 @@ APPS = [('Firefox', 'cmd', 'firefox', ()), ('Heroic', 'cmd', 'heroic', ('--no-sa
 # Media apps: mpv (Flathub io.mpv.Mpv) plays full screen on top, the app's deck (ui/decks/<deck>.py) browses and steers it
 # over mpv's IPC socket and gets the controller's navigation. The socket is in /tmp: mpv's sandbox sees the host's /tmp.
 MEDIA_SOCKET = Path(f'/tmp/tandem-mpv-{os.getuid()}.sock')
-MPV_ARGS = ('--idle=yes', '--force-window=yes', '--fullscreen', f'--input-ipc-server={MEDIA_SOCKET}', '--hwdec=v4l2m2m-copy', '--ytdl=no',
+YT_FORMAT = 'bv*[height<=1080][vcodec^=avc1]+ba[acodec^=mp4a]/bv*[height<=1080]+ba/b[height<=1080]/b'  # = FORMAT in ui/decks/youtube.py
+MPV_ARGS = ('--gpu-context=x11egl', '--idle=yes', '--force-window=yes', '--fullscreen', '--image-display-duration=inf', f'--input-ipc-server={MEDIA_SOCKET}', '--hwdec=v4l2m2m-copy', '--ytdl=yes', '--ytdl-format=' + YT_FORMAT,  # yt-dlp only when a direct load fails (YouTube pages)
             '--really-quiet', '--script-opts=osc-idlescreen=no', '--cache=yes', '--demuxer-max-bytes=150MiB', '--sub-auto=no')  # quiet: no addresses in launch.log
-MEDIA_APPS = {'YouTube': 'youtube', 'Plex': 'plex'}
+MEDIA_APPS = {'YouTube': 'youtube', 'Plex': 'plex', 'Aufnahmen': 'gallery'}
 APPS += [(name, 'flatpak', 'io.mpv.Mpv', MPV_ARGS) for name in MEDIA_APPS]
 def steam_apps(path):
     """Names, kinds and install folders from Steam's appinfo.vdf (binary). Only the first 'name', 'type' and 'installdir'
@@ -128,6 +132,53 @@ def steam_shortcuts(steam):
             name = m[2].decode(errors='replace')
             if name != 'Toravo Tandem': found.append((str(struct.unpack('<I', m[1])[0]), name, Path(path).parent / 'grid'))
     return found
+
+
+def shortcut_direct(vdf, appid):
+    """Direct [exe, *args] for a native Linux shortcut (BananaNative) so Tandem runs it without booting Steam."""
+    import shlex, struct
+    try: data = Path(vdf).read_bytes()
+    except OSError: return None
+    mark = b'\x02appid\x00' + struct.pack('<I', int(appid))
+    at = data.find(mark)
+    if at < 0: return None
+    nxt = data.find(b'\x02appid\x00', at + len(mark))
+    chunk = data[at:nxt if nxt >= 0 else len(data)]
+    exe_m = re.search(rb'\x01(?i:exe)\x00([^\x00]*)\x00', chunk)
+    opt_m = re.search(rb'\x01(?i:launchoptions)\x00([^\x00]*)\x00', chunk)
+    exe = exe_m[1].decode(errors='replace').strip().strip('"') if exe_m else ''
+    if 'bananative' not in exe.lower() or not os.access(exe, os.X_OK): return None
+    opts = opt_m[1].decode(errors='replace') if opt_m else ''
+    tail = opts.split('%command%', 1)[1] if '%command%' in opts else ''
+    try: return [exe, *shlex.split(tail)]
+    except ValueError: return [exe]
+
+
+def app_icon(kind, target):
+    """The app's own icon file (its .desktop Icon= in the hicolor theme, or the flatpak's exported one), biggest first."""
+    name = target if kind == 'flatpak' else None
+    if kind == 'cmd':
+        for desktop in glob.glob('/usr/share/applications/*.desktop') + glob.glob(str(HOME / '.local/share/applications/*.desktop')):
+            try: text = Path(desktop).read_text(errors='ignore')
+            except OSError: continue
+            exe, icon = re.search(r'^Exec=(\S+)', text, re.M), re.search(r'^Icon=(.+)$', text, re.M)
+            if exe and icon and os.path.basename(exe[1]) == target: name = icon[1].strip(); break
+    if not name: return None
+    if name.startswith('/'): return name if Path(name).suffix.lower() in IMAGES and os.path.isfile(name) else None
+    for theme in ('/usr/share/icons/hicolor', HOME / '.local/share/flatpak/exports/share/icons/hicolor', '/var/lib/flatpak/exports/share/icons/hicolor'):
+        for size in ('512x512', '256x256', '128x128', 'scalable'):
+            for ext in ('.png', '.svg'):
+                if os.path.isfile(f := f'{theme}/{size}/apps/{name}{ext}'): return f
+    return None
+
+
+def steam_art(steam, appid, name):
+    """A picture from Steam's librarycache: <appid>/<name>, <appid>_<name>, or (newer Steam) <appid>/<hash>/<name>, where
+    the 600x900 cover is called library_capsule.jpg."""
+    base = steam / 'appcache/librarycache'
+    found = [base / appid / name, base / f'{appid}_{name}'] + sorted(glob.glob(str(base / appid / '*' / name)))
+    if name == 'library_600x900.jpg': found += sorted(glob.glob(str(base / appid / '*/library_capsule.jpg')))
+    return next((str(f) for f in found if os.path.isfile(f)), None)
 
 
 STEAM_TOOLS = re.compile(r'^(Proton|Steam Linux Runtime|Steamworks Common|SteamVR|Steam Controller)', re.I)
@@ -300,15 +351,16 @@ class Library:
 
     def _art(self, root, system):
         base = Path(root).parent
-        cover, hero = {}, {}
-        for media, covers, heroes in ((base / 'ES-DE/downloaded_media', ('covers', 'miximages', 'screenshots'), ('fanart', 'screenshots')),
-                                     (HOME / 'ES-DE/downloaded_media', ('covers', 'miximages', 'screenshots'), ('fanart', 'screenshots')),
-                                     (base / 'Cocoon/downloaded_media', ('icon', 'screenshot_title'), ('hero', 'screenshot_gameplay')),
-                                     (MEDIA, ('covers',), ('snaps',))):
-            for kinds, target in ((covers, cover), (heroes, hero)):
+        cover, hero, logo, shot = {}, {}, {}, {}
+        for media, covers, heroes, logos, shots in (
+                (base / 'ES-DE/downloaded_media', ('covers', 'miximages', 'screenshots'), ('fanart', 'screenshots'), ('marquees', 'wheel'), ('screenshots',)),
+                (HOME / 'ES-DE/downloaded_media', ('covers', 'miximages', 'screenshots'), ('fanart', 'screenshots'), ('marquees', 'wheel'), ('screenshots',)),
+                (base / 'Cocoon/downloaded_media', ('icon', 'screenshot_title'), ('hero', 'screenshot_gameplay'), ('logo',), ('screenshot_gameplay', 'screenshot_title')),
+                (MEDIA, ('covers',), ('snaps',), (), ('snaps',))):
+            for kinds, target in ((covers, cover), (heroes, hero), (logos, logo), (shots, shot)):
                 for kind in reversed(kinds):  # earlier names win
                     target.update(self._media_index(media / system / kind))
-        return cover, hero
+        return cover, hero, logo, shot
 
     def _system_art(self, system):
         """Platform artwork of a Cocoon theme on the card (assets/smart_folders/<pack>/smart_folders/by_platform/<system>/)."""
@@ -320,9 +372,21 @@ class Library:
                     if art: return art
         return {}
 
+    def _overlay_art(self, system):
+        """Platform tile frame (mask.png + overlay.png) of a Cocoon icon-overlay pack on the card."""
+        names = [system] + {'megadrive': ['genesis'], 'genesis': ['megadrive'], 'n3ds': ['3ds'], 'gc': ['gamecube'], 'psx': ['ps1'], 'port': ['windows', 'pc']}.get(system, [])
+        for root in self.roots:
+            for name in names:
+                for folder in sorted(glob.glob(str(Path(root).parent / f'Cocoon/assets/icon_overlays/*/icon_overlays/{name}'))):
+                    mask, over = Path(folder) / 'mask.png', Path(folder) / 'overlay.png'
+                    if mask.is_file() and over.is_file(): return {'mask': str(mask), 'overlay': str(over)}
+        return {}
+
     def _image(self, path):
         if not path: return None
-        token = ident(path) + Path(path).suffix.lower()
+        try: stamp = os.path.getmtime(path)  # a replaced cover gets a new address: pages keep images for a day
+        except OSError: stamp = 0
+        token = ident(f'{path}:{stamp}') + Path(path).suffix.lower()
         self.media[token] = path
         return 'media/' + token
 
@@ -333,14 +397,18 @@ class Library:
             for system, (name, hue, exts, _) in SYSTEMS.items():
                 folder = Path(root) / system
                 if not folder.is_dir(): continue
-                cover, hero = self._art(root, system)
+                cover, hero, logo, shot = self._art(root, system)
                 wanted = {'.' + e for e in exts.split()}
                 for entry in sorted(os.scandir(folder), key=lambda e: e.name.lower()):
                     path = Path(entry.path)
                     if entry.name.startswith('.') or not entry.is_file() or path.suffix.lower() not in wanted: continue
                     gid = ident(system, entry.name)
-                    games[gid] = {'id': gid, 't': clean(path.stem), 's': system, 'path': entry.path,
-                                  'cover': self._image(cover.get(path.stem)), 'hero': self._image(hero.get(path.stem) or cover.get(path.stem))}
+                    c_img, h_img = self._image(cover.get(path.stem)), self._image(hero.get(path.stem) or cover.get(path.stem))
+                    l_img, s_img = self._image(logo.get(path.stem)), self._image(shot.get(path.stem))
+                    game = {'id': gid, 't': clean(path.stem), 's': system, 'path': entry.path, 'cover': c_img, 'hero': h_img}
+                    if l_img: game['logo'] = l_img
+                    if s_img and s_img not in (h_img, c_img): game['shot'] = s_img
+                    games[gid] = game
         for manifest in glob.glob(str(self.steam / 'steamapps/appmanifest_*.acf')):
             text = Path(manifest).read_text(errors='ignore')
             appid, name = re.search(r'"appid"\s+"(\d+)"', text), re.search(r'"name"\s+"([^"]+)"', text)
@@ -348,27 +416,39 @@ class Library:
             number = lambda key: int((re.search(rf'"{key}"\s+"(\d+)"', text) or [0, 0])[1])
             loading = not number('StateFlags') & 4  # 4 = fully installed
             done, total = number('BytesDownloaded') + number('BytesStaged'), number('BytesToDownload') + number('BytesToStage')
-            art = lambda n: next((p for p in (self.steam / f'appcache/librarycache/{appid[1]}/{n}', self.steam / f'appcache/librarycache/{appid[1]}_{n}') if p.is_file()), None)
             gid = 'steam' + appid[1]
-            games[gid] = {'id': gid, 't': name[1], 's': 'steam', 'appid': appid[1], 'cover': self._image(art('library_600x900.jpg') and str(art('library_600x900.jpg'))),
-                          'hero': self._image(art('library_hero.jpg') and str(art('library_hero.jpg')))}
+            s_logo = self._image(steam_art(self.steam, appid[1], 'logo.png'))
+            games[gid] = {'id': gid, 't': name[1], 's': 'steam', 'appid': appid[1], 'cover': self._image(steam_art(self.steam, appid[1], 'library_600x900.jpg')),
+                          'hero': self._image(steam_art(self.steam, appid[1], 'library_hero.jpg')), **({'logo': s_logo} if s_logo else {})}
             if loading: games[gid].update(inst='load', pct=round(100 * done / total) if total else None)
         for appid, name, grid in steam_shortcuts(self.steam):  # Battle.net and other launchers: they want a login, keys go along
             art = lambda n: self._image(str(grid / n)) if (grid / n).is_file() else None
-            games['steam' + appid] = {'id': 'steam' + appid, 't': name, 's': 'steam', 'appid': appid, 'gameid': str(int(appid) << 32 | 0x02000000),
-                                      'keys': True, 'cover': art(f'{appid}p.png') or art(f'{appid}p.jpg'), 'hero': art(f'{appid}_hero.png') or art(f'{appid}_hero.jpg')}
+            direct = shortcut_direct(grid.parent / 'shortcuts.vdf', appid)
+            sc_logo = art(f'{appid}_logo.png') or art(f'{appid}_logo.jpg')
+            entry = {'id': 'steam' + appid, 't': name, 's': 'steam',
+                     'cover': art(f'{appid}p.png') or art(f'{appid}p.jpg'), 'hero': art(f'{appid}_hero.png') or art(f'{appid}_hero.jpg'),
+                     **({'logo': sc_logo} if sc_logo else {})}
+            if direct: entry['direct'] = direct
+            else: entry.update(appid=appid, gameid=str(int(appid) << 32 | 0x02000000), keys=True)
+            games['steam' + appid] = entry
         for port, (title, folder, _, deck) in PORTS.items():
             if not (PORTS_DIR / folder / 'run').is_file(): continue
             own = PORTS_DIR / folder / 'dist/art/cover.png'  # art the port brings itself (no Steam release to borrow from)
             art = lambda n: (lambda f: self._image(str(f)) if f.is_file() else None)(own if own.is_file() else self.steam / f'appcache/librarycache/{PORT_ART.get(port)}/{n}')
-            games['port-' + port] = {'id': 'port-' + port, 't': title, 's': 'port', 'port': port, 'cover': art('library_600x900.jpg'), 'hero': art('library_hero.jpg')}
+            mine = PORTS_DIR / 'art' / f'{port}.jpg'  # a cover of its own: Red Alert 2 and Yuri's Revenge share a folder and one Steam bundle (owner 19.11.)
+            p_logo = self._image(steam_art(self.steam, str(PORT_ART.get(port)), 'logo.png')) if PORT_ART.get(port) else None
+            games['port-' + port] = {'id': 'port-' + port, 't': title, 's': 'port', 'port': port,
+                                     'cover': self._image(str(mine)) if mine.is_file() else art('library_600x900.jpg'), 'hero': art('library_hero.jpg'),
+                                     **({'logo': p_logo} if p_logo else {})}
         # The rest of the Steam library, read from Steam's own files: these can be installed from here.
         for appid, app in steam_apps(self.steam / 'appcache/appinfo.vdf').items():
-            cover = self.steam / f'appcache/librarycache/{appid}/library_600x900.jpg'
-            if 'steam' + appid in games or app.get('type', '').lower() != 'game' or not app.get('installdir') or not cover.is_file(): continue
-            hero = self.steam / f'appcache/librarycache/{appid}/library_hero.jpg'
+            if 'steam' + appid in games or app.get('type', '').lower() != 'game' or not app.get('installdir'): continue
+            cover = steam_art(self.steam, appid, 'library_600x900.jpg')
+            if not cover: continue
+            s_logo = self._image(steam_art(self.steam, appid, 'logo.png'))
             games['steam' + appid] = {'id': 'steam' + appid, 't': app['name'], 's': 'steam', 'appid': appid, 'inst': 'no', 'dir': app['installdir'],
-                                      'cover': self._image(str(cover)), 'hero': self._image(str(hero)) if hero.is_file() else None}
+                                      'cover': self._image(cover), 'hero': self._image(steam_art(self.steam, appid, 'library_hero.jpg')),
+                                      **({'logo': s_logo} if s_logo else {})}
         with self.lock: self.games = games
         return games
 
@@ -376,15 +456,20 @@ class Library:
         systems = {}
         for g in self.games.values():
             if g['s'] != 'steam': systems[g['s']] = systems.get(g['s'], 0) + 1
-        info = {}
+        info, overlays = {}, {}
         for s, n in systems.items():
             label, cmd = emulator(s)
             art = self._system_art(s)
             info[s] = {'name': SYSTEMS[s][0], 'hue': SYSTEMS[s][1], 'n': n, 'emu': label, 'missing': None if label else cmd,
-                       'cover': self._image(art.get('icon') or art.get('logo')), 'hero': self._image(art.get('hero'))}
-        apps = [{'id': 'app' + str(i), 't': a[0], 's': 'app'} for i, a in enumerate(APPS) if resolve(*a[1:])[0]]
-        public = [{k: v for k, v in g.items() if k != 'path'} for g in self.games.values()]
-        return {'systems': info, 'games': public, 'apps': apps, 'fav': saved.get('fav', []), 'played': saved.get('played', {}), 'extras': extras_state()}
+                       'cover': self._image(art.get('icon') or art.get('logo')), 'hero': self._image(art.get('hero')),
+                       **({'logo': self._image(art['logo'])} if art.get('logo') else {})}
+        for s in (*systems.keys(), 'steam'):
+            ov = self._overlay_art(s)
+            if ov: overlays[s] = {'mask': self._image(ov['mask']), 'overlay': self._image(ov['overlay'])}
+        apps = [{'id': 'app' + str(i), 't': a[0], 's': 'app', 'icon': self._image(app_icon(*a[1:3]) if a[0] not in MEDIA_APPS else None)}
+                for i, a in enumerate(APPS) if resolve(*a[1:])[0]]
+        public = [{k: v for k, v in g.items() if k not in ('path', 'direct')} for g in self.games.values()]
+        return {'systems': info, 'overlays': overlays, 'games': public, 'apps': apps, 'fav': saved.get('fav', []), 'played': saved.get('played', {}), 'extras': extras_state()}
 
 
 def focused_window():
@@ -413,20 +498,29 @@ X_QUIET = None  # kept alive for Xlib
 
 
 def x_window(action, window):
-    """Hide ('unmap') or show ('map') another program's window. Hiding the game's window is how Tandem comes to the front."""
+    """Hide ('unmap'), show ('map') or politely close ('close' via WM_DELETE_WINDOW) another program's X11 window."""
     import ctypes
     try:
         x = ctypes.CDLL('libX11.so.6')
         x.XOpenDisplay.restype = ctypes.c_void_p
-        display = x.XOpenDisplay(None)
+        display = x.XOpenDisplay((os.environ.get('DISPLAY') or ':0').encode())
         if not display: return False
         # Xlib's own reaction to an error (a window that is gone by now) is to end the whole program: replace it.
         global X_QUIET
         X_QUIET = X_QUIET or ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p)(lambda *_: 0)
         x.XSetErrorHandler(X_QUIET)
-        call = x.XUnmapWindow if action == 'unmap' else x.XMapWindow
-        call.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
-        call(display, window)
+        if action == 'close':
+            x.XInternAtom.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int]
+            x.XInternAtom.restype = ctypes.c_ulong
+            wm_proto = x.XInternAtom(display, b'WM_PROTOCOLS', 0)
+            wm_del = x.XInternAtom(display, b'WM_DELETE_WINDOW', 0)
+            ev = (ctypes.c_long * 24)(33, 0, 1, 0, window, wm_proto, 32, wm_del, 0)  # ClientMessage = 33, format = 32
+            x.XSendEvent.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.c_long, ctypes.c_void_p]
+            x.XSendEvent(display, window, 0, 0, ctypes.byref(ev))
+        else:
+            call = x.XUnmapWindow if action == 'unmap' else x.XMapWindow
+            call.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+            call(display, window)
         x.XFlush.argtypes = x.XCloseDisplay.argtypes = [ctypes.c_void_p]
         x.XSync.argtypes = [ctypes.c_void_p, ctypes.c_int]
         x.XSync(display, 0); x.XCloseDisplay(display)  # XSync: errors arrive while the quiet handler is in place
@@ -434,10 +528,28 @@ def x_window(action, window):
     except OSError: return False
 
 
+def x_windows_matching(*needles):
+    """X11 window IDs on the top gamescope server whose WM_CLASS or WM_NAME contains any needle (case-insensitive)."""
+    env = {**os.environ, 'DISPLAY': os.environ.get('DISPLAY') or ':0'}
+    try: raw = subprocess.run(['xprop', '-root', 'GAMESCOPE_FOCUSABLE_WINDOWS'], env=env, capture_output=True, text=True, timeout=3).stdout
+    except (OSError, subprocess.SubprocessError): return []
+    seen, found = set(), []
+    for wid in re.findall(r'\d{5,}', raw):
+        n = int(wid)
+        if n in seen: continue
+        seen.add(n)
+        try: props = subprocess.run(['xprop', '-id', wid, 'WM_CLASS', 'WM_NAME'], env=env, capture_output=True, text=True, timeout=2).stdout.lower()
+        except (OSError, subprocess.SubprocessError): continue
+        if any(k.lower() in props for k in needles): found.append(n)
+    return found
+
+
 class Tandem:
     def __init__(self, library, dry=False):
         self.library, self.dry = library, dry
         self.ui, self.run, self.proc, self.clients, self.lock = {'tab': 0, 'sys': None, 'i': 0}, None, None, [], threading.Lock()
+        self.power_open = False  # True while the long-press power menu sits in front: routes pad input to Tandem
+        self.prompt_open = False  # True while the bottom screen's text prompt is open: routes pad input to its keyboard
         self.steam_show = 0  # until when Steam's own window may show, see hide_steam
         self.mirror = None  # Wii U: the GamePad picture on the bottom screen
         self.home_window = 0  # Tandem's own top window, noted when a game starts
@@ -452,7 +564,8 @@ class Tandem:
         tmp.write_text(json.dumps(self.saved))
         os.replace(tmp, STATE / 'state.json')
 
-    def snapshot(self): return {'ui': self.ui, 'run': self.run, 'setup': self.setup}
+    def snapshot(self):
+        return {'ui': self.ui, 'run': self.run, 'setup': self.setup, 'doze': bool(DOZE), 'power': self.power_open, 'prompt': self.prompt_open}
 
     def publish(self, kind='state', data=None):
         message = json.dumps({'kind': kind, **(data if data is not None else self.snapshot())})
@@ -461,6 +574,7 @@ class Tandem:
             except queue.Full: pass
 
     def command(self, game):
+        if game.get('direct'): return 'BananaNative', game['direct']
         if game['s'] == 'steam': return 'Steam', ['steam', '-silent', f'steam://rungameid/{game.get("gameid") or game["appid"]}']  # no Steam window, only the game
         if game['s'] == 'port': return 'Port', [str(PORTS_DIR / PORTS[game['port']][1] / 'run'), PORTS[game['port']][2]]
         label, cmd = emulator(game['s'])
@@ -486,21 +600,32 @@ class Tandem:
                 if game.get('inst') == 'load': return {'error': f'„{game["t"]}“ wird noch geladen.'}
                 if game.get('inst') == 'no': return self.steam_install(game)
                 label, cmd = self.command(game)
-                if game['s'] == 'steam': self.steam_show = time.time() + 300
+                if game['s'] == 'steam' and not game.get('direct'): self.steam_show = time.time() + 300
                 if game['t'] == 'WoW Forever' and not self.dry: wow_login()  # its own login, as under Android (no Battle.net hand-over on ARM64)
                 if game.get('keys'): game = {**game, 'layout': region_layout()}; run_quiet(['setxkbmap', game['layout']])  # as for the terminal
             if not label: return {'error': cmd}
             pack, wide = find_pack(game) if label == 'RetroArch' else None, None  # the native bottom screen runs it (ui/decks/pack.py)
             if pack: cmd, wide = wide_core(cmd, pack, self.saved.get('wide', {}).get(gid, False))
             if not self.dry: self.home_window = focused_window()
+            opt = self.saved.get('gameopt', {}).get(gid) or {}
+            prof = opt.get('profile') or ('Performance' if label == 'BananaNative' else '')
+            fps = opt.get('fps') if opt.get('fps') in FPS_LIMITS else 0
+            scale = opt.get('scale') if opt.get('scale') in SCALING_FILTERS else 'linear'
             with open(STATE / 'launch.log', 'ab') as log:  # the child keeps its own copy of the handle
                 log.write(f'\n== {time.strftime("%F %T")} {game["t"]}: {cmd}\n'.encode()); log.flush()
                 if not self.dry:
                     env = None
                     if game['s'] == 'wiiu': env = {**os.environ, 'DISABLE_GAMESCOPE_WSI': '1'}; cemu_pad_window()  # see mirror_pad
                     if game['s'] == 'port': env = {**os.environ, 'TANDEM_DECK_SOCKET': str(DECK_SOCKET)}
+                    if label == 'BananaNative':
+                        env = {**os.environ, 'DISPLAY': os.environ.get('DISPLAY') or ':0',
+                               'WAYLAND_DISPLAY': os.environ.get('WAYLAND_DISPLAY') or 'gamescope-0',
+                               'XDG_RUNTIME_DIR': os.environ.get('XDG_RUNTIME_DIR') or f'/run/user/{os.getuid()}'}
+                    if prof: thor.change('profile', prof)
+                    if fps: apply_fps_limit(fps)
+                    if scale != 'linear': apply_scaling_filter(scale)
                     stopping = getattr(self, 'steam_stopping', None)
-                    if game['s'] == 'steam' and stopping and stopping.is_alive():  # a start sent to a Steam that is shutting down is lost
+                    if game['s'] == 'steam' and not game.get('direct') and stopping and stopping.is_alive():  # a start sent to a Steam that is shutting down is lost
                         stopping.join(60)
                         for _ in range(30):  # 'steam -shutdown' can return before the client is gone
                             try: alive = os.path.isdir('/proc/' + (HOME / '.steam/steam.pid').read_text().strip())
@@ -509,21 +634,58 @@ class Tandem:
                             time.sleep(1)
                     try: self.proc = subprocess.Popen(cmd, stdout=log, stderr=log, stdin=subprocess.DEVNULL, start_new_session=True, env=env)
                     except OSError as error: return {'error': f'Start fehlgeschlagen: {error}'}
-                    if game['s'] not in ('steam', 'app'): (STATE / 'running').write_text(f'{self.proc.pid} {start_time(self.proc.pid)}')
+                    if game.get('direct') or game['s'] not in ('steam', 'app'): (STATE / 'running').write_text(f'{self.proc.pid} {start_time(self.proc.pid)}')
             played = self.saved.setdefault('played', {}).setdefault(gid, {'secs': 0})
             played['last'] = int(time.time())
             self.save()
             tracked = game['s'] != 'app' or 'media' in game  # apps hand off to another process right away; the player stays
             if tracked:
+                fp_id = cmd[2] if len(cmd) >= 3 and Path(cmd[0]).name == 'flatpak' and cmd[1] == 'run' else None
                 self.run = {'id': gid, 't': game['t'], 's': game['s'], 'emu': label, 'since': int(time.time()), 'hero': game.get('hero'),
                             'layout': game.get('layout'), 'appid': game.get('appid'), 'keys': game.get('keys'),
                             'deck': f'deck/{game["appid"]}.html' if game.get('appid') and (HERE / f'decks/{game["appid"]}.html').is_file() else None,
-                            'pack': pack, 'wide': wide,
+                            'pack': pack, 'wide': wide, 'profile': prof, 'fps': fps, 'scale': scale,
+                            **({'flatpak': fp_id} if fp_id else {}),
                             'port': game.get('media') or ({'deck': PORTS[game['port']][3], 'socket': str(DECK_SOCKET)} if game['s'] == 'port' else None)}
                 if not self.dry: threading.Thread(target=self.watch, args=(self.proc, gid, game.get('appid')), daemon=True).start()
                 if not self.dry and game['s'] == 'wiiu': threading.Thread(target=self.mirror_pad, args=(gid,), daemon=True).start()
         self.publish()
         return {'ok': True, 'cmd': cmd, 'tracked': tracked}
+
+    def gameopt(self, data):
+        """Per-game performance profile, frame-rate cap and scaling filter: remembered in state.json and applied right away."""
+        with self.lock:
+            run = self.run
+            if not run: return {'error': 'Es läuft kein Spiel.'}
+            opt = self.saved.setdefault('gameopt', {}).setdefault(run['id'], {})
+            prof, fps, scale = data.get('profile'), data.get('fps'), data.get('scale')
+            if prof is not None:
+                if prof not in ('', *thor.PROFILES): return {'error': 'Unbekanntes Leistungsprofil.'}
+                if prof: opt['profile'] = prof
+                else: opt.pop('profile', None)
+                run['profile'] = opt.get('profile') or ('Performance' if run.get('emu') == 'BananaNative' else '')
+            if fps is not None:
+                if fps not in FPS_LIMITS: return {'error': 'unbekannte Einstellung'}
+                if fps: opt['fps'] = int(fps)
+                else: opt.pop('fps', None)
+                run['fps'] = int(fps)
+            if scale is not None:
+                if scale not in SCALING_FILTERS: return {'error': 'unbekannte Einstellung'}
+                if scale != 'linear': opt['scale'] = scale
+                else: opt.pop('scale', None)
+                run['scale'] = scale
+            if not opt: self.saved.get('gameopt', {}).pop(run['id'], None)
+            self.save()
+            target_prof = run.get('profile') or load_config().get('perf_profile') or 'Balanced'
+            target_fps = run.get('fps', 0)
+            target_scale = run.get('scale', 'linear')
+        thor_res = None
+        if prof is not None and not self.dry: thor_res = thor.change('profile', target_prof)
+        if fps is not None and not self.dry: apply_fps_limit(target_fps)
+        if scale is not None and not self.dry: apply_scaling_filter(target_scale)
+        if thor_res and 'error' not in thor_res: self.publish('thor', {'thor': thor_res})
+        self.publish()
+        return {'ok': True, 'profile': run.get('profile', ''), 'fps': run.get('fps', 0), 'scale': run.get('scale', 'linear')}
 
     def wide(self, on):
         """The Wide view switch of the running game's pack ('on', 'off', else toggle); the choice is kept per game."""
@@ -629,13 +791,22 @@ class Tandem:
     def finish(self, gid):
         with self.lock:
             if not self.run or self.run['id'] != gid: return
-            self.saved['played'][gid]['secs'] += int(time.time()) - self.run['since']
+            extra = max(0, int(time.time() - SLEEP_STATE['since'])) if SLEEP_STATE['since'] else 0
+            SLEEP_STATE['since'], SLEEP_STATE['froze'] = 0.0, False
+            self.saved['played'][gid]['secs'] += max(0, int(time.time()) - self.run['since'] - extra)
             self.save()  # before the run is cleared: whoever sees "no game running" also finds the play time on disk
-            steam = self.run.get('appid')
+            steam, had_prof, had_fps = self.run.get('appid'), bool(self.run.get('profile')), bool(self.run.get('fps'))
+            had_scale = self.run.get('scale', 'linear') != 'linear'
+            is_game = self.run.get('s') not in ('app', 'term')
             self.run, self.proc = None, None
             (STATE / 'running').unlink(missing_ok=True)
             self.mirror_stop()
         if steam: self.steam_rest()
+        if had_prof and not self.dry: thor.change('profile', load_config().get('perf_profile') or 'Balanced')
+        if had_fps and not self.dry: apply_fps_limit(0)
+        if had_scale and not self.dry: apply_scaling_filter('linear')
+        if is_game and not self.dry and load_config().get('save_auto', True):
+            trigger_saves_backup(self, quiet=True)
         self.publish()
         threading.Thread(target=self.come_home, daemon=True).start()
 
@@ -649,19 +820,30 @@ class Tandem:
     def quit(self):
         proc, run = self.proc, self.run
         if not run: return {'ok': True}
+        if run.get('login'): yt_login(self, 'cancel')  # the sign-in window goes with the app
         run['quitting'] = True
         if self.dry or not proc:
             self.finish(run['id'])
             return {'ok': True}
+        sock_path = ((run.get('port') or {}).get('socket') if run.get('emu') in MEDIA_APPS else None)
+        if sock_path:  # tell Flatpak mpv over its IPC socket to quit cleanly before bwrap can orphan it
+            import socket
+            try:
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+                    s.settimeout(0.5); s.connect(sock_path); s.sendall(b'{"command":["quit"]}\n')
+            except OSError: pass
         try:
-            if run.get('paused'): self.send(signal.SIGCONT)  # a frozen program cannot react to being asked to quit
+            if run.get('paused') or SLEEP_STATE.get('froze'): self.send(signal.SIGCONT)  # a frozen program cannot react to being asked to quit
             self.send(signal.SIGTERM)
-            def reap(group=proc.pid, appid=run.get('appid')):
+            def reap(group=proc.pid, appid=run.get('appid'), fp_id=run.get('flatpak')):
                 # The sandbox's inner processes can outlive the outer one that Popen watches: after the grace period
-                # whatever is left of the game's process group has to go, or it keeps running unseen.
+                # whatever is left of the game's process group (and any Flatpak bwrap instance) has to go.
                 for pid in steam_pids(appid) if appid else [-group]:  # a negative number means the whole group
-                    try: os.kill(pid, signal.SIGKILL)
+                    try:
+                        os.kill(pid, signal.SIGCONT)
+                        os.kill(pid, signal.SIGKILL)
                     except (ProcessLookupError, PermissionError): pass
+                if fp_id and self.run is None: run_quiet(['flatpak', 'kill', fp_id], timeout=3)
             threading.Timer(5, reap).start()
         except ProcessLookupError: pass
         return {'ok': True}
@@ -699,6 +881,25 @@ class Tandem:
         if run['s'] == 'wiiu': threading.Thread(target=self.mirror_pad, args=(run['id'],), daemon=True).start()
         self.publish()
         return {'ok': True}
+
+    def act(self, name):
+        """Run a power/session action on behalf of this Tandem instance (keeps action(name) as a 1-arg hook for tests)."""
+        if name == 'power_menu':
+            self.power_open = not self.power_open
+            self.publish()
+            return {'ok': True, 'power': self.power_open}
+        if name == 'power_close':
+            if self.power_open:
+                self.power_open = False
+                self.publish()
+            return {'ok': True, 'power': False}
+        if self.power_open:
+            self.power_open = False
+        if not self.dry and name in ('suspend', 'sleep'): sleep_game(self, True)
+        res = action(name)
+        if not self.dry and name == 'wake': sleep_game(self, False)
+        self.publish()
+        return res
 
     def favourite(self, gid):
         fav = self.saved.setdefault('fav', [])
@@ -865,6 +1066,339 @@ def frame_gen(on=None):
     return {'on': LSFG_LAYER.exists(), 'there': LSFG_LAYER.exists() or off.exists()}
 
 
+YT_PROFILE = HOME / '.config/tandem/media/yt-browser'  # default path; runtime helpers follow CONFIG.parent for tests
+YT_LOGIN_URL = 'https://accounts.google.com/ServiceLogin?service=youtube&continue=https%3A%2F%2Fwww.youtube.com%2F'
+YT_AUTH_NAMES = frozenset(('SAPISID', '__Secure-1PAPISID', '__Secure-3PAPISID', 'SID', '__Secure-1PSID', '__Secure-3PSID'))
+YT_TV_DEVICE_URL, YT_TV_TOKEN_URL = 'https://www.youtube.com/o/oauth2/device/code', 'https://www.youtube.com/o/oauth2/token'
+YT_TV_SCOPE = 'http://gdata.youtube.com https://www.googleapis.com/auth/youtube-paid-content'
+YT_TV_UA = 'Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version'
+YT_TV_CLIENT_RX = re.compile(r'clientId:"([0-9]+-[0-9a-zA-Z_\-]+\.apps\.googleusercontent\.com)",\w+:"([0-9a-zA-Z_\-]{16,48})"')
+YT_BROWSER = None
+YT_LOCK = threading.Lock()
+
+
+def yt_paths():
+    """(browser profile dir, exported Netscape cookies.txt, OAuth token json) inside CONFIG's media folder."""
+    media_dir = CONFIG.parent / 'media'
+    prof = YT_PROFILE if YT_PROFILE != HOME / '.config/tandem/media/yt-browser' else media_dir / 'yt-browser'
+    return prof, prof.with_name('youtube-cookies.txt'), prof.with_name('youtube-auth.json')
+
+
+def _write_priv_json(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(path.parent, 0o700)
+    tmp = path.with_suffix('.tmp')
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w', encoding='utf-8') as f: json.dump(data, f)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
+
+
+def yt_tv_client():
+    """Discover YouTube's public TVHTML5 OAuth client parameters from youtube.com/tv at runtime and cache locally (0600)."""
+    import urllib.request
+    cfile = yt_paths()[2].with_name('youtube-tv-client.json')
+    try:
+        cached = json.loads(cfile.read_text())
+        if cached.get('id') and cached.get('secret'): return cached['id'], cached['secret']
+    except (OSError, ValueError): pass
+    try:
+        req = urllib.request.Request('https://www.youtube.com/tv', headers={'User-Agent': YT_TV_UA})
+        html = urllib.request.urlopen(req, timeout=12).read().decode('utf-8', 'replace')
+        m = YT_TV_CLIENT_RX.search(html)
+        if not m:
+            for s in re.findall(r'src="(/s/_/kabuki/[^"]+\.js)"', html)[:2]:
+                js = urllib.request.urlopen(urllib.request.Request('https://www.youtube.com' + s, headers={'User-Agent': YT_TV_UA}), timeout=12).read().decode('utf-8', 'replace')
+                m = YT_TV_CLIENT_RX.search(js)
+                if m: break
+        if m:
+            _write_priv_json(cfile, {'id': m[1], 'secret': m[2]})
+            return m[1], m[2]
+    except OSError: pass
+    return None
+
+
+def yt_auth_signed_in():
+    """True when youtube-auth.json holds a valid OAuth refresh or access token (from QR / TV device sign-in)."""
+    afile = yt_paths()[2]
+    try: a = json.loads(afile.read_text())
+    except (OSError, ValueError): return False
+    return bool(isinstance(a, dict) and (a.get('refresh') or a.get('until', 0) > time.time() + 60))
+
+
+def yt_qr_step(force_new=False):
+    """Start or poll Google/YouTube's QR device-code sign-in (stdlib only; shares youtube-device.json & youtube-auth.json)."""
+    import urllib.error, urllib.parse, urllib.request, uuid
+    _, _, afile = yt_paths()
+    dfile = afile.with_name('youtube-device.json')
+    cfg = load_config()
+    custom = (cfg['yt_client_id'], cfg['yt_client_secret']) if cfg.get('yt_client_id') and cfg.get('yt_client_secret') else None
+    if yt_auth_signed_in() and not force_new:
+        return {'ok': True, 'signed_in': True}
+    pair = custom or yt_tv_client()
+    if not pair:
+        return {'error': 'Google ist nicht erreichbar.'}
+    cid, secret = pair
+
+    def post_f(url, fields, ua=None):
+        hdr = {'User-Agent': ua} if ua else {}
+        req = urllib.request.Request(url, data=urllib.parse.urlencode(fields).encode(), headers=hdr, method='POST')
+        try:
+            with urllib.request.urlopen(req, timeout=15) as r: return json.loads(r.read())
+        except urllib.error.HTTPError as err:
+            try: return json.loads(err.read())
+            except ValueError: return {'error': f'http {err.code}'}
+        except (OSError, ValueError): return {'error': 'Google ist nicht erreichbar.'}
+
+    def qr_svg(url):
+        try:
+            if str(HERE / 'ui') not in sys.path: sys.path.insert(0, str(HERE / 'ui'))
+            import qr
+            return qr.svg(url)
+        except Exception: return ''
+
+    d = None
+    if not force_new:
+        try: d = json.loads(dfile.read_text())
+        except (OSError, ValueError): d = None
+    if d and time.time() < d.get('until', 0) and bool(d.get('custom')) == bool(custom):
+        if time.time() - d.get('polled', 0) >= max(4, int(d.get('interval', 5)) - 1):
+            d['polled'] = time.time()
+            _write_priv_json(dfile, d)
+            got = (post_f('https://oauth2.googleapis.com/token', {'client_id': cid, 'client_secret': secret, 'device_code': d['device_code'], 'grant_type': 'urn:ietf:params:oauth:grant-type:device_code'})
+                   if custom else post_f(YT_TV_TOKEN_URL, {'client_id': cid, 'client_secret': secret, 'code': d['device_code'], 'grant_type': 'http://oauth.net/grant_type/device/1.0'}, YT_TV_UA))
+            if got.get('access_token'):
+                _write_priv_json(afile, {'access': got['access_token'], 'refresh': got.get('refresh_token'),
+                                         'until': time.time() + int(got.get('expires_in', 3600)), 'tv': not custom})
+                dfile.unlink(missing_ok=True)
+                return {'ok': True, 'signed_in': True, 'just_signed_in': True, 'text': 'Bei YouTube angemeldet.'}
+            if got.get('error') in ('invalid_client', 'unauthorized_client') and not custom:
+                afile.with_name('youtube-tv-client.json').unlink(missing_ok=True)
+            if got.get('error') not in ('authorization_pending', 'slow_down', None):
+                dfile.unlink(missing_ok=True); d = None
+        if d:
+            return {'ok': True, 'signed_in': False, 'code': d['code'], 'link': d['link'], 'qr': d['qr'], 'svg': qr_svg(d['qr']), 'poll': max(5, int(d.get('interval', 5)))}
+    got = (post_f('https://oauth2.googleapis.com/device/code', {'client_id': cid, 'scope': 'https://www.googleapis.com/auth/youtube.readonly'})
+           if custom else post_f(YT_TV_DEVICE_URL, {'client_id': cid, 'scope': YT_TV_SCOPE, 'device_id': str(uuid.uuid4()), 'device_model': 'ytlr::'}, YT_TV_UA))
+    if not got.get('user_code') and not custom:
+        afile.with_name('youtube-tv-client.json').unlink(missing_ok=True)
+    if not got.get('user_code'):
+        return {'error': 'Google ist nicht erreichbar.'}
+    code = got['user_code']
+    qr_url = f'https://www.youtube.com/activate?user_code={urllib.parse.quote(code)}'
+    link = 'youtube.com/activate'
+    d = {'device_code': got['device_code'], 'code': code, 'link': link, 'qr': qr_url,
+         'until': time.time() + int(got.get('expires_in', 1800)), 'interval': int(got.get('interval', 5)), 'polled': time.time(), 'custom': bool(custom)}
+    _write_priv_json(dfile, d)
+    return {'ok': True, 'signed_in': False, 'code': code, 'link': link, 'qr': qr_url, 'svg': qr_svg(qr_url), 'poll': max(5, d['interval'])}
+
+
+def yt_firefox_rows(profile=None):
+    """Read YouTube/Google cookies from Firefox's SQLite DB, copying -wal/-shm first so live uncheckpointed rows are seen."""
+    import sqlite3, tempfile
+    prof = Path(profile) if profile else yt_paths()[0]
+    db = prof / 'cookies.sqlite'
+    if not db.is_file(): return []
+    with tempfile.TemporaryDirectory(prefix='tandem-ytck-') as tmp:
+        dst = Path(tmp) / 'cookies.sqlite'
+        for suf in ('', '-wal', '-shm'):
+            src = Path(str(db) + suf)
+            if src.is_file():
+                try: shutil.copy2(src, Path(str(dst) + suf))
+                except OSError: pass
+        try:
+            with sqlite3.connect(str(dst)) as con:
+                cols = {r[1] for r in con.execute('PRAGMA table_info(moz_cookies)').fetchall()}
+                if not {'name', 'host', 'value'} <= cols: return []
+                sel = "name, value, host" + (", path" if 'path' in cols else ", '/'") + (", expiry" if 'expiry' in cols else ", 0") + (", isSecure" if 'isSecure' in cols else ", 1")
+                where = ("originAttributes = '' AND " if 'originAttributes' in cols else '') + "(host LIKE '%youtube.com' OR host LIKE '%google.com')"
+                return con.execute(f"SELECT {sel} FROM moz_cookies WHERE {where}").fetchall()
+        except sqlite3.Error:
+            return []
+
+
+def write_yt_cookies(rows, dest=None):
+    """Write [(domain, path, secure, expiry, name, value)] in Netscape cookies.txt format (0600); True when auth cookies exist."""
+    target = Path(dest) if dest else yt_paths()[1]
+    clean, has_yt_auth, google_by_name = [], False, {}
+    default_exp = int(time.time()) + 365 * 86400
+    for host, path, secure, exp, name, value in rows:
+        host, name, value = str(host or '').strip(), str(name or '').strip(), str(value or '').strip()
+        if not host or not name or '\n' in value or '\t' in value: continue
+        if not any(host == d or host.endswith('.' + d) for d in ('youtube.com', 'google.com')): continue
+        try: exp = int(exp or 0)
+        except (TypeError, ValueError): exp = 0
+        if exp > 10_000_000_000: exp //= 1000  # Firefox 128+ stores expiry in milliseconds
+        if exp <= 0: exp = default_exp
+        dom = host if host.startswith('.') else '.' + host
+        clean.append((dom, str(path or '/'), bool(secure), exp, name, value))
+        if name in YT_AUTH_NAMES and 'youtube.com' in dom: has_yt_auth = True
+        if 'google.com' in dom and name in (YT_AUTH_NAMES | {'HSID', 'SSID', 'APISID', '__Secure-1PSIDTS', '__Secure-3PSIDTS'}):
+            google_by_name[name] = (bool(secure), exp, value)
+    if not has_yt_auth and (YT_AUTH_NAMES & google_by_name.keys()):
+        # User tapped Fertig right after Google accepted credentials before youtube.com finished redirecting: mirror core SSO cookies
+        for name, (sec, exp, val) in google_by_name.items():
+            clean.append(('.youtube.com', '/', sec, exp, name, val))
+        has_yt_auth = True
+    if not has_yt_auth: return False
+    target.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(target.parent, 0o700)
+    tmp = target.with_suffix('.tmp')
+    lines = ['# Netscape HTTP Cookie File\n'] + [
+        f'{dom}\t{"TRUE" if dom.startswith(".") else "FALSE"}\t{path}\t{"TRUE" if sec else "FALSE"}\t{exp}\t{name}\t{val}\n'
+        for dom, path, sec, exp, name, val in clean
+    ]
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w', encoding='utf-8') as f: f.writelines(lines)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, target)
+    return True
+
+
+def export_yt_cookies(profile=None, dest=None):
+    rows = [(host, path, sec, exp, name, val) for name, val, host, path, exp, sec in yt_firefox_rows(profile)]
+    return write_yt_cookies(rows, dest) if rows else False
+
+
+def import_yt_cookies_text(raw, dest=None):
+    """Parse pasted Netscape cookies.txt or JSON cookie array from browser extension; returns (ok, error_or_None)."""
+    text = (raw or '').strip()
+    if not text: return False, 'Keine Cookies eingefügt.'
+    rows = []
+    if text.startswith('['):
+        try: items = json.loads(text)
+        except ValueError: return False, 'Ungültiges JSON-Format.'
+        for c in items if isinstance(items, list) else []:
+            if isinstance(c, dict):
+                rows.append((c.get('domain') or c.get('host'), c.get('path') or '/', bool(c.get('secure', True)),
+                             c.get('expirationDate') or c.get('expiry') or 0, c.get('name'), c.get('value')))
+    else:
+        for line in text.splitlines():
+            s = line.strip()
+            if not s or (s.startswith('#') and not s.startswith('#HttpOnly_')): continue
+            if s.startswith('#HttpOnly_'): s = s[len('#HttpOnly_'):]
+            parts = s.split('\t')
+            if len(parts) >= 7:
+                rows.append((parts[0], parts[2], parts[3].upper() == 'TRUE', parts[4], parts[5], parts[6]))
+    if not write_yt_cookies(rows, dest):
+        return False, 'Keine gültigen YouTube-/Google-Anmeldecookies gefunden (z. B. SAPISID / __Secure-3PAPISID).'
+    return True, None
+
+
+def yt_cookie_signed_in():
+    """True when either youtube-cookies.txt or the Firefox login profile holds valid YouTube auth cookies."""
+    prof, cfile, _ = yt_paths()
+    if cfile.is_file():
+        try:
+            for line in cfile.read_text(errors='replace').splitlines():
+                parts = line.split('\t')
+                if len(parts) >= 7 and 'youtube.com' in parts[0] and parts[5] in YT_AUTH_NAMES and parts[6].strip():
+                    return True
+        except OSError: pass
+    return any(name in YT_AUTH_NAMES and ('youtube.com' in str(host) or 'google.com' in str(host)) for name, _, host, *_ in yt_firefox_rows(prof))
+
+
+def _close_yt_browser(proc):
+    if not proc or proc.poll() is not None: return
+    for wid in x_windows_matching('firefox', 'navigator'):
+        x_window('close', wid)
+    try: proc.wait(4)
+    except subprocess.TimeoutExpired:
+        try: os.killpg(proc.pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError): proc.terminate()
+        try: proc.wait(5)
+        except subprocess.TimeoutExpired:
+            try: os.killpg(proc.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError): proc.kill()
+
+
+def yt_login(tandem, action):
+    """YouTube sign-in: 'qr'/'qr_new' runs Google's TV device-code QR flow (sign in on phone/PC); 'start'/'open'/'done'/'cancel'
+    keep the optional on-device browser flow; 'logout' removes tokens, device state, and cookies."""
+    global YT_BROWSER
+    prof, cfile, afile = yt_paths()
+    if action in ('qr', 'qr_new'):
+        res = yt_qr_step(force_new=(action == 'qr_new'))
+        if res.get('just_signed_in'):
+            tandem.publish('config', {'config': public_config()})
+            tandem.publish('toast', {'text': 'Bei YouTube angemeldet.'})
+        return res
+    if action == 'open':  # from Einstellungen › Konten or remote.html: launch YouTube first if nothing runs yet
+        if tandem.run and tandem.run.get('emu') != 'YouTube':
+            return {'error': 'Erst das laufende Spiel beenden.'}
+        if DOZE and not tandem.dry: doze(False, tandem)
+        if not tandem.run:
+            yt_id = next(('app' + str(i) for i, a in enumerate(APPS) if a[0] == 'YouTube'), None)
+            if not yt_id: return {'error': 'YouTube-App nicht gefunden.'}
+            res = tandem.launch(yt_id)
+            if isinstance(res, dict) and 'error' in res: return res
+            if not tandem.dry: time.sleep(1.0)
+        action = 'start'
+    with YT_LOCK:
+        run = tandem.run
+        if action == 'start':
+            if not run or run.get('emu') != 'YouTube': return {'error': 'Erst die YouTube-App öffnen.'}
+            if YT_BROWSER and YT_BROWSER.poll() is None: return {'ok': True}
+            prof.mkdir(parents=True, exist_ok=True)
+            for folder in (prof.parent, prof): os.chmod(folder, 0o700)
+            (prof / 'user.js').write_text(''.join(f'user_pref("{k}", {v});\n' for k, v in (
+                ('browser.shell.checkDefaultBrowser', 'false'), ('browser.aboutwelcome.enabled', 'false'), ('signon.rememberSignons', 'false'),
+                ('browser.startup.homepage_override.mstone', '"ignore"'), ('datareporting.policy.dataSubmissionEnabled', 'false'),
+                ('toolkit.telemetry.reporting.policy.firstRun', 'false'), ('app.update.auto', 'false'), ('intl.accept_languages', '"de-DE, de, en"'),
+                ('browser.tabs.closeWindowWithLastTab', 'true'), ('browser.tabs.warnOnClose', 'false'), ('browser.warnOnQuit', 'false'),
+                ('browser.sessionstore.warnOnQuit', 'false'), ('browser.sessionstore.resume_from_crash', 'false'), ('layout.css.devPixelsPerPx', '"1.3"'))))
+            hidden = []
+            if not tandem.dry:
+                for wid in x_windows_matching('mpv'):
+                    if wid != tandem.home_window and x_window('unmap', wid): hidden.append(wid)
+                env = {**os.environ, 'DISPLAY': os.environ.get('DISPLAY') or ':0', 'MOZ_ENABLE_WAYLAND': '0', 'GDK_BACKEND': 'x11',
+                       'XDG_RUNTIME_DIR': os.environ.get('XDG_RUNTIME_DIR') or f'/run/user/{os.getuid()}'}
+                try:
+                    YT_BROWSER = subprocess.Popen(['firefox', '--kiosk', '--new-instance', '--profile', str(prof), YT_LOGIN_URL],
+                                                  stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                                  start_new_session=True, env=env)
+                except OSError as error:
+                    for wid in hidden: x_window('map', wid)
+                    return {'error': f'Firefox konnte nicht gestartet werden: {error}'}
+            layout = region_layout()
+            if not tandem.dry: run_quiet(['setxkbmap', layout])
+            run.update(keys=True, login=True, layout=layout, yt_hidden=hidden)
+            tandem.publish()
+            if not tandem.dry and YT_BROWSER:
+                proc = YT_BROWSER
+                def watch_login():
+                    while proc.poll() is None and tandem.run is run and run.get('login'):
+                        time.sleep(1.5)
+                        rows = yt_firefox_rows(prof)
+                        if any(name in ('SAPISID', '__Secure-1PAPISID', '__Secure-3PAPISID') and 'youtube.com' in str(host) for name, _, host, *_ in rows):
+                            time.sleep(2.0)  # let final YouTube companion cookies settle
+                            export_yt_cookies(prof, cfile)
+                            yt_login(tandem, 'done')
+                            tandem.publish('toast', {'text': 'Bei YouTube angemeldet.'})
+                            return
+                    if proc.poll() is not None and tandem.run is run and run.get('login'):
+                        yt_login(tandem, 'done')
+                threading.Thread(target=watch_login, daemon=True).start()
+            return {'ok': True, 'text': 'Anmeldung auf dem Thor geöffnet.'}
+        proc, YT_BROWSER = YT_BROWSER, None
+    if action == 'done' and not tandem.dry: export_yt_cookies(prof, cfile)  # snapshot WAL before closing
+    if not tandem.dry: _close_yt_browser(proc)
+    if action == 'done': export_yt_cookies(prof, cfile)  # and again after Firefox flushed on exit
+    if action == 'logout':
+        shutil.rmtree(prof, ignore_errors=True)
+        cfile.unlink(missing_ok=True)
+        afile.unlink(missing_ok=True)
+        afile.with_name('youtube-device.json').unlink(missing_ok=True)
+    run = tandem.run
+    if run:
+        for wid in reversed(run.pop('yt_hidden', None) or []):
+            if not tandem.dry: x_window('map', wid)
+        if run.pop('login', None): run.pop('keys', None)
+    tandem.publish('config', {'config': public_config()})
+    tandem.publish()
+    return {'ok': True, 'signed_in': yt_auth_signed_in() or yt_cookie_signed_in(), 'text': 'Abgemeldet.' if action == 'logout' else ''}
+
+
 def screenshot():
     """Both screens as PNG into ~/Pictures/Tandem, the way gamescope takes them."""
     folder = HOME / 'Pictures/Tandem'
@@ -880,6 +1414,71 @@ def screenshot():
     return {'error': 'Bildschirmfoto fehlgeschlagen'}
 
 
+FPS_LIMITS = (0, 30, 40, 45, 60)
+SCALING_FILTERS = ('linear', 'sgsr', 'fsr', 'pixel')
+NIGHT_MODES = {'off': None, 'warm': (1.0, 0.89, 0.72), 'night': (1.0, 0.78, 0.50)}
+MUTED = {'on': False}
+
+
+def apply_fps_limit(hz):
+    """Gamescope's frame limiter on the top screen (0 = off / full 120 Hz)."""
+    if not shutil.which('xprop'): return
+    env = {**os.environ, 'DISPLAY': os.environ.get('DISPLAY') or ':0'}
+    try: subprocess.run(['xprop', '-root', '-f', 'GAMESCOPE_FPS_LIMIT', '32c', '-set', 'GAMESCOPE_FPS_LIMIT', str(int(hz))], env=env, capture_output=True, timeout=3)
+    except (OSError, subprocess.SubprocessError): pass
+
+
+def apply_scaling_filter(mode):
+    """Gamescope upscaling filter on the top screen (linear, sgsr, fsr, pixel)."""
+    if mode not in SCALING_FILTERS or not shutil.which('gamescopectl'): return
+    env = {**os.environ, 'XDG_RUNTIME_DIR': os.environ.get('XDG_RUNTIME_DIR') or f'/run/user/{os.getuid()}', 'WAYLAND_DISPLAY': 'gamescope-0'}
+    try:
+        subprocess.run(['gamescopectl', 'scaling_filter', mode], env=env, capture_output=True, timeout=3)
+        if mode in ('sgsr', 'fsr'):
+            subprocess.run(['gamescopectl', 'scaling_sharpness', '12'], env=env, capture_output=True, timeout=3)
+    except (OSError, subprocess.SubprocessError): pass
+
+
+def apply_night_mode(mode):
+    """Hardware 3D LUT blue-light filter on both Gamescope displays via gamescopectl set_look (zero GPU/CPU cost)."""
+    if mode not in NIGHT_MODES or not shutil.which('gamescopectl'): return
+    gains = NIGHT_MODES[mode]
+    cube_arg = ''
+    if gains:
+        cache = Path(os.environ.get('XDG_CACHE_HOME', HOME / '.cache')) / 'tandem'
+        cache.mkdir(parents=True, exist_ok=True)
+        cube = cache / f'look-{mode}.cube'
+        if not cube.is_file():
+            n = 9
+            lines = [f'LUT_3D_SIZE {n}']
+            for b in range(n):
+                for g in range(n):
+                    for r in range(n):
+                        lines.append(f'{(r / (n - 1)) * gains[0]:.5f} {(g / (n - 1)) * gains[1]:.5f} {(b / (n - 1)) * gains[2]:.5f}')
+            cube.write_text('\n'.join(lines) + '\n')
+        cube_arg = str(cube)
+    rt = Path(os.environ.get('XDG_RUNTIME_DIR') or f'/run/user/{os.getuid()}')
+    for sock in sorted(rt.glob('gamescope-[0-9]*')):
+        if not re.fullmatch(r'gamescope-\d+', sock.name): continue
+        env = {**os.environ, 'XDG_RUNTIME_DIR': str(rt), 'WAYLAND_DISPLAY': sock.name, 'GAMESCOPE_WAYLAND_DISPLAY': sock.name}
+        try: subprocess.run(['gamescopectl', 'set_look', cube_arg], env=env, capture_output=True, timeout=4)
+        except (OSError, subprocess.SubprocessError): pass
+
+
+def trigger_saves_backup(tandem, quiet=False):
+    """Run savegame sync in the background and inform both screens."""
+    def work():
+        cfg = load_config()
+        res = saves.backup(cfg.get('save_target', saves.DEFAULT_TARGET))
+        tandem.publish('saves', {'saves': saves.status()})
+        if res.get('error') and not quiet:
+            tandem.publish('toast', {'text': res['error']})
+        elif res.get('text') and not quiet:
+            tandem.publish('toast', {'text': res['text']})
+    threading.Thread(target=work, daemon=True).start()
+    return {'ok': True}
+
+
 def settings():
     """Brightness of both panels and the volume, each 0-100, or None where the device has no such control."""
     out = {}
@@ -888,9 +1487,22 @@ def settings():
             base = Path('/sys/class/backlight') / name
             out[key] = round(100 * int((base / 'brightness').read_text()) / int((base / 'max_brightness').read_text()))
         except (OSError, ValueError, ZeroDivisionError): out[key] = None
-    volume = re.search(r'Volume: ([0-9.]+)', run_quiet(['wpctl', 'get-volume', '@DEFAULT_AUDIO_SINK@']))
+    vol_out = run_quiet(['wpctl', 'get-volume', '@DEFAULT_AUDIO_SINK@']) if shutil.which('wpctl') else ''
+    volume = re.search(r'Volume: ([0-9.]+)', vol_out)
     out['vol'] = round(100 * float(volume[1])) if volume else None
+    if vol_out: MUTED['on'] = '[MUTED]' in vol_out
     return out
+
+
+def mute(mode='toggle'):
+    """Speaker / headphone mute via PipeWire ('toggle', True, False)."""
+    if shutil.which('wpctl'):
+        arg = 'toggle' if mode == 'toggle' else ('1' if mode else '0')
+        run_quiet(['wpctl', 'set-mute', '@DEFAULT_AUDIO_SINK@', arg])
+        MUTED['on'] = '[MUTED]' in run_quiet(['wpctl', 'get-volume', '@DEFAULT_AUDIO_SINK@'])
+    else:
+        MUTED['on'] = (not MUTED['on']) if mode == 'toggle' else bool(mode)
+    return {'ok': True, 'muted': MUTED['on']}
 
 
 def change(key, value):
@@ -901,7 +1513,9 @@ def change(key, value):
         except (OSError, ValueError): return {'error': 'Diese Helligkeit lässt sich hier nicht einstellen.'}
         set_raw(key, raw)
     elif key == 'vol':
-        run_quiet(['wpctl', 'set-volume', '@DEFAULT_AUDIO_SINK@', f'{value}%'])
+        if shutil.which('wpctl'):
+            run_quiet(['wpctl', 'set-mute', '@DEFAULT_AUDIO_SINK@', '0'])
+            run_quiet(['wpctl', 'set-volume', '@DEFAULT_AUDIO_SINK@', f'{value}%'])
     else: return {'error': 'unbekannte Einstellung'}
     return settings()
 
@@ -919,6 +1533,8 @@ def retroarch(name):
 DOZE_FILE = Path(os.environ.get('XDG_RUNTIME_DIR') or '/tmp') / 'tandem-doze.json'
 try: DOZE = {k: int(v) for k, v in json.loads(DOZE_FILE.read_text()).items()}
 except (OSError, ValueError, AttributeError): DOZE = {}
+SLEEP_STATE = {'since': 0.0, 'froze': False, 'muted': None, 'profile': None}
+FAKE_SUSPEND_FLAG = Path('/run/armada/fake-suspend.active')
 
 
 def on_power():
@@ -930,34 +1546,117 @@ def on_power():
     return False
 
 
+def seat_session():
+    """Active logind session on seat0, so backlight changes also work when tandem.py was restarted over SSH."""
+    m = re.search(r'"(/org/freedesktop/login1/session/[^"]+)"',
+                  run_quiet(['busctl', '--system', 'get-property', 'org.freedesktop.login1',
+                             '/org/freedesktop/login1/seat/seat0', 'org.freedesktop.login1.Seat', 'ActiveSession']))
+    return m[1] if m else '/org/freedesktop/login1/session/auto'
+
+
 def set_raw(key, raw):
-    base = Path('/sys/class/backlight') / BACKLIGHTS[key]
-    if key == 'bt': run_quiet([PRIV_WRITE, str(base / 'brightness'), str(raw)])
-    # ArmadaOS's helper steers every backlight write to the top panel; the bottom one goes to logind directly.
-    else: run_quiet(['busctl', '--system', 'call', 'org.freedesktop.login1', '/org/freedesktop/login1/session/auto',
-                     'org.freedesktop.login1.Session', 'SetBrightness', 'ssu', 'backlight', BACKLIGHTS[key], str(raw)])
+    run_quiet(['busctl', '--system', 'call', 'org.freedesktop.login1', seat_session(),
+               'org.freedesktop.login1.Session', 'SetBrightness', 'ssu', 'backlight', BACKLIGHTS[key], str(raw)])
 
 
-def doze(on):
-    """Standby on a charger: both panels dark, the Thor stays reachable (its Wi-Fi cannot wake it from a real suspend)."""
+_SET_RAW = set_raw
+
+
+def lit(key, raw):
+    """A brightness worth waking to: a panel that was already dark when the doze began (a second doze, a slider at 0)
+    would otherwise wake dark too – the owner pressed power 4× on 18.11. and nothing lit up. Falls back to 75 % of max."""
+    try:
+        mx = int((Path('/sys/class/backlight') / BACKLIGHTS[key] / 'max_brightness').read_text())
+        return raw if raw >= max(1, mx // 20) else max(1, mx * 3 // 4)
+    except (OSError, ValueError, KeyError): return raw if raw > 0 else 1
+
+
+def panel_sleep(on):
+    """Put both Gamescope internal panels into DRM sleep (or wake them), matching Armada's fake-suspend."""
+    if not shutil.which('gamescopectl'): return
+    rt = Path(os.environ.get('XDG_RUNTIME_DIR') or f'/run/user/{os.getuid()}')
+    for sock in sorted(rt.glob('gamescope-[0-9]*')):
+        if not re.fullmatch(r'gamescope-\d+', sock.name): continue
+        env = {**os.environ, 'XDG_RUNTIME_DIR': str(rt), 'WAYLAND_DISPLAY': sock.name, 'GAMESCOPE_WAYLAND_DISPLAY': sock.name}
+        try: subprocess.run(['gamescopectl', 'drm_sleep_internal_screen', '1' if on else '0'], env=env, capture_output=True, timeout=4)
+        except (OSError, subprocess.SubprocessError): pass
+
+
+def sleep_game(tandem, on):
+    """Freeze a running game on standby entry (even for fake-suspend, whose app.slice check misses Tandem's child session)
+    and thaw it on wake while shifting 'since' forward so slept hours never count as play time."""
+    if on:
+        if not SLEEP_STATE['since']: SLEEP_STATE['since'] = time.time()
+        if tandem and tandem.run and not tandem.run.get('paused') and not tandem.dry and tandem.proc and not SLEEP_STATE['froze']:
+            try:
+                tandem.send(signal.SIGSTOP)
+                SLEEP_STATE['froze'] = True
+            except ProcessLookupError: pass
+    else:
+        since, froze = SLEEP_STATE['since'], SLEEP_STATE['froze']
+        SLEEP_STATE['since'], SLEEP_STATE['froze'] = 0.0, False
+        if tandem and tandem.run:
+            if since: tandem.run['since'] += max(0, int(time.time() - since))
+            if froze and not tandem.run.get('paused') and not tandem.dry and tandem.proc:
+                try: tandem.send(signal.SIGCONT)
+                except ProcessLookupError: pass
+
+
+def doze(on, tandem=None):
+    """Standby on a charger: panels asleep, sound muted, stick lights off, game frozen, power profile on Eco; the Thor
+    stays reachable over Wi-Fi/USB."""
+    hw = (set_raw is _SET_RAW) and not (tandem and tandem.dry)
     if on and not DOZE:
+        sleep_game(tandem, True)
         for key, name in BACKLIGHTS.items():
-            try: DOZE[key] = int((Path('/sys/class/backlight') / name / 'brightness').read_text())
+            try: DOZE[key] = lit(key, int((Path('/sys/class/backlight') / name / 'brightness').read_text()))
             except (OSError, ValueError): continue
             set_raw(key, 0)
         try: DOZE_FILE.write_text(json.dumps(DOZE))
         except OSError: pass
+        if hw:
+            panel_sleep(True)
+            if shutil.which('wpctl'):
+                SLEEP_STATE['muted'] = '[MUTED]' in run_quiet(['wpctl', 'get-volume', '@DEFAULT_AUDIO_SINK@'])
+                run_quiet(['wpctl', 'set-mute', '@DEFAULT_AUDIO_SINK@', '1'])
+            if shutil.which('armada-rgb'): run_quiet(['armada-rgb', 'sleep'])
+            if shutil.which(thor.POWER[0]):
+                SLEEP_STATE['profile'] = ((thor.state().get('power') or {}).get('profile')) or load_config().get('perf_profile') or 'Balanced'
+                thor.change('profile', 'Eco')
+        if tandem:
+            tandem.power_open = False
+            tandem.publish()
     elif not on:
-        for key, raw in list(DOZE.items()): set_raw(key, raw)
+        was = bool(DOZE)
+        if was and hw: panel_sleep(False)
+        for key, raw in list(DOZE.items()): set_raw(key, lit(key, raw))
         DOZE.clear()
         DOZE_FILE.unlink(missing_ok=True)
+        if hw:
+            if was and shutil.which('armada-rgb'): run_quiet(['armada-rgb', 'wake'])
+            if was and SLEEP_STATE['muted'] is False and shutil.which('wpctl'):
+                run_quiet(['wpctl', 'set-mute', '@DEFAULT_AUDIO_SINK@', '0'])
+            prof = ((tandem.run or {}).get('profile') if tandem else '') or SLEEP_STATE['profile'] or load_config().get('perf_profile')
+            if prof and shutil.which(thor.POWER[0]):
+                threading.Thread(target=thor.change, args=('profile', prof), daemon=True).start()
+            night = load_config().get('night_mode', 'off')
+            if night in ('warm', 'night'):
+                threading.Thread(target=apply_night_mode, args=(night,), daemon=True).start()
+        SLEEP_STATE['muted'], SLEEP_STATE['profile'] = None, None
+        sleep_game(tandem, False)
+        if tandem:
+            tandem.power_open = False
+            tandem.publish()
     return {'ok': True, 'doze': bool(DOZE)}
 
 
 def action(name):
-    if name == 'suspend' and on_power(): return doze(True)
+    if name == 'suspend' and on_power() and load_config().get('charger_standby', 'doze') != 'sleep':
+        return doze(True)
     if name == 'wake': return doze(False)
-    if name == 'sleep': name = 'suspend'  # a real suspend even on a charger
+    if name == 'sleep':
+        if DOZE: doze(False)  # restore panel brightness before fake-suspend records and sleeps
+        name = 'suspend'  # a real suspend even on a charger
     if name == 'steam':  # one session with Steam (PC games, system updates); the next start is Tandem again
         flag = HOME / '.config/tandem/steam-once'
         flag.parent.mkdir(parents=True, exist_ok=True); flag.touch()
@@ -966,7 +1665,7 @@ def action(name):
     else: return {'error': 'unbekannte Aktion'}
     try: subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
     except OSError as error: return {'error': f'Geht hier nicht: {error}'}
-    return {'ok': True}
+    return {'ok': True, 'doze': False}
 
 
 CONFIG = Path(os.environ.get('XDG_CONFIG_HOME', HOME / '.config')) / 'tandem/config.json'
@@ -988,10 +1687,41 @@ def save_config(data):
         value = data.get(key)
         if isinstance(value, str) and value.strip() and '\n' not in value: config[key] = value.strip()[:128]
     if data.get('bnet_forget'): config.pop('bnet_email', None); config.pop('bnet_password', None)
+    # Google OAuth client ("TV and Limited Input devices") for YouTube's sign-in (decks/youtube.py); never goes back to a page
+    for key, pattern in (('yt_client_id', r'[0-9A-Za-z\-]{8,90}\.apps\.googleusercontent\.com'), ('yt_client_secret', r'[0-9A-Za-z_\-]{8,80}')):
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            if not re.fullmatch(pattern, value.strip()): return {**public_config(), 'error': 'Die Client-ID oder das Client-Secret sieht nicht richtig aus.'}
+            config[key] = value.strip()
+    if data.get('yt_forget'):
+        config.pop('yt_client_id', None); config.pop('yt_client_secret', None)
+        prof, cfile, afile = yt_paths()
+        shutil.rmtree(prof, ignore_errors=True); cfile.unlink(missing_ok=True); afile.unlink(missing_ok=True)
+        afile.with_name('youtube-device.json').unlink(missing_ok=True)
+    extra = {}
+    if isinstance(data.get('yt_cookies'), str):
+        ok, err = import_yt_cookies_text(data['yt_cookies'])
+        if not ok: return {**public_config(), 'error': err}
+        extra['text'] = 'YouTube-Cookies gespeichert.'
     if data.get('kb_layout') in ('de', 'us'): config['kb_layout'] = data['kb_layout']
+    if isinstance(data.get('kb_haptics'), bool): config['kb_haptics'] = data['kb_haptics']
     if data.get('lang') in ('de', 'en'): config['lang'] = data['lang']
     if data.get('theme') in [t['id'] for t in themes()]: config['theme'] = data['theme']
+    if data.get('view_mode') in ('grid', 'stage'): config['view_mode'] = data['view_mode']
+    if isinstance(data.get('overlays'), bool): config['overlays'] = data['overlays']
+    if data.get('motion') in ('full', 'reduced'): config['motion'] = data['motion']
     if data.get('rest_min') in (0, 1, 3, 10): config['rest_min'] = data['rest_min']
+    if isinstance(data.get('lid_sleep'), bool): config['lid_sleep'] = data['lid_sleep']
+    if data.get('charger_standby') in ('doze', 'sleep'): config['charger_standby'] = data['charger_standby']
+    if data.get('night_mode') in NIGHT_MODES:
+        config['night_mode'] = data['night_mode']
+        threading.Thread(target=apply_night_mode, args=(data['night_mode'],), daemon=True).start()
+    if isinstance(data.get('save_auto'), bool): config['save_auto'] = data['save_auto']
+    if isinstance(data.get('save_target'), str):
+        st = data['save_target'].strip()
+        if not st: config['save_target'] = ''
+        elif re.fullmatch(r'[A-Za-z0-9._\-@]+:[A-Za-z0-9._\-~/]{1,140}', st): config['save_target'] = st
+        else: return {**public_config(), 'error': 'Das Sicherungsziel muss die Form benutzer@server:pfad haben.'}
     if data.get('perf_profile') in thor.PROFILES: config['perf_profile'] = data['perf_profile']  # set again at every start  # minutes until the screens go black to spare the OLED, 0 = never
     source = data.get('update_url')  # where Tandem looks for new versions of itself (see self_update)
     if isinstance(source, str):
@@ -1005,7 +1735,6 @@ def save_config(data):
         if not own: config.pop('remote_url', None)
         elif re.fullmatch(r'https?://[A-Za-z0-9.\-_~:/\[\]%]{3,92}', own): config['remote_url'] = own
         else: return {**public_config(), 'error': 'Die Adresse muss mit https:// oder http:// beginnen (höchstens 100 Zeichen).'}
-    extra = {}
     password = data.get('ra_password')
     if isinstance(password, str) and password:
         if not config.get('ra_user'): return {**public_config(), 'error': 'Bitte auch den Benutzernamen eintragen.'}
@@ -1132,9 +1861,24 @@ def self_update(apply=False):
 
 def public_config():
     config, looks = load_config(), themes()
+    plex_ok = False
+    try: plex_ok = bool(json.loads((CONFIG.parent / 'media/plex.json').read_text()).get('token'))
+    except (OSError, ValueError, AttributeError): pass
+    yt_oauth = bool(config.get('yt_client_id') and config.get('yt_client_secret'))
+    yt_cookie = yt_cookie_signed_in()
+    yt_auth = yt_auth_signed_in()
     return {'ra_user': config.get('ra_user', ''), 'ra_key_set': bool(config.get('ra_key')), 'ra_login': bool(config.get('ra_token')),
             'bnet_set': bool(config.get('bnet_email') and config.get('bnet_password')),
-            'kb_layout': config.get('kb_layout', ''), 'lang': 'en' if config.get('lang') == 'en' else 'de', 'remote_url': config.get('remote_url', ''), 'rest_min': config.get('rest_min', 3), 'version': VERSION, 'update_url': config.get('update_url', UPDATE_URL), 'theme': config.get('theme') if config.get('theme') in [t['id'] for t in looks] else 'toravo', 'themes': looks}
+            'yt_set': yt_auth or yt_cookie, 'yt_auth': yt_auth, 'yt_cookie': yt_cookie, 'yt_oauth': yt_oauth,
+            'plex_set': plex_ok, 'lid_sleep': config.get('lid_sleep', True),
+            'charger_standby': config.get('charger_standby') if config.get('charger_standby') in ('doze', 'sleep') else 'doze',
+            'night_mode': config.get('night_mode') if config.get('night_mode') in NIGHT_MODES else 'off',
+            'save_auto': config.get('save_auto', True),
+            'save_target': config.get('save_target', saves.DEFAULT_TARGET),
+            'view_mode': config.get('view_mode') if config.get('view_mode') in ('grid', 'stage') else 'grid',
+            'overlays': config.get('overlays', True),
+            'motion': config.get('motion') if config.get('motion') in ('full', 'reduced') else 'full',
+            'kb_layout': config.get('kb_layout', ''), 'kb_haptics': config.get('kb_haptics', True), 'lang': 'en' if config.get('lang') == 'en' else 'de', 'remote_url': config.get('remote_url', ''), 'rest_min': config.get('rest_min', 3), 'version': VERSION, 'update_url': config.get('update_url', UPDATE_URL), 'theme': config.get('theme') if config.get('theme') in [t['id'] for t in looks] else 'toravo', 'themes': looks}
 
 
 RA_CONSOLES = {'megadrive': 1, 'genesis': 1, 'n64': 2, 'snes': 3, 'gb': 4, 'gba': 5, 'gbc': 6, 'nes': 7, 'pcengine': 8, 'segacd': 9,
@@ -1282,8 +2026,72 @@ class Keyboard:
             except OSError as error: return {'error': f'Tastatur nicht verfügbar: {error}'}
         return {'ok': True}
 
+    def type_text(self, text, layout='de'):
+        """Type a short ASCII snippet (such as '@', '.com', 'gmail.com') via evdev keycodes matching the active XKB layout."""
+        base = {'a': 30, 'b': 48, 'c': 46, 'd': 32, 'e': 18, 'f': 33, 'g': 34, 'h': 35, 'i': 23, 'j': 36, 'k': 37, 'l': 38,
+                'm': 50, 'n': 49, 'o': 24, 'p': 25, 'q': 16, 'r': 19, 's': 31, 't': 20, 'u': 22, 'v': 47, 'w': 17, 'x': 45,
+                'y': 44 if layout == 'de' else 21, 'z': 21 if layout == 'de' else 44,
+                '1': 2, '2': 3, '3': 4, '4': 5, '5': 6, '6': 7, '7': 8, '8': 9, '9': 10, '0': 11, '.': 52, '-': 53 if layout == 'de' else 12}
+        for ch in str(text)[:64]:
+            if ch == '@': res = self.press(16, ['altgr']) if layout == 'de' else self.press(3, ['shift'])
+            elif ch == '_': res = self.press(53 if layout == 'de' else 12, ['shift'])
+            elif ch.lower() in base: res = self.press(base[ch.lower()], ['shift'] if ch.isupper() else [])
+            else: continue
+            if isinstance(res, dict) and 'error' in res: return res
+        return {'ok': True}
+
 
 KEYBOARD = Keyboard()
+
+
+def x_type_char(ch, display=b':0'):
+    """Inject a single character (including '@', '€', umlauts, '-', '.') straight into :0's Xwayland via XTestFakeKeyEvent,
+    looking up the live X11 keycode and modifier level (Shift / ISO_Level3_Shift) so seat focus on :1 or gamescope's us
+    uinput keymap never drops or mangles '@'. Returns True when sent."""
+    if not ch or len(ch) != 1: return False
+    code_pt = ord(ch)
+    sym = 0x20AC if ch == '€' else code_pt if 0x20 <= code_pt <= 0xFF else (0x01000000 | code_pt)
+    lib, dpy = x11()
+    if display != b':0' and lib:
+        if dpy: lib.XCloseDisplay(dpy)
+        dpy = lib.XOpenDisplay(display)
+    if not dpy: return False
+    try:
+        xtst = ctypes.CDLL('libXtst.so.6')
+        lib.XKeysymToKeycode.argtypes = [ctypes.c_void_p, ctypes.c_ulong]; lib.XKeysymToKeycode.restype = ctypes.c_ubyte
+        lib.XKeycodeToKeysym.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_int]; lib.XKeycodeToKeysym.restype = ctypes.c_ulong
+        xtst.XTestFakeKeyEvent.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_int, ctypes.c_ulong]
+        kc = lib.XKeysymToKeycode(dpy, sym)
+        if not kc: return False
+        levels = [lib.XKeycodeToKeysym(dpy, kc, i) for i in range(8)]
+        if sym not in levels: return False
+        idx = levels.index(sym)
+        mods = []
+        if idx in (2, 3, 4, 5):
+            lvl3 = lib.XKeysymToKeycode(dpy, 0xFE03) or 92  # XK_ISO_Level3_Shift
+            if lvl3: mods.append(lvl3)
+        if idx in (1, 3, 5):
+            sh = lib.XKeysymToKeycode(dpy, 0xFFE1) or 50    # XK_Shift_L
+            if sh: mods.append(sh)
+        for m in mods: xtst.XTestFakeKeyEvent(dpy, m, 1, 0)
+        xtst.XTestFakeKeyEvent(dpy, kc, 1, 0)
+        xtst.XTestFakeKeyEvent(dpy, kc, 0, 0)
+        for m in reversed(mods): xtst.XTestFakeKeyEvent(dpy, m, 0, 0)
+        lib.XFlush(dpy)
+        return True
+    except OSError:
+        return False
+    finally:
+        lib.XCloseDisplay(dpy)
+
+
+def x_type_seq(seq):
+    for ch in str(seq)[:64]:
+        if not x_type_char(ch): return False
+        time.sleep(0.015)
+    return True
+
+
 # Wine ignores AltGr from a virtual keyboard (@ came out as q in Battle.net's login): such a character goes in by pasting.
 CLIP = '''import sys
 from PySide6.QtWidgets import QApplication
@@ -1292,11 +2100,10 @@ app = QApplication(sys.argv); app.clipboard().setText(sys.argv[1]); QTimer.singl
 
 
 def paste(text):
-    for display in (':0', ':1'):  # top and bottom Xwayland: the clipboard belongs to the one Wine runs on
-        try: subprocess.Popen(['python3', '-c', CLIP, text], env={**os.environ, 'DISPLAY': display, 'QT_QPA_PLATFORM': 'xcb'},
-                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-        except OSError as error: return {'error': f'Einfügen geht nicht: {error}'}
-    time.sleep(0.8)  # the helpers need a moment to own the clipboard
+    try: subprocess.Popen(['python3', '-c', CLIP, text], env={**os.environ, 'DISPLAY': ':0', 'QT_QPA_PLATFORM': 'xcb'},
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError as error: return {'error': f'Einfügen geht nicht: {error}'}
+    time.sleep(0.6)
     return KEYBOARD.press(47, ['ctrl'])
 TERMINALS = [('konsole', ('--hide-menubar', '--hide-tabbar', '-p', 'Font=Monospace,17')), ('foot', ()), ('xterm', ('-fa', 'monospace', '-fs', '16'))]
 
@@ -1478,6 +2285,23 @@ def thor_change(tandem, data):
     return result
 
 
+def bluetooth_post(tandem, data):
+    """Scan, power, or pair/connect/disconnect/forget one device; a device action runs in the background (pairing takes
+    up to a minute) and ends with a toast on both screens."""
+    try:
+        if data.get('scan'): return bluetooth.scan()
+        if 'power' in data: return bluetooth.power(bool(data['power']))
+    except Exception: return {'error': 'Bluetooth antwortet nicht.'}
+    addr, what = str(data.get('addr', '')), str(data.get('do', ''))
+    if not re.fullmatch(r'[0-9A-F]{2}(:[0-9A-F]{2}){5}', addr) or what not in ('pair', 'connect', 'disconnect', 'forget'): return {'error': 'unbekannt'}
+    def work():
+        try: r = bluetooth.act(addr, what)
+        except Exception: r = {'error': 'Bluetooth antwortet nicht.'}
+        tandem.publish('toast', {'text': r.get('error') or r.get('text', '')})
+    threading.Thread(target=work, daemon=True).start()
+    return {'ok': True}
+
+
 def controls_info():
     """The one button layout for everything under Tandem (controls.py) and where an emulator still differs."""
     try: import controls
@@ -1519,7 +2343,7 @@ def handler(tandem):
             if re.fullmatch(r'/deck/\d+\.html', path):  # a game's own page for the bottom screen
                 file = HERE / 'decks' / path[6:]
                 return self.send(200, file.read_bytes(), 'text/html; charset=utf-8') if file.is_file() else self.send(404, {'error': 'kein Begleiter'})
-            if path == '/api/state': return self.send(200, {**tandem.snapshot(), 'battery': battery(), 'wifi': wifi_link(), 'settings': settings(), 'config': public_config(), 'pair': pair_info()})
+            if path == '/api/state': return self.send(200, {**tandem.snapshot(), 'battery': battery(), 'wifi': wifi_link(), 'settings': settings(), 'muted': MUTED['on'], 'config': public_config(), 'pair': pair_info()})
             if path.startswith('/media/'):
                 file = tandem.library.media.get(path[7:])  # only files the scan indexed, never a path from the request
                 if file and os.path.isfile(file): return self.send(200, Path(file).read_bytes(), IMAGES[Path(file).suffix.lower()], 'max-age=86400')
@@ -1530,6 +2354,8 @@ def handler(tandem):
             if path == '/api/record': return self.send(200, record(tandem, 'status'))
             if path == '/api/framegen': return self.send(200, frame_gen())
             if path == '/api/controls': return self.send(200, controls_info())
+            if path == '/api/bluetooth': return self.send(200, bluetooth.state())
+            if path == '/api/saves': return self.send(200, saves.status())
             if path == '/api/achievements':
                 run = tandem.run and tandem.library.games.get(tandem.run['id'])
                 return self.send(200, achievements(run) if run else {'note': 'Es läuft kein Spiel.'})
@@ -1561,8 +2387,11 @@ def handler(tandem):
             if path == '/api/ui':
                 system = data.get('sys')
                 page = data.get('page')  # the settings: which page and whether the focus is on its list (0) or on the page (1)
+                q = data.get('q').strip()[:60] if isinstance(data.get('q'), str) else ''
                 tandem.ui = {'tab': int(data.get('tab', 0)), 'sys': system if isinstance(system, str) and system in SYSTEMS else None, 'i': int(data.get('i', 0)),
-                             'page': page if isinstance(page, str) and re.fullmatch(r'[a-z>]{0,30}', page) else '', 'pane': 1 if data.get('pane') == 1 else 0}
+                             'page': page if isinstance(page, str) and re.fullmatch(r'[a-z>]{0,30}', page) else '', 'pane': 1 if data.get('pane') == 1 else 0,
+                             'dev': data['dev'] if isinstance(data.get('dev'), str) and re.fullmatch(r'[0-9A-F]{2}(:[0-9A-F]{2}){5}', data['dev']) else '',
+                             **({'q': q} if q else {})}  # the Bluetooth device a settings page shows; q = library search
                 tandem.publish('state', {**tandem.snapshot(), 'from': data.get('from')})  # the sender skips its own echo
                 return self.send(200, {'ok': True})
             if path == '/api/launch':
@@ -1571,18 +2400,37 @@ def handler(tandem):
                 elif not result['tracked']: tandem.publish('toast', {'text': result.get('text') or 'Gestartet – zurück geht es über die Home-Taste.'})
                 return self.send(200, result)
             if path == '/api/confirm':  # pass a question on to the other screen's page
-                tandem.publish('confirm', {'open': bool(data.get('open')), 'then': data.get('then'), 'action': data.get('action') if data.get('action') in ACTIONS else None, 'from': data.get('from')})
+                act = data.get('action')
+                tandem.publish('confirm', {'open': bool(data.get('open')), 'then': data.get('then'), 'action': act if act in (*ACTIONS, 'sleep') else None, 'from': data.get('from')})
                 return self.send(200, {'ok': True})
+            if path == '/api/prompt':  # bottom screen's text prompt is open/closed: keep controller navigation off the library
+                tandem.prompt_open = bool(data.get('open'))
+                tandem.publish('prompt', {'open': tandem.prompt_open, 'from': data.get('from')})
+                return self.send(200, {'ok': True})
+            if path == '/api/ytlogin':
+                act = data.get('a') if data.get('a') in ('qr', 'qr_new', 'start', 'open', 'done', 'cancel', 'logout') else 'done'
+                return self.send(200, yt_login(tandem, act))
             if path == '/api/quit': return self.send(200, tandem.quit())
             if path == '/api/pause': return self.send(200, tandem.pause())
             if path == '/api/record': return self.send(200, record(tandem, data.get('action')))
             if path == '/api/shot': return self.send(200, screenshot())
             if path == '/api/framegen': return self.send(200, frame_gen(bool(data.get('on'))))
+            if path == '/api/mute':
+                mode = data.get('on') if isinstance(data.get('on'), bool) else 'toggle'
+                result = mute(mode)
+                tandem.publish('mute', {'muted': result['muted']})
+                return self.send(200, result)
+            if path == '/api/gameopt': return self.send(200, tandem.gameopt(data))
             if path == '/api/resume': return self.send(200, tandem.resume())
             if path == '/api/set':
                 result = change(str(data.get('key', '')), data.get('value', 0) if isinstance(data.get('value', 0), (int, float)) else 0)
-                if 'error' not in result: tandem.publish('settings', {'settings': result, 'from': data.get('from')})
+                if 'error' not in result:
+                    if str(data.get('key', '')) == 'vol' and MUTED['on']:
+                        MUTED['on'] = False
+                        tandem.publish('mute', {'muted': False})
+                    tandem.publish('settings', {'settings': result, 'from': data.get('from')})
                 return self.send(200, result)
+            if path == '/api/bluetooth': return self.send(200, bluetooth_post(tandem, data))
             if path == '/api/wifi': return self.send(200, wifi_connect(str(data.get('ssid', '')), str(data.get('password', ''))))
             if path == '/api/update':
                 def work(key=str(data.get('id', ''))):
@@ -1593,9 +2441,20 @@ def handler(tandem):
             if path == '/api/quick':  # the Thor key's menu, for scripted takes (the daemon reads only the Thor's own keys)
                 tandem.publish('quick', {}); return self.send(200, {'ok': True})
             if path == '/api/key':
+                is_wine = bool((tandem.run or {}).get('keys') and not (tandem.run or {}).get('login'))
+                if isinstance(data.get('seq'), str) and data['seq']:
+                    if data['seq'] == '@' and is_wine:
+                        return self.send(200, paste('@'))
+                    if not tandem.dry and x_type_seq(data['seq']):
+                        return self.send(200, {'ok': True})
+                    layout = (tandem.run or {}).get('layout') or region_layout()
+                    return self.send(200, KEYBOARD.type_text(data['seq'], layout))
                 code = data.get('code')
                 mods, text = [m for m in data.get('mods', []) if isinstance(m, str)], data.get('text')
-                if 'altgr' in mods and isinstance(text, str) and len(text) == 1 and (tandem.run or {}).get('keys'): return self.send(200, paste(text))
+                if 'altgr' in mods and isinstance(text, str) and len(text) == 1 and is_wine:
+                    return self.send(200, paste(text))
+                if not tandem.dry and not ({'ctrl', 'alt'} & set(mods)) and isinstance(text, str) and len(text) == 1 and text != ' ' and x_type_char(text):
+                    return self.send(200, {'ok': True})
                 return self.send(200, KEYBOARD.press(code if isinstance(code, int) else 0, mods))
             if path == '/api/layout':  # switch the on-screen keyboard's layout while the terminal is open
                 result = save_config({'kb_layout': data.get('layout')})
@@ -1610,10 +2469,11 @@ def handler(tandem):
                 return self.send(200, result)
             if path == '/api/thor': return self.send(200, thor_change(tandem, data))
             if path == '/api/controls': return self.send(200, controls_apply())
+            if path == '/api/saves': return self.send(200, trigger_saves_backup(tandem, quiet=False))
             if path == '/api/selfupdate': return self.send(200, self_update(bool(data.get('apply'))))
             if path == '/api/wide': return self.send(200, tandem.wide(str(data.get('on', ''))))
             if path == '/api/retroarch': return self.send(200, retroarch(str(data.get('name', ''))))
-            if path == '/api/action': return self.send(200, action(str(data.get('name', ''))))
+            if path == '/api/action': return self.send(200, tandem.act(str(data.get('name', ''))))
             if path == '/api/setup': return self.send(200, setup_command(tandem, data))
             if path == '/api/fav': return self.send(200, tandem.favourite(str(data.get('id', ''))))
             if path == '/api/rescan':
@@ -1701,13 +2561,13 @@ def pair_handler(tandem):
                 if not self.allowed(): return self.reply(401, {'error': 'nicht angemeldet'}, 'application/json')
                 run = tandem.run and tandem.library.games.get(tandem.run['id'])
                 return self.reply(200, {'settings': settings(), 'config': public_config(), 'layout': region_layout(), 'battery': battery(), 'thor': thor.state(), 'controls': controls_info(),
-                                        'system': system_info(tandem.library.roots), 'games': len(tandem.library.games),
-                                        'run': (run or {}).get('name') or (tandem.run or {}).get('id')}, 'application/json')
+                                        'system': system_info(tandem.library.roots), 'games': len(tandem.library.games), 'saves': saves.status(),
+                                        'run': (tandem.run or {}).get('t') or (run or {}).get('t') or (tandem.run or {}).get('id')}, 'application/json')
             self.reply(200, (REMOTE_PAGE if self.allowed() else PAIR_PAGE.replace('__MSG__', '')).replace('__LANG__', public_config()['lang']))
 
         def do_POST(self):
             import hmac, secrets, urllib.parse
-            raw = self.rfile.read(min(int(self.headers.get('Content-Length') or 0), 4096))
+            raw = self.rfile.read(min(int(self.headers.get('Content-Length') or 0), 262144))
             path = urlparse(self.path).path
             if not path.startswith('/api/'):  # the PIN form
                 form = {k: v[0] for k, v in urllib.parse.parse_qs(raw.decode(errors='replace')).items()}
@@ -1725,14 +2585,21 @@ def pair_handler(tandem):
             except ValueError: return self.reply(400, {'error': 'kein JSON'}, 'application/json')
             what = path[5:]
             if what == 'config':
-                # the Battle.net password only over an encrypted way (the owner's https proxy); plain http in the Wi-Fi could be read along
-                if data.get('bnet_password') and self.headers.get('X-Forwarded-Proto') != 'https':
-                    return self.reply(403, {'error': 'Das Passwort nur über die https-Adresse eintragen.'}, 'application/json')
+                # Secrets and session cookies only over an encrypted way (TLS or the owner's https proxy); plain http in Wi-Fi could be read along
+                if (data.get('bnet_password') or data.get('yt_cookies')) and not (PAIR['tls'] or self.headers.get('X-Forwarded-Proto') == 'https'):
+                    return self.reply(403, {'error': 'Zugangsdaten und Cookies nur über die https-Adresse übertragen.'}, 'application/json')
                 result = save_config(data); tandem.publish('config', {'config': public_config()})
+            elif what == 'ytlogin':
+                act = data.get('a') if data.get('a') in ('qr', 'qr_new', 'open', 'done', 'cancel', 'logout') else 'qr'
+                result = yt_login(tandem, act)
             elif what == 'layout': result = save_config({'kb_layout': data.get('layout')})
             elif what == 'set':
                 result = change(str(data.get('key', '')), data.get('value', 0) if isinstance(data.get('value', 0), (int, float)) else 0)
-                if 'error' not in result: tandem.publish('settings', {'settings': result})
+                if 'error' not in result:
+                    if str(data.get('key', '')) == 'vol' and MUTED['on']:
+                        MUTED['on'] = False
+                        tandem.publish('mute', {'muted': False})
+                    tandem.publish('settings', {'settings': result})
             elif what == 'wifi': result = wifi_connect(str(data.get('ssid', '')), str(data.get('password', '')))
             elif what == 'rescan':
                 tandem.library.scan()
@@ -1743,12 +2610,15 @@ def pair_handler(tandem):
             elif what == 'quit': result = tandem.quit()
             elif what == 'thor': result = thor_change(tandem, data)
             elif what == 'controls': result = controls_apply()
+            elif what == 'saves':
+                result = saves.backup(load_config().get('save_target', saves.DEFAULT_TARGET))
+                tandem.publish('saves', {'saves': saves.status()})
             elif what == 'selfupdate': result = self_update(bool(data.get('apply')))
             elif what in ('logout', 'logout-all'):
                 mine = token_hash(re.search(r'tandem=([0-9a-f]{32})', self.headers.get('Cookie') or '')[1])
                 save_devices([h for h in devices() if h != mine] if what == 'logout' else [])
                 return self.reply(200, {'text': 'Abgemeldet.'}, 'application/json', (self.cookie('', 0),))
-            elif what == 'action' and data.get('name') in ('suspend', 'sleep', 'wake', 'reboot', 'poweroff'): result = action(data['name'])
+            elif what == 'action' and data.get('name') in ('suspend', 'sleep', 'wake', 'reboot', 'poweroff'): result = tandem.act(data['name'])
             else: return self.reply(404, {'error': 'unbekannt'}, 'application/json')
             self.reply(200, result, 'application/json')
     return Pair
@@ -1756,8 +2626,83 @@ def pair_handler(tandem):
 
 # Controller buttons as they arrive (evdev codes of the emulated "Microsoft X-Box 360 pad"; the Thor prints them
 # Nintendo-style): A ok (right, BTN_EAST), B back (bottom, BTN_SOUTH), X close (top: 308, the Thor's InputPlumber map swaps
-# top and left like a real Xbox pad, see controls.py), Y favourite (left: 307), LB/RB previous/next tab.
-PAD_KEYS = {305: 'ok', 304: 'back', 308: 'close', 307: 'fav', 310: 'prev', 311: 'next'}
+# top and left like a real Xbox pad, see controls.py), Y favourite (left: 307), LB/RB previous/next tab, Select (314) search.
+PAD_KEYS = {305: 'ok', 304: 'back', 308: 'close', 307: 'fav', 310: 'prev', 311: 'next', 314: 'search'}
+
+
+class PowerKey:
+    """Short press on KEY_POWER (116) toggles standby; holding >= 0.8 s opens the power menu; closing the lid (EV_SW=5,
+    SW_LID=0) enters standby and opening wakes doze. A short guard window after sleep/wake prevents wake-press bounce."""
+    HOLD = 0.8
+
+    def __init__(self, lid_closed=False):
+        self.down_at, self.long_fired, self.lid_closed, self.guard_until = 0.0, False, bool(lid_closed), 0.0
+
+    def event(self, kind, code, value, now, dozing, lid_sleep=True):
+        if kind == 5 and code == 0:  # SW_LID: 1 = closed, 0 = open
+            if value == 1:
+                self.lid_closed, self.down_at, self.long_fired = True, 0.0, False
+                if lid_sleep and not dozing:
+                    self.guard_until = now + 0.6
+                    return 'standby'
+            elif value == 0:
+                was, self.lid_closed = self.lid_closed, False
+                if was and dozing:
+                    self.guard_until = now + 0.6
+                    return 'wake'
+            return None
+        if kind != 1 or code != 116: return None
+        if self.lid_closed or now < self.guard_until:
+            if value == 0: self.down_at, self.long_fired = 0.0, False
+            return None
+        if dozing:
+            if value == 1:
+                self.down_at, self.long_fired, self.guard_until = 0.0, True, now + 0.5
+                return 'wake'
+            return None
+        if value == 1:
+            self.down_at, self.long_fired = now, False
+            return None
+        if value == 0:
+            held, fired = (now - self.down_at) if self.down_at else 0.0, self.long_fired
+            self.down_at, self.long_fired = 0.0, False
+            if fired or held <= 0: return None
+            if held >= self.HOLD: return 'power'
+            self.guard_until = now + 0.6
+            return 'standby'
+        return None
+
+    def tick(self, now, dozing):
+        if self.down_at and not self.long_fired and not dozing and not self.lid_closed and now - self.down_at >= self.HOLD:
+            self.long_fired = True
+            return 'power'
+        return None
+
+    def resumed(self, now):
+        self.down_at, self.long_fired, self.guard_until = 0.0, False, now + 1.2
+        return 'wake'
+
+
+class VolRepeat:
+    """Repeats Volume Down (114, pmic_resin) and Volume Up (115, gpio-keys) while held; neither kernel node sets EV_REP."""
+    FIRST, REPEAT = 0.35, 0.09
+
+    def __init__(self): self.code, self.due = 0, 0.0
+
+    def event(self, kind, code, value, now):
+        if kind != 1 or code not in (114, 115): return 0
+        if value == 1:
+            self.code, self.due = code, now + self.FIRST
+            return 5 if code == 115 else -5
+        if value == 0 and self.code == code: self.code, self.due = 0, 0.0
+        return 0
+
+    def tick(self, now):
+        if not self.code or now < self.due: return 0
+        self.due = now + self.REPEAT
+        return 5 if self.code == 115 else -5
+
+    def clear(self): self.code, self.due = 0, 0.0
 
 
 class PadNav:
@@ -1785,24 +2730,37 @@ class PadNav:
 
 
 def watch_buttons(tandem):
-    """Volume keys, the Thor's Back and Home buttons and the controller's navigation. Steam used to handle them; here the
-    service does, at all times. Where they arrive was measured on the device: volume up on 'gpio-keys', volume down on
-    'pmic_resin', Back as F14 on InputPlumber's keyboard (through buttons-profile.yaml), Home as the Guide button of the
-    emulated controller. Navigation goes out as 'key' events while no game has the controller."""
+    """Power key, lid switch, volume keys, the Thor's Back and Home buttons and the controller's navigation. Steam used to
+    handle them; here the service does, at all times. Where they arrive was measured on the device: power on 'pmic_pwrkey',
+    lid on 'gpio-keys-lid', volume up on 'gpio-keys', volume down on 'pmic_resin', Back as F14 on InputPlumber's keyboard
+    (through buttons-profile.yaml), Home as the Guide button of the emulated controller."""
     import fcntl, select, struct
     # Steam's own virtual pads ("… pad 0", vendor 28de) repeat the real one: listening to both would count twice.
-    wanted = lambda name: name in ('InputPlumber Keyboard', 'gpio-keys', 'pmic_resin') or (('X-Box' in name or 'Xbox' in name or 'DualSense' in name) and not re.search(r' \d+$', name))
+    wanted = lambda name: name in ('InputPlumber Keyboard', 'gpio-keys', 'gpio-keys-lid', 'pmic_resin', 'pmic_pwrkey') or (('X-Box' in name or 'Xbox' in name or 'DualSense' in name) and not re.search(r' \d+$', name))
     fds, nodes, scanned = {}, {}, 0  # fd -> PadNav (None for key devices), node -> fd
     size = struct.calcsize('llHHi')
-    free = lambda: not tandem.run or tandem.run.get('paused') or (tandem.run.get('port') or {}).get('pad')  # a media app's deck takes the pad
+    free = lambda: (tandem.power_open or tandem.prompt_open or not tandem.run or tandem.run.get('paused')
+                    or tandem.run.get('keys') or tandem.run.get('s') == 'term' or (tandem.run.get('port') or {}).get('pad'))
     nav = lambda actions: [tandem.publish('key', {'a': a}) for a in actions if free()]
-    slept = lambda: time.clock_gettime(time.CLOCK_BOOTTIME) - time.monotonic()  # grows by every suspend
-    asleep = slept()
+    slept = lambda: time.clock_gettime(time.CLOCK_BOOTTIME) - time.monotonic()  # grows by real kernel suspend
+    asleep, fake_asleep, pwr, vol_rep = slept(), FAKE_SUSPEND_FLAG.exists(), PowerKey(), VolRepeat()
+    run_pwr = lambda act: tandem.act('suspend') if act == 'standby' else doze(False, tandem) if act == 'wake' else tandem.act('power_menu') if act == 'power' else None
+    def step_vol(delta):
+        if not delta: return
+        vol = settings().get('vol')
+        if vol is None: return
+        if delta > 0 and MUTED['on']:
+            MUTED['on'] = False
+            tandem.publish('mute', {'muted': False})
+        tandem.publish('settings', {'settings': change('vol', vol + delta), 'osd': 'vol'})
     while True:
         now = time.time()
-        if slept() - asleep > 1:  # back from a real suspend (the power key during a doze): panels on again
+        fake_now = FAKE_SUSPEND_FLAG.exists()
+        if slept() - asleep > 1 or (fake_asleep and not fake_now):  # back from kernel suspend or Armada's fake-suspend
             asleep = slept()
-            if DOZE: doze(False)
+            pwr.resumed(now); vol_rep.clear()
+            doze(False, tandem)
+        fake_asleep = fake_now
         if now - scanned > 2:  # controllers come and go (InputPlumber sets its pad up after the service has started)
             scanned = now
             try: blocks = Path('/proc/bus/input/devices').read_text().split('\n\n')
@@ -1812,13 +2770,18 @@ def watch_buttons(tandem):
                 if not (name and node and wanted(name[1])) or node[1] in nodes: continue
                 try: fd = os.open('/dev/input/' + node[1], os.O_RDONLY | os.O_NONBLOCK)
                 except OSError: continue  # a new device is not readable in its first moment: the next scan gets it
+                if name[1] == 'gpio-keys-lid':
+                    try: pwr.lid_closed = bool(fcntl.ioctl(fd, 0x8008451b, bytes(8))[0] & 1)  # EVIOCGSW(8): bit 0 = SW_LID
+                    except OSError: pass
                 span = None
                 if 'pad' in name[1].lower() or 'DualSense' in name[1]:
                     try: span = struct.unpack('6i', fcntl.ioctl(fd, 0x80184540, bytes(24)))[2]  # EVIOCGABS(ABS_X): maximum
                     except OSError: span = 32767
                 nodes[node[1]], fds[fd] = fd, PadNav(span) if span is not None else None
         pads = [p for p in fds.values() if p]
-        wait = min([max(0.01, p.due - now) for p in pads if p.dir] + [2])
+        pwr_wait = [max(0.01, pwr.down_at + pwr.HOLD - now)] if pwr.down_at and not pwr.long_fired else []
+        vol_wait = [max(0.01, vol_rep.due - now)] if vol_rep.code else []
+        wait = min([max(0.01, p.due - now) for p in pads if p.dir] + pwr_wait + vol_wait + [0.5 if fake_asleep else 2])
         for fd in select.select(list(fds), [], [], wait)[0]:
             try: data = os.read(fd, size * 32)
             except BlockingIOError: continue
@@ -1826,24 +2789,39 @@ def watch_buttons(tandem):
                 os.close(fd); del fds[fd]; nodes = {n: f for n, f in nodes.items() if f != fd}; continue
             for start in range(0, len(data) - size + 1, size):
                 _, _, kind, code, value = struct.unpack('llHHi', data[start:start + size])
-                if DOZE and kind == 1 and value == 1: doze(False); continue  # any button ends the doze and does nothing else
-                if fds[fd]: nav(fds[fd].event(kind, code, value, time.time()))
+                t_ev = time.time()
+                if (kind == 5 and code == 0) or (kind == 1 and code == 116):
+                    vol_rep.clear()
+                    run_pwr(pwr.event(kind, code, value, t_ev, bool(DOZE), load_config().get('lid_sleep', True)))
+                    continue
+                if pwr.lid_closed:
+                    vol_rep.clear(); continue  # nothing wakes or navigates while the clamshell is shut
+                if DOZE:
+                    vol_rep.clear()
+                    if kind == 1 and value == 1 and t_ev >= pwr.guard_until:
+                        pwr.guard_until = t_ev + 0.4
+                        doze(False, tandem)
+                    continue  # any button ends the doze and does nothing else
+                if fds[fd]: nav(fds[fd].event(kind, code, value, t_ev))
+                if kind == 1 and code in (114, 115):
+                    step_vol(vol_rep.event(kind, code, value, t_ev))
+                    continue
                 if kind != 1 or value == 0: continue
-                if code in (114, 115):  # volume down / up, repeats while held
-                    vol = settings().get('vol')
-                    if vol is not None:
-                        tandem.publish('settings', {'settings': change('vol', vol + (5 if code == 115 else -5)), 'osd': 'vol'})
-                elif value == 1 and code == 184:  # Back
+                if value == 1 and code == 184:  # Back
                     if free(): tandem.publish('key', {'a': 'back'})
                 elif value == 1 and code == 185:  # the Thor key: its quick menu on the bottom screen (Zu Tandem is in there)
                     tandem.publish('quick', {})
                 elif value == 1 and code == 316:  # Home (a pad's guide button): freeze the game and show Tandem; again: back into the game
-                    if tandem.run and tandem.run.get('paused'): tandem.resume()
+                    if tandem.power_open: tandem.act('power_close')
+                    elif tandem.run and tandem.run.get('paused'): tandem.resume()
                     elif tandem.run:
                         result = tandem.pause()
                         if 'error' in result: tandem.publish('toast', {'text': result['error']})
                     else: tandem.publish('key', {'a': 'home'})
-        for pad in pads: nav(pad.tick(time.time()))
+        now = time.time()
+        run_pwr(pwr.tick(now, bool(DOZE)))
+        step_vol(vol_rep.tick(now))
+        for pad in pads: nav(pad.tick(now))
 
 
 def rom_roots(extra):
@@ -1863,6 +2841,7 @@ def main():
     library = Library(rom_roots(args.roms + os.environ.get('TANDEM_ROMS', '').split(os.pathsep)), Path(args.steam))
     library.scan()
     tandem = Tandem(library, args.dry_run)
+    if DOZE and not args.dry_run: doze(False, tandem)  # restarted during a doze: bring the panels back right away
     server = ThreadingHTTPServer(('127.0.0.1', args.port), handler(tandem))
     server.daemon_threads = True
     threading.Thread(target=watch_buttons, args=(tandem,), daemon=True).start()
@@ -1875,6 +2854,8 @@ def main():
     threading.Thread(target=look_for_update, daemon=True).start()
     profile = load_config().get('perf_profile')  # armada-powerd forgets it over a restart
     if profile and not args.dry_run: threading.Thread(target=thor.change, args=('profile', profile), daemon=True).start()
+    night = load_config().get('night_mode', 'off')
+    if night in ('warm', 'night') and not args.dry_run: threading.Thread(target=apply_night_mode, args=(night,), daemon=True).start()
     if not args.dry_run: threading.Thread(target=hide_steam, args=(tandem,), daemon=True).start()
     new_pin()
     if not args.dry_run: kill_stale()

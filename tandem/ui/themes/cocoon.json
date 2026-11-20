@@ -1,0 +1,9 @@
+{
+  "name": "Cocoon",
+  "colors": {"bg": "#050608", "panel": "#12141a", "raised": "#1b1e27", "line": "#282c38", "text": "#f5f6fa", "muted": "#9ea3b2", "accent": "#00b4d8", "live": "#2dd4bf", "warn": "#ff6b6b"},
+  "gradient": ["#008bb5", "#00b496"],
+  "fonts": {"ui": ["Inter", "Adwaita Sans", "Noto Sans"], "display": ["Inter", "Adwaita Sans", "Noto Sans"], "body": ["Inter", "Adwaita Sans", "Noto Sans"]},
+  "radius": 1.15,
+  "glow": 0.9,
+  "gameAccent": true
+}

@@ -854,6 +854,58 @@ class Views(unittest.TestCase):
         bottom.on_event({'kind': 'quick'}); bottom.on_event({'kind': 'quick'})
         self.assertIsNone(bottom.QUICK)
 
+    def test_power_menu_search_and_doze_guard(self):
+        top, bottom = self.top, self.bottom
+        # doze guard: dark screens register zero touch targets
+        for win in (top, bottom): win.on_event({'kind': 'state', 'run': None, 'ui': dict(win.S), 'doze': True, 'power': False})
+        self.paint('doze')
+        self.assertEqual((top.hits, bottom.hits), ([], []))
+        for win in (top, bottom): win.on_event({'kind': 'state', 'run': None, 'ui': dict(win.S), 'doze': False, 'power': True})
+        self.paint('power')
+        self.assertIn('pwr:Standby', [h[3] for h in bottom.hits])
+        self.tap('pwr:Neu starten')
+        self.wait(lambda: top.CONFIRM and bottom.CONFIRM)
+        self.tap('Abbrechen')
+        self.wait(lambda: not top.CONFIRM and not bottom.CONFIRM)
+        # global library search across systems
+        bottom.open_tab(1)
+        self.paint('pre-search')
+        self.tap('Suche')
+        self.assertIsNotNone(bottom.PROMPT)
+        bottom.PROMPT['value'] = 'Minish'
+        self.tap('Fertig')
+        self.wait(lambda: top.S.get('q') == 'Minish' and len(top.items()) == 1)
+        self.assertEqual(top.items()[0]['t'], 'The Legend of Zelda - The Minish Cap')
+        top.go('back')
+        self.wait(lambda: not bottom.S.get('q'))
+
+    def test_zy_gallery_deck(self):  # after test_walk_through so drop_deck() does not unload ffix.Deck.ADDR
+        from decks import gallery
+        bottom = self.bottom
+        gal_dir = base.TMP / 'gal'
+        gal_dir.mkdir(exist_ok=True)
+        for side in ('oben', 'unten'):
+            (gal_dir / f'20261119-164500-{side}.png').write_bytes(FakeGame.png)
+        items = gallery.scan_items([gal_dir])
+        self.assertEqual(len(items), 1)
+        self.assertTrue(items[0]['oben'] and items[0]['unten'])
+        bottom.RUN = {'id': 'app9', 't': 'Aufnahmen', 's': 'app', 'emu': 'Aufnahmen', 'since': time.time(),
+                      'port': {'deck': 'gallery', 'socket': str(base.TMP / 'no-mpv.sock'), 'pad': True}}
+        bottom.deck = gallery.Deck(bottom, str(base.TMP / 'no-mpv.sock'), [gal_dir])
+        self.paint('gallery')
+        self.assertIn('Bild: Oben', [h[3] for h in bottom.hits])
+        self.tap('Bild: Oben')
+        self.paint('gallery-bot')
+        self.assertIn('Bild: Unten', [h[3] for h in bottom.hits])
+        self.tap('Löschen')  # first tap only arms
+        self.paint('gallery-armed')
+        self.assertTrue((gal_dir / '20261119-164500-oben.png').exists())
+        self.tap('Nochmal tippen')  # second tap deletes both screens' captures
+        self.assertFalse((gal_dir / '20261119-164500-oben.png').exists())
+        self.assertFalse((gal_dir / '20261119-164500-unten.png').exists())
+        bottom.drop_deck()
+        bottom.RUN = None
+
     def test_walk_through(self):
         top, bottom = self.top, self.bottom
         self.paint('systems')  # nothing played yet: the service opens on the systems
@@ -1172,6 +1224,11 @@ class Views(unittest.TestCase):
         self.tap(other['name']); self.wait(lambda: tandem.public_config()['theme'] == other['id'] == ui.THEME['id'])
         self.paint('settings-theme')
         self.tap('Toravo'); self.wait(lambda: tandem.public_config()['theme'] == 'toravo' == ui.THEME['id'])
+        self.tap('Ansicht:Bühne'); self.wait(lambda: tandem.public_config()['view_mode'] == 'stage' == bottom.CFG.get('view_mode'))
+        bottom.open_tab(0); self.wait(lambda: top.S['tab'] == 0)
+        self.paint('stage')
+        self.tap('Kacheln'); self.wait(lambda: tandem.public_config()['view_mode'] == 'grid' == bottom.CFG.get('view_mode'))
+        bottom.open_tab(4); self.wait(lambda: top.S['tab'] == 4)
         self.tap('Konten'); self.tap('Benutzername'); self.assertTrue(bottom.PROMPT)  # text: the keys on the bottom screen
         for key in ('⇧', 'A', 'b', 'c', '⌫'): self.tap(key)
         self.assertEqual(bottom.PROMPT['value'], 'Ab')

@@ -9,7 +9,14 @@ Install on the device (desktop mode › console, or over SSH):
 
 The interface speaks English or German (Settings › Look › Language; the installer follows your system language).
 
-New in 0.2.0:
+New in 0.3.0:
+- Native YouTube and Plex dual-screen apps (`mpv` on top, touch/controller deck below) with QR-code phone sign-in (subscriptions, playlists, liked videos) and Wi-Fi offline downloads onto the SD card.
+- Tactile 3D on-screen keyboard with AYN Thor LRA haptic click feedback, floating key magnifier, slide-to-correct, backspace hold-to-repeat, dedicated `@` key and reliable X11 `AltGr` character injection.
+- Stage carousel view and Cocoon platform frames alongside the 5-column grid, plus night mode (warm / night blue-light filter).
+- Per-game overrides in the quick menu (power mode, FPS cap, scaling filter), volume hold-to-repeat & mute, Captures gallery for screenshots and dual-screen recordings, Bluetooth audio & gamepad pairing, lid-close / charger-aware standby, and rolling SD + optional SSH savegame backups.
+- BananaNative integration (smooth Vulkan/Vsync pacing, automatic bottom-screen recovery, save backups).
+
+Earlier in 0.2.0:
 - English interface.
 - Quick menu on the Thor key, on the bottom screen: brightness of both screens, volume, power mode, stick lights, frame
   generation, recording, screenshot, back to Tandem, quit game.

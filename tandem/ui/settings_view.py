@@ -22,7 +22,8 @@ CATS = [  # id, title, icon, icon colour, what the top screen says while the lis
     ('perf', 'Leistung & Akku', 'bolt', '#30d158', 'Leistungsprofil, Akku, Temperatur und Lüfter.'),
     None,
     ('network', 'WLAN & Netzwerk', 'wifi', '#0a84ff', 'WLAN wählen und die Einstellungsseite für Handy und PC.'),
-    ('accounts', 'Konten', 'person', '#ff9f0a', 'RetroAchievements für Erfolge in allen Emulatoren. Steam und Plex folgen.'),
+    ('bluetooth', 'Bluetooth', 'bt', '#0a84ff', 'Bluetooth-Kopfhörer und ein zweites Gamepad für Spieler 2 koppeln und verbinden.'),
+    ('accounts', 'Konten', 'person', '#ff9f0a', 'RetroAchievements für Erfolge, YouTube, Plex und Battle.net verwalten.'),
     None,
     ('look', 'Aussehen', 'look', '#ff375f', 'Farben, Stil und Sprache der Oberfläche.'),
     ('library', 'Bibliothek', 'stack', '#64d2ff', 'Spiele, Spieleordner, Speicherplatz und Cover.'),
@@ -32,7 +33,7 @@ CATS = [  # id, title, icon, icon colour, what the top screen says while the lis
     ('onoff', 'Ein / Aus', 'off', '#ff453a', 'Standby, Neustart, Ausschalten und der Desktop.'),
 ]
 AREAS = [c for c in CATS if c]
-TITLES = {c[0]: c[1] for c in AREAS} | {'controls>map': 'Tastenbelegung', 'network>wifi': 'WLAN'}
+TITLES = {c[0]: c[1] for c in AREAS} | {'controls>map': 'Tastenbelegung', 'network>wifi': 'WLAN', 'bluetooth>dev': 'Gerät'}
 ICONS = {
     'screens': '<rect x="5" y="3" width="14" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="5" y="13" width="14" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/>',
     'light': '<circle cx="12" cy="12" r="4.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 2.5v2.6M12 18.9v2.6M2.5 12h2.6M18.9 12h2.6M5.3 5.3l1.8 1.8M16.9 16.9l1.8 1.8M5.3 18.7l1.8-1.8M16.9 7.1l1.8-1.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
@@ -42,8 +43,15 @@ ICONS = {
     'look': '<circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor"/>',
     'stack': '<rect x="4" y="9" width="16" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M6.5 6h11M9 3h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
     'info': '<circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 11v6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="7.6" r="1.3" fill="currentColor"/>',
+    'bt': '<path d="M7 7.5l10 9-5 4.5V3l5 4.5-10 9" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>',
+    'audio': '<path d="M4.5 14v-2a7.5 7.5 0 0 1 15 0v2" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="3.5" y="13.5" width="4.5" height="6.5" rx="1.6" fill="currentColor"/><rect x="16" y="13.5" width="4.5" height="6.5" rx="1.6" fill="currentColor"/>',
+    'pad': '<path d="M6 8h12a4 4 0 0 1 4 4v1a3 3 0 0 1-5.5 1.7L15 13H9l-1.5 1.7A3 3 0 0 1 2 13v-1a4 4 0 0 1 4-4z" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M7 10v3M5.5 11.5h3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="16.5" cy="11" r="1" fill="currentColor"/><circle cx="18.5" cy="13" r="1" fill="currentColor"/>',
+    'input': '<rect x="3" y="7" width="18" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M6.5 10.5h1M10 10.5h1M13.5 10.5h1M17 10.5h.5M8 14h8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>',
+    'phone': '<rect x="7" y="3" width="10" height="18" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M11 18h2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
+    'other': '<circle cx="12" cy="12" r="7.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M9 9.5l6 5-3 2.5V7l3 2.5-6 5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>',
     'off': '<path d="M12 3.5v8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M7 6.5a7.5 7.5 0 1 0 10 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
 }
+KIND_NAMES = {'audio': 'Kopfhörer / Lautsprecher', 'pad': 'Gamepad', 'input': 'Tastatur / Maus', 'phone': 'Telefon', 'other': 'Gerät'}
 REST = [(0, 'Nie'), (1, '1 Min.'), (3, '3 Min.'), (10, '10 Min.')]
 COLORS = [('Weiß', 'FFFFFF'), ('Rot', 'FF2000'), ('Orange', 'FF7A00'), ('Gelb', 'FFD000'), ('Grün', '20E040'), ('Türkis', '00D0C0'),
           ('Blau', '1060FF'), ('Lila', '9040FF'), ('Pink', 'FF30A0')]  # the same as thor.COLORS
@@ -66,9 +74,31 @@ def need(win):
     if time.time() - win.thor_at > (5 if partial else REFRESH):
         win.thor_at = time.time()
         win.call('api/thor', then=lambda t: t and setattr(win, 'THOR', t))
+    if page_of(win).startswith('bluetooth'):
+        now = time.time()
+        if now - getattr(win, 'bt_at', 0) > (2 if (win.__dict__.get('BT') or {}).get('scanning') else 6):
+            win.bt_at = now
+            win.call('api/bluetooth', then=lambda b: b and (setattr(win, 'BT', b), win.update()))
+        if now - getattr(win, 'bt_scan', 0) > 120:  # opening the area looks for devices at once (both windows ask: one scan)
+            win.bt_scan = now
+            win.post('api/bluetooth', {'scan': True}, then=lambda r: setattr(win, 'bt_at', 0))
     if win.CTRL is None and page_of(win).startswith('controls'):
         win.CTRL = {}
         win.call('api/controls', then=lambda c: setattr(win, 'CTRL', c or {}))
+    if win.SAVES is None and page_of(win) == 'library':
+        win.SAVES = {}
+        win.call('api/saves', then=lambda s: setattr(win, 'SAVES', s or {}))
+    if page_of(win) == 'accounts' and win.__dict__.get('YT_QR'):
+        if win.CFG.get('yt_set'):
+            win.YT_QR = None
+        elif time.time() - getattr(win, 'yt_qr_at', 0) > 5:
+            win.yt_qr_at = time.time()
+            def _on_qr(r):
+                if not r: return
+                if r.get('signed_in'): win.YT_QR = None
+                elif r.get('code'): win.YT_QR = r
+                win.update()
+            win.post('api/ytlogin', {'a': 'qr'}, then=_on_qr)
 
 
 def thor_set(win, key, value):
@@ -120,9 +150,20 @@ def groups(win, page):
         sl = lambda key, label, help: {'k': 'slider', 't': label, 'val': SET.get(key), 'low': 0 if key == 'vol' else 5, 'key': key, 'help': help,
                                        'adj': lambda d: level(win, key, (SET.get(key) or 0) + 5 * d)}
         rows = [sl(k, l, h) for k, l, h in (('bt', 'Oben', 'Helligkeit des oberen Bildschirms.'), ('bb', 'Unten', 'Helligkeit des unteren Bildschirms.')) if SET.get(k) is not None]
+        rows.append(choice('Nachtmodus', [('off', 'Aus'), ('warm', 'Warm'), ('night', 'Nacht')], CFG.get('night_mode') or 'off',
+                           lambda v: config_set(win, night_mode=v),
+                           'Wärmeres Bild mit weniger Blaulicht auf beiden Bildschirmen – schont die Augen am Abend.'))
+        sound = ([sl('vol', 'Lautstärke', 'Lautstärke des Thor. Die Tasten an der Seite ändern sie in 5er-Schritten.')] if SET.get('vol') is not None else []) + \
+                [toggle('Ton stumm', getattr(win, 'MUTED', False), lambda v: win.toggle_mute(v), 'Schaltet Lautsprecher und Kopfhörer stumm.')]
         rest = CFG.get('rest_min', 3)
+        stby = [toggle('Beim Zuklappen in Standby', CFG.get('lid_sleep', True), lambda v: config_set(win, lid_sleep=v),
+                       'Schließt du den Thor, geht er von selbst in den Standby und wacht beim Aufklappen wieder auf.'),
+                choice('Am Ladegerät', [('doze', 'Erreichbar'), ('sleep', 'Tiefschlaf')], CFG.get('charger_standby', 'doze'),
+                       lambda v: config_set(win, charger_standby=v),
+                       'Erreichbar: Bildschirme, Ton und Lichter aus, Spiel pausiert, aber WLAN und Downloads laufen weiter. Tiefschlaf: legt das Gerät ganz schlafen.')]
         return [('Helligkeit', rows, None),
-                ('Ton', [sl('vol', 'Lautstärke', 'Lautstärke des Thor. Die Tasten an der Seite ändern sie in 5er-Schritten.')] if SET.get('vol') is not None else [], None),
+                ('Ton', sound, None),
+                ('Standby', stby, None),
                 ('Ruheschutz (OLED)', [choice('Schwarz nach', REST, rest, lambda v: config_set(win, rest_min=v),
                                              'Rührt niemand Tandem an, werden beide Bildschirme schwarz und zeigen nur eine wandernde Uhr. Das schont die OLED-Bildschirme. Jede Taste weckt sie.')],
                  'Während ein Spiel läuft, bleibt der Bildschirm an.')]
@@ -137,6 +178,8 @@ def groups(win, page):
         layout = 'us' if CFG.get('kb_layout') == 'us' else 'de'
         rows2.append(choice('Bildschirmtastatur', [('de', 'Deutsch'), ('us', 'Englisch')], layout, lambda v: config_set(win, kb_layout=v),
                             'Belegung der Tasten auf dem unteren Bildschirm, wenn etwas eingetippt wird.'))
+        rows2.append(toggle('Tastatur-Vibration', CFG.get('kb_haptics', True), lambda v: config_set(win, kb_haptics=v),
+                            'Kurzes haptisches Klicken beim Tippen auf der Bildschirmtastatur.'))
         return [(None, rows, 'Bestätigen ist immer A, zurück immer B – in Tandem, in jedem Emulator und in den Ports.'), ('Controller', rows2, None)]
     if page == 'controls>map':
         table = (win.CTRL or {}).get('table')
@@ -191,9 +234,66 @@ def groups(win, page):
                  'bottom': bool(n.get('secure') and not n.get('known')), 'help': 'Verbinden.' + (' Das Passwort tippst du unten ein.' if n.get('secure') and not n.get('known') else '')} for n in nets]
         return [(None, rows or [{'k': 'info', 't': 'Keine Netze gefunden', 'v': '', 'help': ''}], None),
                 (None, [{'k': 'button', 't': 'Erneut suchen', 'fn': lambda: (win.toast('Suche Netze …'), win.load_sys(True)), 'help': 'Sucht noch einmal nach Netzen.'}], None)]
+    if page == 'bluetooth':
+        B = win.__dict__.get('BT')
+        if B is None: return loading
+        if B.get('error'): return [(None, [{'k': 'info', 't': 'Bluetooth', 'v': 'nicht verfügbar', 'help': B['error']}], None)]
+        bt = lambda body, text: lambda: (win.toast(text), win.post('api/bluetooth', body, then=lambda r: (r and r.get('error') and win.toast(r['error']), setattr(win, 'bt_at', 0))))
+        top = [toggle('Bluetooth', B.get('powered'), lambda on: bt({'power': on}, 'Bluetooth ' + ('ein' if on else 'aus'))(), 'Bluetooth des Thor ein- oder ausschalten.')]
+        if B.get('powered'):
+            top.append({'k': 'button', 't': 'Nach Geräten suchen', 'v': 'sucht …' if B.get('scanning') else '', 'fn': bt({'scan': True}, 'Suche Geräte …'),
+                        'help': 'Sucht 30 Sekunden lang nach Geräten. Kopfhörer oder Gamepad vorher in den Kopplungsmodus bringen (meist die Bluetooth- oder Ein-Taste lange halten).'})
+        def row(d):
+            sub = KIND_NAMES.get(d['kind'], 'Gerät') + (f' · Akku {d["battery"]} %' if d.get('battery') is not None else '')
+            if d['paired']:
+                return {'k': 'link', 't': d['name'], 'sub': sub, 'icon': d['kind'], 'v': 'verbunden' if d['connected'] else 'nicht verbunden',
+                        'fn': lambda d=d: (win.S.update(dev=d['addr']), go_page(win, 'bluetooth>dev')), 'help': 'Verbinden, trennen oder vergessen.'}
+            return {'k': 'link', 't': d['name'], 'sub': sub, 'icon': d['kind'], 'v': 'Koppeln', 'fn': bt({'addr': d['addr'], 'do': 'pair'}, 'Kopple ' + d['name'] + ' …'),
+                    'help': 'Koppeln und verbinden. Das Gerät muss dazu im Kopplungsmodus sein.'}
+        devs = B.get('devices') or []
+        mine, near = [row(d) for d in devs if d['paired']], [row(d) for d in devs if not d['paired']]
+        return [(None, top, None),
+                ('Meine Geräte', mine, None if mine else 'Noch kein Gerät gekoppelt.') if B.get('powered') else (None, [], None),
+                ('Geräte in der Nähe', near or [{'k': 'info', 't': 'Suche …' if B.get('scanning') else 'Keine gefunden', 'v': '', 'help': 'Gerät in den Kopplungsmodus bringen und „Nach Geräten suchen“ wählen.'}],
+                 'Kopfhörer werden nach dem Verbinden sofort die Tonausgabe. Ein Gamepad ist in den Emulatoren der nächste Controller (Spieler 2).') if B.get('powered') else (None, [], None)]
+    if page == 'bluetooth>dev':
+        d = next((d for d in (win.__dict__.get('BT') or {}).get('devices') or [] if d['addr'] == win.S.get('dev')), None)
+        if d is None: return [(None, [{'k': 'info', 't': 'Gerät nicht gefunden', 'v': '', 'help': ''}], None)]
+        act = lambda what, text: lambda: (win.toast(text), win.post('api/bluetooth', {'addr': d['addr'], 'do': what}, then=lambda r: (r and r.get('error') and win.toast(r['error']), setattr(win, 'bt_at', 0))))
+        info = [{'k': 'info', 't': d['name'], 'sub': KIND_NAMES.get(d['kind'], 'Gerät'), 'icon': d['kind'], 'v': 'verbunden' if d['connected'] else 'nicht verbunden', 'help': 'Adresse ' + d['addr'] + '.'}]
+        if d.get('battery') is not None: info.append({'k': 'info', 't': 'Akku', 'v': f'{d["battery"]} %', 'help': 'Ladestand, wie das Gerät ihn meldet.'})
+        acts = [{'k': 'button', 't': 'Trennen' if d['connected'] else 'Verbinden', 'fn': act('disconnect', 'Trenne …') if d['connected'] else act('connect', 'Verbinde …'),
+                 'help': 'Die Verbindung trennen; das Gerät bleibt gekoppelt.' if d['connected'] else 'Mit dem gekoppelten Gerät verbinden. Es muss eingeschaltet sein.'},
+                {'k': 'button', 't': 'Gerät vergessen', 'warn': True, 'fn': lambda: (act('forget', 'Vergesse …')(), key(win, 'back')),
+                 'help': 'Entfernt die Kopplung. Zum erneuten Verbinden muss das Gerät wieder gekoppelt werden.'}]
+        return [(None, info, None), (None, acts, None)]
     if page == 'accounts':
         ask = lambda key: lambda: win.ask_account(key)
-        return [('RetroAchievements', [{'k': 'link', 't': 'Benutzername', 'v': CFG.get('ra_user') or 'kein Konto', 'fn': ask('ra_user'), 'bottom': True, 'help': 'Dein Name bei retroachievements.org. Eingetippt wird unten.'},
+        def _start_qr(force=False):
+            win.yt_qr_at = time.time()
+            def _got(r):
+                if not r: return win.toast('Tandem-Dienst antwortet nicht.')
+                if r.get('error'): return win.toast(r['error'])
+                if r.get('signed_in'): win.YT_QR = None; win.toast('Bei YouTube angemeldet.')
+                else: win.YT_QR = r
+                win.update()
+            win.post('api/ytlogin', {'a': 'qr_new' if force else 'qr'}, then=_got)
+        qrd = win.__dict__.get('YT_QR')
+        if CFG.get('yt_set'):
+            yt_rows = [{'k': 'info', 't': 'Konto', 'v': 'angemeldet', 'help': 'Deine Abos, Playlists und „Mag ich“ stehen in der YouTube-App bereit.'},
+                       {'k': 'button', 't': 'YouTube abmelden', 'warn': True,
+                        'fn': lambda: win.post('api/ytlogin', {'a': 'logout'}, then=lambda r: (setattr(win, 'YT_QR', None), win.toast((r or {}).get('error') or 'Abgemeldet.'), win.update())),
+                        'help': 'Entfernt die gespeicherte YouTube-Anmeldung vom Thor.'}]
+        elif qrd and qrd.get('code'):
+            yt_rows = [{'k': 'qr', 't': 'Bei YouTube anmelden', 'code': qrd['code'], 'link': qrd.get('link') or 'youtube.com/activate', 'qr': qrd['qr'],
+                        'help': 'QR-Code mit dem Handy scannen (der Code ist schon vorausgefüllt) – oder youtube.com/activate öffnen und diesen Code eingeben.'},
+                       {'k': 'button', 't': 'Neuer Code', 'fn': lambda: _start_qr(True), 'help': 'Fordert einen frischen Anmeldecode von Google an.'},
+                       {'k': 'button', 't': 'Abbrechen', 'fn': lambda: (setattr(win, 'YT_QR', None), win.update()), 'help': 'Schließt die QR-Anzeige.'}]
+        else:
+            yt_rows = [{'k': 'button', 't': 'Per QR-Code anmelden', 'v': 'nicht angemeldet', 'fn': lambda: _start_qr(False),
+                        'help': 'Zeigt einen QR-Code und Anmeldecode zum bequemen Bestätigen am Handy oder PC – ganz ohne Tippen auf dem Thor.'}]
+        return [('YouTube', yt_rows, 'Liest nur Abos, Playlists und „Mag ich“; Videos laufen weiter ohne Konto.'),
+                ('RetroAchievements', [{'k': 'link', 't': 'Benutzername', 'v': CFG.get('ra_user') or 'kein Konto', 'fn': ask('ra_user'), 'bottom': True, 'help': 'Dein Name bei retroachievements.org. Eingetippt wird unten.'},
                                        {'k': 'link', 't': 'Anmelden', 'v': 'angemeldet' if CFG.get('ra_login') else 'Passwort eingeben', 'fn': ask('ra_password'), 'bottom': True,
                                         'help': 'Das Passwort wird nur zum Anmelden benutzt und nicht gespeichert. Danach sind alle Emulatoren angemeldet.'},
                                        {'k': 'link', 't': 'Web-API-Schlüssel', 'v': 'hinterlegt' if CFG.get('ra_key_set') else 'fehlt', 'fn': ask('ra_key'), 'bottom': True,
@@ -207,19 +307,37 @@ def groups(win, page):
                       'help': 'Löscht E-Mail und Passwort von Battle.net vom Thor.'}] if CFG.get('bnet_set') else []),
                  'Den Code aus der Authenticator-App tippst du im Spiel ein, falls gefragt.'),
                 ('Weitere', [{'k': 'info', 't': 'Steam', 'v': 'über Apps › Steam starten', 'help': 'Steam läuft als eigene Sitzung; danach startet wieder Tandem.'},
-                             {'k': 'info', 't': 'Plex', 'v': 'kommt später', 'help': 'Plex folgt in einer der nächsten Versionen.'}], None)]
+                             {'k': 'info', 't': 'Plex', 'v': 'angemeldet' if CFG.get('plex_set') else 'über Apps › Plex', 'help': 'Anmeldung direkt in der Plex-App unter Apps.'}], None)]
     if page == 'look':
         rows = [{'k': 'check', 't': t['name'], 'on': t['id'] == ui.THEME['id'], 'fn': lambda t=t: set_theme(win, t['id']), 'help': 'Farben und Stil der Oberfläche auf beiden Bildschirmen.'}
                 for t in CFG.get('themes') or []]
+        disp = [choice('Ansicht', [('grid', 'Kacheln'), ('stage', 'Bühne')], CFG.get('view_mode') or 'grid',
+                       lambda v: config_set(win, view_mode=v),
+                       'Kacheln zeigt ein 5-Spalten-Raster; Bühne präsentiert die Spiele groß in der Mitte als gleitendes Karussell.'),
+                toggle('Plattform-Rahmen', CFG.get('overlays', True), lambda v: (win.comp_cache.clear(), config_set(win, overlays=v)),
+                       'Legt farbige Konsolen-Rahmen und Plattform-Abzeichen (Cocoon) um die Spiele-Cover.'),
+                choice('Animationen', [('full', 'Flüssig'), ('reduced', 'Reduziert')], CFG.get('motion') or 'full',
+                       lambda v: config_set(win, motion=v),
+                       'Flüssige Übergänge für Cover, Fokusring und Karussell, oder reduzierte Bewegung.')]
         return [('Thema', rows, 'Die Hervorhebung nimmt im Spiel die Farbe des Covers an, wenn das Thema es vorsieht.'),
+                ('Darstellung', disp, None),
                 ('Sprache', [choice('Sprache / Language', [('de', 'Deutsch'), ('en', 'English')], CFG.get('lang') or 'de', lambda v: config_set(win, lang=v),
                                     'Sprache der Oberfläche auf beiden Bildschirmen und der Einstellungsseite. Spiele bleiben, wie sie sind.')], None)]
     if page == 'library':
         rows = [{'k': 'info', 't': 'Spiele', 'v': str(len(win.L['games'])), 'help': 'Alle Spiele, die Tandem gefunden hat.'},
                 {'k': 'info', 't': 'Spieleordner', 'v': 'ROMs/<System>', 'help': 'Spiele gehören in einen Ordner „ROMs“ auf der Karte oder im Gerät, je System ein Unterordner (wie bei ES-DE).'},
                 {'k': 'button', 't': 'Neu einlesen und Cover laden', 'fn': lambda: win.start({'id': 'rescan', 's': 'app'}), 'help': 'Sucht neue Spiele und lädt fehlende Cover aus dem Netz.'}]
+        SV = win.SAVES or {}
+        sv_state = f'{ui.ago(SV["last"])} ({SV.get("where") or "lokal"})' if SV.get('last') else 'noch keine Sicherung'
+        sv_rows = [{'k': 'info', 't': 'Letzte Sicherung', 'v': sv_state, 'help': 'Sichert Spielstände aller Emulatoren, Ports und BananaNative auf Karte und Server.'},
+                   {'k': 'button', 't': 'Spielstände jetzt sichern', 'fn': lambda: (win.toast('Sichere Spielstände …'), win.post('api/saves')),
+                    'help': 'Legt ein Archiv auf der Karte an und überträgt die Spielstände per SSH.'},
+                   toggle('Automatisch sichern', CFG.get('save_auto', True), lambda v: config_set(win, save_auto=v),
+                          'Sichert Spielstände im Hintergrund nach jedem beendeten Spiel.'),
+                   {'k': 'link', 't': 'Sicherungsziel', 'v': CFG.get('save_target') or 'nur Karte', 'fn': win.ask_save_target, 'bottom': True,
+                    'help': 'SSH-Ziel im Heimnetz (z. B. benutzer@server:~/backups/thor-saves). Leer lassen für reine Kartensicherung.'}]
         store = [{'k': 'info', 't': s['name'], 'v': f'{round(s["free"] / 1e9)} von {round(s["total"] / 1e9)} GB frei', 'help': 'Freier Platz.'} for s in SYS.get('storage') or []]
-        return [(None, rows, None), ('Speicher', store, None)]
+        return [(None, rows, None), ('Spielstände', sv_rows, None), ('Speicher', store, None)]
     if page == 'updates':
         U = win.UPD or {}
         rows = [{'k': 'info', 't': 'Tandem', 'v': 'Version ' + str(CFG.get('version', '')), 'help': 'Die installierte Version.'},
@@ -236,10 +354,12 @@ def groups(win, page):
                  ([{'k': 'info', 't': 'Akku', 'v': f'{B["level"]} %', 'help': 'Ladestand des Akkus.'}] if B else []), None),
                 (None, [{'k': 'button', 't': 'Einrichtung erneut zeigen', 'fn': lambda: win.post('api/setup', {'open': True}), 'help': 'Zeigt die vier Schritte vom ersten Start: Spiele, Emulatoren, Netz und Konto.'}], None)]
     if page == 'onoff':
-        texts = {'suspend': 'Der Thor schläft und wacht mit der Ein-Taste sofort wieder auf.', 'reboot': 'Startet den Thor neu.', 'poweroff': 'Schaltet den Thor aus.',
+        texts = {'suspend': 'Der Thor schläft und wacht mit der Ein-Taste sofort wieder auf.',
+                 'sleep': 'Legt den Thor auch am Ladegerät ganz schlafen.',
+                 'reboot': 'Startet den Thor neu.', 'poweroff': 'Schaltet den Thor aus.',
                  'desktop': 'Wechselt zum KDE-Desktop. Zurück geht es über „Zurück zu Tandem“ auf dem Desktop.'}
         return [(None, [{'k': 'button', 't': ui.POWER[n][1], 'warn': n in ('reboot', 'poweroff'), 'fn': lambda n=n: win.confirm_action(n), 'help': texts[n] + ' Tandem fragt vorher.'}
-                        for n in ui.POWER], None)]
+                        for n in ui.POWER], 'Kurzer Druck auf die Ein-Taste versetzt den Thor direkt in den Standby; langes Halten öffnet das Ein-/Aus-Menü.')]
     return []
 
 
@@ -409,7 +529,7 @@ FREE = ('info', 'link', 'button', 'check')  # rows whose label may take two line
 def label_width(win, r, w):
     u = win.u
     if r['k'] not in FREE: return None
-    return max(w * .4, w - 4 * u - (win.width_of(r['v'], ('u', 1.9, 400)) + 2 * u if r.get('v') else 0) - (2.4 * u if r['k'] in ('link', 'check') else 0))
+    return max(w * .4, w - 4 * u - (win.width_of(r['v'], ('u', 1.9, 400)) + 2 * u if r.get('v') else 0) - (2.4 * u if r['k'] in ('link', 'check') else 0) - (4.6 * u if r.get('icon') else 0))
 
 
 def row_lines(win, r, w):
@@ -419,6 +539,7 @@ def row_lines(win, r, w):
 
 def row_height(win, r, w):
     u = win.u
+    if r['k'] == 'qr': return 23 * u
     if r['k'] == 'swatches': return 7.6 * u
     if r['k'] not in FREE: return 6.2 * u
     return max(6.2 * u, len(row_lines(win, r, w)) * 2 * u * 1.25 + (1.7 * u * 1.35 if r.get('sub') else 0) + 2.8 * u)
@@ -429,6 +550,20 @@ def draw_row(win, p, r, rect, n, on):
     x, y, w, h = rect.x(), rect.y(), rect.width(), rect.height()
     if on:
         win.box(p, rect.adjusted(.35 * u, .35 * u, -.35 * u, -.35 * u), 1.5 * u, ui.faded(ui.FOCUS, .14), ui.FOCUS, .22 * u)
+    if kind == 'qr':
+        import qr
+        qs = 19.6 * u
+        qr.draw(p, ui.QRectF(x + 2 * u, y + (h - qs) / 2, qs, qs), r['qr'], round(1.5 * u))
+        rx, rw = x + 2 * u + qs + 2.4 * u, w - 6.4 * u - qs
+        ry = y + 2.4 * u
+        ry += win.text(p, r['link'], rx, ry, ('u', 2.0, 600), ui.FOCUS, rw, lh=1.3) + .8 * u
+        box = ui.QRectF(rx, ry, rw, 6.8 * u)
+        win.box(p, box, 1.2 * u, ui.RAISED, ui.faded(ui.TEXT, .12))
+        win.text(p, r['code'], box.x(), box.y(), ('u', 2.6, 700, .03), ui.TEXT, box.width(), 1, 6.8 / 2.6)
+        ry += 8.0 * u
+        win.text(p, 'Mit Handy scannen', rx, ry, ('u', 1.75, 400), ui.MUTED, rw, lh=1.35)
+        win.hit(rect, lambda: (win.S.update(pane=1, i=n), win.push()), name=r['t'])
+        return
     def tap():
         win.S.update(pane=1, i=n)
         if r.get('fn') and kind not in ('slider', 'choice', 'swatches', 'info'): r['fn']()
@@ -496,14 +631,20 @@ def draw_row(win, p, r, rect, n, on):
         lines = row_lines(win, r, w)
         sub = 1.7 * u * 1.35 if r.get('sub') else 0
         ty = y + (h - len(lines) * 2 * u * 1.25 - sub) / 2
-        for line in lines: ty += win.text(p, line, x + 2 * u, ty, lf, color, lh=1.25)
-        if sub: win.text(p, r['sub'], x + 2 * u, ty, ('u', 1.7), ui.MUTED, label_width(win, r, w), lh=1.35)
+        tx = x + 2 * u
+        if r.get('icon'):  # a device's kind, as in the list of areas
+            sq = ui.QRectF(tx, y + (h - 3.3 * u) / 2, 3.3 * u, 3.3 * u)
+            win.box(p, sq, .8 * u, ui.QColor('#0a84ff'))
+            draw_icon(win, p, r['icon'], sq.adjusted(.5 * u, .5 * u, -.5 * u, -.5 * u))
+            tx += 4.6 * u
+        for line in lines: ty += win.text(p, line, tx, ty, lf, color, lh=1.25)
+        if sub: win.text(p, r['sub'], tx, ty, ('u', 1.7), ui.MUTED, label_width(win, r, w), lh=1.35)
         label_w = label_width(win, r, w)
     else:
         label_w = right - x - 2 * u
         win.text(p, r['t'], x + 2 * u, y, lf, color, label_w, lh=h / (2 * u))
     if r.get('v') and kind not in ('slider',):
-        vx = x + 2 * u + min(max(win.width_of(l, lf) for l in row_lines(win, r, w)), label_w) + 2 * u
+        vx = x + 2 * u + (4.6 * u if r.get('icon') and kind in FREE else 0) + min(max(win.width_of(l, lf) for l in row_lines(win, r, w)), label_w) + 2 * u
         win.text(p, r['v'], vx, y, vf, ui.MUTED, right - vx, 2, h / (vf[1] * u))
 
 
@@ -533,7 +674,10 @@ def draw_top(win, p):
     else:
         label, name, help = 'Einstellungen · ' + TITLES[page], row['t'], row.get('help', '')
         value = f'{row["val"]} %' if row['k'] == 'slider' and row.get('val') is not None else ('Ein' if row['on'] else 'Aus') if row['k'] == 'toggle' else \
-            dict(row['opts']).get(row['cur'], '') if row['k'] == 'choice' else next((n for n, h in COLORS if h == row.get('cur')), '') if row['k'] == 'swatches' else row.get('v') or ''
+            dict(row['opts']).get(row['cur'], '') if row['k'] == 'choice' else next((n for n, h in COLORS if h == row.get('cur')), '') if row['k'] == 'swatches' else row.get('code') or row.get('v') or ''
+        if row['k'] == 'qr' and row.get('qr'):
+            import qr
+            qr.draw(p, ui.QRectF(W - 30 * u, H / 2 - 12 * u, 24 * u, 24 * u), row['qr'], round(1.8 * u))
     kind = row['k'] if row else None
     hints = [('A', 'Öffnen'), ('↕', 'Auswählen'), ('B', 'Zur Bibliothek')] if row is None else \
         ([('↔', 'Ändern')] if kind in ('slider', 'swatches') else [('A', 'Ein/Aus')] if kind == 'toggle' else [('↔', 'Wählen')] if kind == 'choice' else

@@ -147,7 +147,7 @@ class Deck:
         if key not in self.pics:
             self.pics[key] = None
             self.link.send(f'pic {key}')
-        return self.pics[key] or None
+        return self.pics.get(key) or None
 
     def art(self, piece, frame=0): return self.pic(KIND_CHROME << 16 | piece << 8 | frame)
 

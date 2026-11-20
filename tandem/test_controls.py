@@ -1,8 +1,9 @@
 """Self-check for controls.py: python3 test_controls.py (standard library only)."""
-import os, tempfile, unittest
+import atexit, os, shutil, tempfile, unittest
 from pathlib import Path
 
 HOME = Path(tempfile.mkdtemp(prefix='controls-test-'))
+atexit.register(shutil.rmtree, HOME, True)
 os.environ['HOME'] = str(HOME)
 import controls  # noqa: E402  (after HOME is redirected)
 

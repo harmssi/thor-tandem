@@ -7,6 +7,8 @@ Install on the Thor (desktop mode › Konsole, one line):
 
     curl -L https://github.com/harmssi/thor-tandem/releases/latest/download/get.sh | bash
 
+New in 0.3.0: native YouTube and Plex dual-screen apps (`mpv` on top, touch/controller browser below) with QR-code phone sign-in (subscriptions, playlists, likes) and offline SD-card downloads; tactile 3D on-screen keyboard with LRA haptic feedback, floating key magnifier, hold-to-repeat, dedicated `@` key and X11 keysym injection; Stage carousel view, Cocoon platform frames, night mode, per-game scaling/FPS/power overrides, lid & charger-aware standby, Captures gallery, Bluetooth audio/gamepad pairing, volume hold-to-repeat & mute, and rolling SD + SSH savegame backups.
+
 New in 0.2.0: English interface; Thor-key quick menu on the bottom screen (brightness, volume, power mode, stick lights,
 frame generation, recording, screenshot); recording of both screens; a frame generation switch for Lossless Scaling (needs your own Lossless Scaling copy and the lsfg-vk layer installed);
 WoW Forever signs in on its own (login stored on the device, like the Android launcher) and picks your game account.
@@ -396,6 +398,12 @@ spult links/rechts, oben/unten ändert die Lautstärke, Y schaltet die Untertite
   `~/.local/share/tandem-media/yt-dlp` und hält es alle zwei Tage aktuell), ohne Google-Konto. Gemerkte Kanäle,
   Verlauf mit Position („Weiterschauen“) und letzte Suchen in `~/.config/tandem/media/youtube.json`. Bild: H.264 bis
   1080p, weil der Thor das in Hardware dekodiert (`--hwdec=v4l2m2m-copy`: ~5 % eines Kerns statt ~30 % in Software).
+- **YouTube-Konto am Thor (19.11.):** Abos/Playlists/„Mag ich“ → „Anmelden“: oben Googles Seite in Firefox (eigenes
+  Profil `~/.config/tandem/media/yt-browser`, 0700), unten die Bildschirmtastatur, „Fertig“ schließt Firefox
+  (`/api/ytlogin` start/done/logout). yt-dlp liest die Feeds mit `--cookies-from-browser firefox:<Profil>`; Abspielen
+  bleibt ohne Konto. „Abmelden“ (letzter Eintrag in den Konto-Tabs) löscht das Profil. Der alte OAuth-Weg greift nur,
+  wenn in den Einstellungen ein Client eingetragen ist. Abspielen: mpv holt YouTube selbst (`--ytdl=yes`), weil
+  YouTube die von yt-dlp ausgegebenen Adressen mit 403 ablehnt; `flatpak update io.mpv.Mpv` läuft alle zwei Tage mit.
 - **Plex:** Anmeldung über plex.tv/link (das Deck zeigt einen Code, den man mit seinem Plex-Konto eingibt). Server
   und Adresse kommen aus dem Konto (lokale Verbindungen zuerst). Token und Server stehen in
   `~/.config/tandem/media/plex.json` (Rechte 0600); der Token geht nur als Kopfzeile `X-Plex-Token` raus, nie in
@@ -488,7 +496,7 @@ Bekannte Grenzen:
   kopieren oder ArmadaOS intern installieren).
 - Für Switch gibt es im Armada Store keinen Emulator: Eden kommt über Tandems eigenen Updater.
 - Ohne Steam fehlen dessen Schnellmenü und Systemupdates: Helligkeit und Lautstärke hat Tandem selbst, Updates laufen über eine Steam-Sitzung.
-- ArmadaOS hängt exFAT-Karten nicht von selbst ein: Eintrag in `/etc/fstab` nötig (siehe HANDOFF-LOG).
+- ArmadaOS hängt exFAT-Karten nicht von selbst ein: Eintrag in `/etc/fstab` nötig (über `setup.py` einrichtbar).
 - Firefox stürzt im unteren Bildschirm über Wayland ab, deshalb startet das untere Fenster über X11 (gilt für den Rückweg).
 - Ist der untere Bildschirm aus, zeigt Firefox beide Ansichten oben; die native Oberfläche hat keine gemeinsame Ansicht.
 - Standby, Neustart, Ausschalten und Desktop fragen in der nativen Oberfläche auf beiden Bildschirmen nach; in der

@@ -11,14 +11,20 @@ A source (YouTube, Plex) is plain Python and does the talking; everything slow r
     resolve(item) -> {'url', 'opts' (loadfile options), 'subs' [(url, title, lang)]}
     progress(item, pos, dur, state)      # 'playing' every 10 s, 'paused', 'stopped'
     actions(item) -> [(label, fn -> message)]; headers(url) -> dict; optional thumb(url, w, h) -> url
-Items are dicts: id, title, sub, thumb, kind ('video', 'folder' or 'header'), badge, progress (0..1), watched.
+    optional detail(item) -> {'title', 'detail': {backdrop, title, meta, summary}, 'buttons': [(label, fn)]}: a video opens
+        this page first (Plex); a button's fn runs on a thread and returns a message, {'play': item} or {'reload': True}
+    optional offline_app and fetch(job, base, progress): downloads for watching without a network (decks/offline.py)
+Items are dicts: id, title, sub, thumb, kind ('video', 'folder' or 'header'), badge, progress (0..1), watched,
+skip [start, end] (an intro: "Intro überspringen" shows while it plays).
 """
-import threading, time, traceback, urllib.request
+import os, threading, time, traceback, urllib.request
 from collections import OrderedDict
+from pathlib import Path
 
 from PySide6.QtCore import QBuffer, QByteArray, QPointF, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QImage, QImageReader, QLinearGradient, QPainterPath, QPen
 
+from decks import offline
 from decks.mpv import Mpv, tracks
 
 BG, CARD, RAISED, TEXT, DIM, FAINT = (QColor(c) for c in ('#0f0f11', '#1c1c20', '#2a2a30', '#f4f4f6', '#a3a3ad', '#5c5c66'))
@@ -77,6 +83,31 @@ def up_next(items, i):
     """What plays after item i of a page: the episodes after it (a TV app goes on with the series), else nothing."""
     if items[i].get('type') != 'episode': return []
     return [it for it in items[i + 1:] if it.get('type') == 'episode']
+
+
+def offline_actions(app, item):
+    if offline.find(app, item['id']): return [('Download löschen', lambda: (offline.delete(app, item['id']), 'Download gelöscht.')[1])]
+    if item.get('queued') or item.get('live'): return []
+    return [('Herunterladen', lambda: offline.add(app, item))]
+
+
+def offline_page(app, note):
+    """The Downloads tab: what is on the card (works without a network) and what is still loading."""
+    items = []
+    for meta, file in offline.items(app):
+        pic = file.parent / meta['thumb_file'] if meta.get('thumb_file') else None
+        dur = meta.get('dur')
+        items.append({'id': meta['id'], 'title': meta.get('title') or file.stem, 'sub': ' · '.join(x for x in (meta.get('sub'), offline.size_text(meta.get('size'))) if x),
+                      'thumb': pic.as_uri() if pic and pic.is_file() else None, 'kind': 'video', 'dur': dur, 'badge': clock(dur) if dur else '', 'local': True,
+                      'progress': meta['pos'] / dur if meta.get('pos') and dur else None, 'watched': bool(meta.get('watched')), 'channel': meta.get('channel'),
+                      'type': meta.get('type')})
+    waiting = []
+    for j in offline.queued(app):
+        state = j.get('error') if j['state'] == 'fail' else f'lädt · {j.get("pct", 0)} %' if j['state'] == 'run' else 'wartet auf WLAN' if not offline.on_wifi() else 'wartet'
+        waiting.append({**j['item'], 'sub': state + (' · ' + offline.size_text(j['size']) if j.get('size') else ''), 'kind': 'video', 'queued': True,
+                        'badge': f'{j.get("pct", 0)} %' if j['state'] == 'run' else ''})
+    out = ([header('Wird geladen')] + waiting if waiting else []) + ([header('Auf der Karte')] + items if items and waiting else items)
+    return {'title': 'Downloads', 'items': out, 'note': '' if out else note, 'poll': 3 if waiting else 0}
 
 
 class Pics:
@@ -144,6 +175,7 @@ class Deck:
         self.mpv = Mpv(sock, self.heard) if sock else None
         self.open_tab(window.memo.get('media:' + source.name, source.tabs[0]))
         threading.Thread(target=self.tick, daemon=True).start()
+        if getattr(source, 'offline_app', None): offline.start(source.offline_app, source, window.loaded.emit)
 
     def close(self):
         if self.now: self.report('stopped')
@@ -196,7 +228,32 @@ class Deck:
         it = items[i]
         self.focus[id(self.page())] = i
         if it['kind'] == 'folder': self.load(lambda: self.src.open(it), push=True, title=it['title'])
+        elif it['kind'] == 'video' and hasattr(self.src, 'detail') and not it.get('queued'):
+            after = up_next(items, i)
+            def page():
+                got = self.src.detail(it)
+                got['after'] = after
+                return got
+            self.load(page, push=True, title=it['title'])
         elif it['kind'] == 'video': self.play(it, up_next(items, i))
+
+    def push(self, fn):  # not press(): the window calls deck.press(pos) on every touch (19.11.)
+        """A button of a detail page: runs on a thread (it may ask the server)."""
+        page = self.page()
+        def run():
+            try: got = fn()
+            except Problem as error: got = error.args[0]
+            except Exception as error:
+                traceback.print_exc(); got = f'Fehler: {error}'
+            if isinstance(got, dict) and got.get('play'): self.play(got['play'], (page or {}).get('after'))
+            elif isinstance(got, dict) and got.get('reload_tab'):
+                if got.get('say'): self.say(got['say'])
+                self.open_tab(self.tab)
+            elif isinstance(got, dict) and got.get('reload') and page is self.page() and len(self.stack) > 1:
+                self.load(lambda: {**self.src.detail(page['item']), 'after': page.get('after')})
+            elif isinstance(got, str) and got: self.say(got)
+            self.w.loaded.emit()
+        threading.Thread(target=run, daemon=True).start()
 
     def back(self):
         if self.tab == 'Läuft' or self.tab == 'Warteschlange': return self.open_tab(self.w.memo.get('media:' + self.src.name, self.src.tabs[0]))
@@ -327,6 +384,21 @@ class Deck:
             return
         page = self.page()
         if not page: return
+        if page.get('code'):
+            if a == 'ok' and page.get('new_code'): self.load(page['new_code'])
+            return
+        if page.get('detail'):
+            n, here = len(page.get('buttons') or []), self.focus.get(id(page), 0)
+            if a in ('left', 'right', 'up', 'down') and n: self.focus[id(page)] = max(0, min(n - 1, here + (1 if a in ('right', 'down') else -1)))
+            elif a == 'ok' and n: self.push(page['buttons'][min(here, n - 1)][1])
+            return
+        if page.get('search') and not page.get('query') and not page['items'] and page.get('chips'):
+            chips = page['chips']
+            here = self.focus.get(id(page), -1)
+            if a == 'up': return self.ask()
+            if a == 'down' and here < 0: self.focus[id(page)] = 0; return
+            if a in ('left', 'right') and here >= 0: self.focus[id(page)] = max(0, min(len(chips) - 1, here + (1 if a == 'right' else -1))); return
+            if a == 'ok': return self.search(chips[here]) if 0 <= here < len(chips) else self.ask()
         if page.get('search') and a == 'up' and self.focus.get(id(page), -1) in [c[0] for c in grid(page['items'])[:COLS]] + [-1]:
             return self.ask()  # from the first row up into the search field
         cells = grid(page['items'])
@@ -406,17 +478,23 @@ class Deck:
         w.text(p, self.src.name, x, y, ('u', 2.5, 700, -.02), TEXT, lh=h / (2.5 * u))
         x += w.width_of(self.src.name, ('u', 2.5, 700, -.02)) + 2.2 * u
         tabs, f = self.tabs(), ('u', 2.0, 600)
-        room = w.width() - 2.6 * u - 13 * u - x
-        need = sum(w.width_of(t, f) + 3.4 * u for t in tabs)
-        if need > room: f = ('u', round(2.0 * room / need, 2), 600)
+        room = w.width() - 2.6 * u - 13.2 * u - x
+        pad_t, gap_t = 2.8 * u, .35 * u
+        need = sum(w.width_of(t, f) + pad_t for t in tabs) + max(0, len(tabs) - 1) * gap_t
+        if need > room and need > 0:
+            k = room / need
+            f = ('u', max(1.35, round(2.0 * k, 2)), 600)
+            pad_t, gap_t = pad_t * k, gap_t * k
+            over = (sum(w.width_of(t, f) + pad_t for t in tabs) + max(0, len(tabs) - 1) * gap_t) - room
+            if over > 0 and tabs: pad_t = max(1.2 * u, pad_t - over / len(tabs))
         for t in tabs:
-            tw = w.width_of(t, f) + 3.4 * u
+            tw = w.width_of(t, f) + pad_t
             rect = QRectF(x, y + .5 * u, tw, h - u)
             on = t == self.tab
             if on: w.capsule(p, rect, TEXT)
             w.text(p, t, rect.x(), rect.y(), f, BG if on else DIM, rect.width(), 1, rect.height() / (f[1] * u))
             w.hit(rect, self.tap(lambda t=t: self.open_tab(t)), name='tab:' + t)
-            x += tw + .4 * u
+            x += tw + gap_t
         armed = time.time() - self.armed < 3
         rect = QRectF(w.width() - 2.6 * u - 12 * u, y + .5 * u, 12 * u, h - u)
         w.capsule(p, rect, QColor('#c2412f') if armed else RAISED)
@@ -434,6 +512,10 @@ class Deck:
         x0, cw = 2.6 * u, w.width() - 5.2 * u
         y = body.y()
         if page.get('code'): return self.login(p, body, page)
+        if getattr(self, '_top_qr', None):
+            self._top_qr = None
+            if not self.now and self.mpv and self.mpv.sock: self.mpv.command('stop')
+        if page.get('detail'): return self.detail(p, body, page)
         if len(self.stack) > 1 or page.get('search'):
             if page.get('search'):
                 field = QRectF(x0, y, cw, 6.4 * u)
@@ -442,12 +524,12 @@ class Deck:
                 w.hit(field, self.tap(self.ask), name='Suchfeld')
                 y += 7.6 * u
                 if not page.get('query') and page.get('chips'):
-                    cx = x0
-                    for chip in page['chips']:
+                    cx, sel_chip = x0, self.focus.get(id(page), -1) if not page['items'] else -1
+                    for ci, chip in enumerate(page['chips']):
                         cwid = min(w.width_of(chip, ('u', 1.9, 500)) + 3.2 * u, 40 * u)
                         if cx + cwid > x0 + cw: break
                         rect = QRectF(cx, y, cwid, 4.6 * u)
-                        w.capsule(p, rect, RAISED)
+                        w.capsule(p, rect, RAISED, self.accent if self.pad and ci == sel_chip else None)
                         w.text(p, chip, rect.x() + 1.6 * u, rect.y(), ('u', 1.9, 500), TEXT, cwid - 3.2 * u, lh=4.6 / 1.9)
                         w.hit(rect, self.tap(lambda chip=chip: self.search(chip)), name='chip:' + chip)
                         cx += cwid + u
@@ -457,7 +539,22 @@ class Deck:
                 w.capsule(p, rect, RAISED)
                 w.text(p, '‹', rect.x(), rect.y() - .3 * u, ('u', 3.4, 500), TEXT, rect.width(), 1, 5 / 3.4)
                 w.hit(rect, self.tap(self.back), name='Zurück')
-                w.text(p, page.get('title') or '', x0 + 7.4 * u, y, ('u', 2.8, 700, -.02), TEXT, cw - 7.4 * u, lh=5 / 2.8)
+                right_res = 0.0
+                if page.get('head_action'):
+                    hlabel, hfn = page['head_action']
+                    hf = ('u', 1.9, 600)
+                    hw = w.width_of(hlabel, hf) + 3.6 * u
+                    hrect = QRectF(x0 + cw - hw, y, hw, 5 * u)
+                    w.capsule(p, hrect, RAISED, QColor(255, 255, 255, 28))
+                    w.text(p, hlabel, hrect.x(), hrect.y(), hf, TEXT, hw, 1, 5 / 1.9)
+                    def tap_head(fn=hfn, it_ch=(page.get('items') or [{}])[0].get('channel')):
+                        msg = fn()
+                        if msg: self.say(msg)
+                        if it_ch: page['head_action'] = ('Kanal vergessen' if 'gemerkt' in str(msg) else 'Kanal merken',
+                                                         lambda: self.src.keep_channel(it_ch, (page.get('items') or [{}])[0], 'vergessen' in str(msg)))
+                    w.hit(hrect, self.tap(tap_head), name=hlabel)
+                    right_res = hw + 1.4 * u
+                w.text(p, page.get('title') or '', x0 + 7.4 * u, y, ('u', 2.8, 700, -.02), TEXT, cw - 7.4 * u - right_res, lh=5 / 2.8)
                 y += 6.4 * u
         if page.get('loading') and not page['items']:
             return w.text(p, 'Lädt …', x0, y + 12 * u, ('u', 2.4, 500), DIM, cw, 1)
@@ -552,16 +649,77 @@ class Deck:
         return self.pics.get(url, width, height)
 
     def login(self, p, body, page):
+        import qr
         w, u = self.w, self.w.u
         x0, cw = 2.6 * u, w.width() - 5.2 * u
-        y = body.y() + 6 * u
-        w.text(p, page['title'], x0, y, ('u', 3.4, 700, -.02), TEXT, cw, 1)
-        w.text(p, 'plex.tv/link', x0, y + 6 * u, ('u', 2.6, 600), self.accent, cw, 1)
+        link = page.get('link') or 'plex.tv/link'
+        qr_url = page.get('qr') or ('https://' + link)
+        if not self.now and self.mpv and self.mpv.sock and getattr(self, '_top_qr', None) != qr_url:
+            try:
+                qf = Path(f'/tmp/tandem-qr-{os.getuid()}.png')
+                qf.write_bytes(qr.png(qr_url, scale=14, border=4, pad_w=1920, pad_h=1080, bg=(11, 11, 16)))
+                self._top_qr = qr_url
+                self.mpv.load(str(qf))
+            except OSError: pass
+        qsize = min(38 * u, body.height() - 10 * u)
+        qx = x0 + 2 * u
+        qy = body.y() + (body.height() - qsize) / 2 - u
+        qr.draw(p, QRectF(qx, qy, qsize, qsize), qr_url, round(2.2 * u))
+        rx = qx + qsize + 4.4 * u
+        rw = x0 + cw - rx
+        ry = qy + 1.2 * u
+        ry += w.text(p, page['title'], rx, ry, ('u', 3.2, 700, -.02), TEXT, rw, 0, 1.15, 2) + 1.0 * u
+        ry += w.text(p, link, rx, ry, ('u', 2.3, 600), self.accent, rw, 0, 1.2) + 1.8 * u
         code = page['code']
-        box = QRectF(w.width() / 2 - 30 * u, y + 12 * u, 60 * u, 16 * u)
-        w.box(p, box, 2 * u, CARD, QColor(255, 255, 255, 30))
-        w.text(p, ' '.join(code), box.x(), box.y(), ('u', 8, 700, .05), TEXT, box.width(), 1, 16 / 8)
-        w.text(p, page['note'], x0 + 8 * u, y + 32 * u, ('u', 2.2, 500), DIM, cw - 16 * u, 1, 1.4, None)
+        shown = code if '-' in code else ' '.join(code)
+        cf_sz = 3.6 if len(shown) > 10 else 5.2
+        box = QRectF(rx, ry, rw, 10.5 * u)
+        w.box(p, box, 1.8 * u, CARD, QColor(255, 255, 255, 34))
+        w.text(p, shown, box.x(), box.y(), ('u', cf_sz, 700, .04), TEXT, box.width(), 1, 10.5 / cf_sz)
+        ry += 12.5 * u
+        ry += w.text(p, page['note'], rx, ry, ('u', 1.95, 400), DIM, rw, 0, 1.42, 5) + 2.0 * u
+        if page.get('new_code'):
+            bf = ('u', 1.95, 600)
+            bw = w.width_of('Neuer Code', bf) + 4.0 * u
+            brect = QRectF(rx, min(ry, body.bottom() - 5.6 * u), bw, 5.0 * u)
+            w.capsule(p, brect, RAISED, self.accent if self.pad else QColor(255, 255, 255, 28))
+            w.text(p, 'Neuer Code', brect.x(), brect.y(), bf, TEXT, bw, 1, 5.0 / 1.95)
+            w.hit(brect, self.tap(lambda fn=page['new_code']: self.load(fn)), name='btn:Neuer Code')
+
+    # -- a film or an episode before it plays --
+    def detail(self, p, body, page):
+        w, u, d = self.w, self.w.u, page['detail']
+        x0, cw, W = 2.6 * u, w.width() - 5.2 * u, w.width()
+        hero = QRectF(0, body.y() - .6 * u, W, min(body.height() * .5, W * 9 / 16))
+        img = self.picture(d.get('backdrop'), hero.width(), hero.height()) if d.get('backdrop') else None
+        if img: p.drawImage(hero.topLeft(), img)
+        g = QLinearGradient(0, hero.y(), 0, hero.bottom())
+        g.setColorAt(0, QColor(15, 15, 17, 60)); g.setColorAt(.55, QColor(15, 15, 17, 150)); g.setColorAt(1, BG)
+        p.fillRect(hero, g)
+        back = QRectF(x0, body.y(), 6 * u, 5 * u)
+        w.capsule(p, back, RAISED)
+        w.text(p, '‹', back.x(), back.y() - .3 * u, ('u', 3.4, 500), TEXT, back.width(), 1, 5 / 3.4)
+        w.hit(back, self.tap(self.back), name='Zurück')
+        y = hero.bottom() - 10 * u
+        y += w.text(p, d.get('title') or page.get('title') or '', x0, y, ('u', 3.6, 700, -.02), TEXT, cw, 0, 1.12, 2)
+        if d.get('meta'): y += .4 * u + w.text(p, d['meta'], x0, y + .4 * u, ('u', 1.9, 500), DIM, cw, 0, 1.3, 2)
+        y += 1.8 * u
+        buttons, here = page.get('buttons') or [], self.focus.get(id(page), 0)
+        x = x0
+        for n, (label, fn) in enumerate(buttons):
+            f = ('u', 2.0, 600)
+            bw = w.width_of(label, f) + 4.4 * u
+            if x + bw > x0 + cw: x, y = x0, y + 6.4 * u
+            rect = QRectF(x, y, bw, 5.4 * u)
+            first = n == 0
+            w.capsule(p, rect, TEXT if first else RAISED, QColor(255, 255, 255, 30) if not first else None)
+            if self.pad and n == here:
+                p.setPen(QPen(self.accent, .4 * u)); p.setBrush(Qt.BrushStyle.NoBrush); p.drawRoundedRect(rect.adjusted(-.5 * u, -.5 * u, .5 * u, .5 * u), 3.2 * u, 3.2 * u)
+            w.text(p, label, rect.x(), rect.y(), f, BG if first else TEXT, rect.width(), 1, 5.4 / 2.0)
+            w.hit(rect, self.tap(lambda fn=fn, n=n: (self.focus.__setitem__(id(page), n), self.push(fn))), name='btn:' + label)
+            x += bw + 1.2 * u
+        y += 7.6 * u
+        if d.get('summary'): w.text(p, d['summary'], x0, y, ('u', 1.95, 400), DIM, cw, 0, 1.45, max(2, int((body.bottom() - y) / (1.95 * 1.45 * u)) - 1))
 
     # -- now playing --
     def player(self, p, body):
@@ -607,6 +765,9 @@ class Deck:
         subs, audio = tracks(tl, 'sub'), tracks(tl, 'audio')
         y = self.chips(p, y, 'Untertitel', [('no', 'Aus', not any(s[2] for s in subs))] + subs, lambda tid: self.mpv.command('set_property', 'sid', tid))
         if len(audio) > 1: y = self.chips(p, y, 'Tonspur', audio, lambda tid: self.mpv.command('set_property', 'aid', tid))
+        cur_spd = round(float(props.get('speed') or 1.0), 2)
+        y = self.chips(p, y, 'Tempo', [(s, lbl, abs(cur_spd - s) < 0.05) for s, lbl in ((1.0, '1×'), (1.25, '1,25×'), (1.5, '1,5×'), (2.0, '2×'))],
+                       lambda s: (self.mpv.props.__setitem__('speed', s), self.mpv.command('set_property', 'speed', s)))
         vol = w.SET.get('vol')
         if vol is not None:
             w.text(p, 'Lautstärke', x0, y, ('u', 1.8, 600), DIM, 16 * u, lh=4.6 / 1.8)
@@ -617,7 +778,9 @@ class Deck:
             w.text(p, str(vol), track.right() + u, y, ('u', 2.0, 600), TEXT, 6 * u, 2, 4.6 / 2.0)
             w.hit(QRectF(track.x() - u, y - .6 * u, track.width() + 2 * u, 5.8 * u), lambda x: w.set_value('vol', x, track.x(), track.width()), drag=True, name='vol')
             y += 6.4 * u
-        acts = [(label, fn) for label, fn in self.src.actions(it)] + [('Stopp', self.stop)]
+        skip = it.get('skip')
+        intro = [('Intro überspringen', lambda: self.seek(skip[1], 'absolute'))] if skip and skip[0] - 1 <= pos < skip[1] else []
+        acts = intro + [(label, fn) for label, fn in self.src.actions(it)] + [('Stopp', self.stop)]
         bw = (cw - (len(acts) - 1) * 1.2 * u) / len(acts)
         for n, (label, fn) in enumerate(acts):
             rect = QRectF(x0 + n * (bw + 1.2 * u), y + .4 * u, bw, 5.6 * u)
@@ -626,8 +789,14 @@ class Deck:
             w.hit(rect, self.tap(lambda fn=fn: self.said_from(fn)), name=label)
 
     def said_from(self, fn):
-        text = fn()
-        if text: self.say(text)
+        res = fn()
+        if isinstance(res, dict) and res.get('open_channel'):
+            ch = res['open_channel']
+            base = self.w.memo.get('media:' + self.src.name, self.src.tabs[0])
+            self.open_tab(base if base in self.src.tabs else self.src.tabs[0])
+            self.load(lambda: self.src.open({'title': ch['name'], 'channel': ch}), push=True, title=ch['name'])
+            return
+        if isinstance(res, str) and res: self.say(res)
 
     def stop(self):
         self.report('stopped')

@@ -1,11 +1,13 @@
 """Self-check for tandem.py: python3 test_tandem.py (standard library only, runs on ArmadaOS too)."""
-import json, os, stat, tempfile, threading, time, unittest, urllib.error, urllib.request
+import atexit, json, os, shutil, stat, tempfile, threading, time, unittest, urllib.error, urllib.request
 from pathlib import Path
 
 TMP = Path(tempfile.mkdtemp(prefix='tandem-test-'))
+atexit.register(shutil.rmtree, TMP, True)
 os.environ['HOME'] = str(TMP / 'home')
 os.environ['XDG_STATE_HOME'] = str(TMP / 'state')
 os.environ['XDG_CONFIG_HOME'] = str(TMP / 'config')
+os.environ['XDG_RUNTIME_DIR'] = str(TMP / 'run')
 import tandem  # noqa: E402  (after HOME is redirected)
 
 HOME = TMP / 'home'
@@ -18,6 +20,15 @@ def touch(path, text=''):
     path.write_text(text)
 
 
+TINY_PNG = (b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89'
+            b'\x00\x00\x00\rIDATx\x9cc\xf8\xcf\xc0\xf0\x1f\x00\x05\x00\x01\xff\x89\x99=\x1d\x00\x00\x00\x00IEND\xaeB`\x82')
+
+
+def touch_bin(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+
+
 def setUpModule():
     touch(SD / 'ROMs/psx/Breath of Fire III (Europe).chd')
     touch(SD / 'ROMs/psx/notes.txt')
@@ -25,6 +36,10 @@ def setUpModule():
     touch(SD / 'ROMs/switch/Some Game.nsp')
     touch(SD / 'Cocoon/downloaded_media/psx/icon/Breath of Fire III (Europe)__cocoon_edit_12_abcdef.png', 'png')
     touch(SD / 'Cocoon/downloaded_media/psx/hero/Breath of Fire III (Europe)__cocoon_edit_12_abcdef.jpg', 'jpg')
+    touch_bin(SD / 'Cocoon/downloaded_media/psx/logo/Breath of Fire III (Europe)__cocoon_edit_12_abcdef.png', TINY_PNG)
+    touch_bin(SD / 'Cocoon/downloaded_media/psx/screenshot_gameplay/Breath of Fire III (Europe)__cocoon_edit_12_abcdef.png', TINY_PNG)
+    touch_bin(SD / 'Cocoon/assets/icon_overlays/pack-1/icon_overlays/psx/mask.png', TINY_PNG)
+    touch_bin(SD / 'Cocoon/assets/icon_overlays/pack-1/icon_overlays/psx/overlay.png', TINY_PNG)
     touch(SD / 'secret.png', 'secret')
     touch(SD / 'Cocoon/assets/smart_folders/pack-1/smart_folders/by_platform/psx/icon.png', 'png')
     touch(SD / 'Cocoon/assets/smart_folders/pack-1/smart_folders/by_platform/psx/hero.png', 'png')
@@ -72,11 +87,15 @@ class WowLogin(unittest.TestCase):
 
 
     def test_chooser(self):  # blue mark on row one + red accept button = the account chooser
-        from PIL import Image
+        try: from PIL import Image
+        except ImportError: self.skipTest('PIL fehlt')
         import wowpick
         im = Image.new('RGB', (1920, 1080))
         self.assertFalse(wowpick.chooser_up(im))
         im.putpixel((1000, 496), (23, 110, 212)); im.putpixel((894, 664), (171, 1, 1))
+        self.assertTrue(wowpick.chooser_up(im))
+        im = Image.new('RGB', (1920, 1080))  # the dialog sits higher when the login form is shorter
+        im.putpixel((1000, 476), (25, 104, 198)); im.putpixel((894, 716), (163, 1, 1))
         self.assertTrue(wowpick.chooser_up(im))
 
 
@@ -103,7 +122,11 @@ class Scan(unittest.TestCase):
         self.assertEqual(set(by_title), {'Breath of Fire III', 'The Legend of Zelda - The Minish Cap', 'Some Game', 'Hades'})  # no notes.txt, no Proton
         self.assertTrue(by_title['Breath of Fire III']['cover'].endswith('.png'))
         self.assertTrue(by_title['Breath of Fire III']['hero'].endswith('.jpg'))
+        self.assertTrue(by_title['Breath of Fire III']['logo'].endswith('.png'))
+        self.assertTrue(by_title['Breath of Fire III']['shot'].endswith('.png'))
         payload = t.library.payload(t.saved)
+        self.assertIn('psx', payload['overlays'])
+        self.assertIn('cocoon', [th['id'] for th in tandem.themes()])
         self.assertEqual(payload['systems']['psx']['emu'], 'DuckStation')
         self.assertTrue(payload['systems']['psx']['cover'] and payload['systems']['psx']['hero'])
         self.assertIsNone(payload['systems']['gba']['cover'])
@@ -366,9 +389,9 @@ class Http(unittest.TestCase):
         gid = next(iter(self.t.library.games))
         self.assertEqual(json.loads(self.call('/api/fav', {'id': gid})[1])['fav'], [gid])
         self.call('/api/ui', {'tab': 1, 'sys': 'psx', 'i': 2, 'from': 'x'})
-        self.assertEqual(json.loads(self.call('/api/state')[1])['ui'], {'tab': 1, 'sys': 'psx', 'i': 2, 'page': '', 'pane': 0})
-        self.call('/api/ui', {'tab': 4, 'i': 3, 'page': 'controls>map', 'pane': 1})  # the settings: page and focus side travel along
-        self.assertEqual(json.loads(self.call('/api/state')[1])['ui'], {'tab': 4, 'sys': None, 'i': 3, 'page': 'controls>map', 'pane': 1})
+        self.assertEqual(json.loads(self.call('/api/state')[1])['ui'], {'tab': 1, 'sys': 'psx', 'i': 2, 'page': '', 'pane': 0, 'dev': ''})
+        self.call('/api/ui', {'tab': 4, 'i': 3, 'page': 'controls>map', 'pane': 1, 'dev': ''})  # the settings: page and focus side travel along
+        self.assertEqual(json.loads(self.call('/api/state')[1])['ui'], {'tab': 4, 'sys': None, 'i': 3, 'page': 'controls>map', 'pane': 1, 'dev': ''})
         self.call('/api/ui', {'tab': 4, 'page': '../x', 'pane': 'x'})
         self.assertEqual({k: v for k, v in json.loads(self.call('/api/state')[1])['ui'].items() if k in ('page', 'pane')}, {'page': '', 'pane': 0})
         self.call('/api/ui', {'tab': 1, 'sys': ['bad'], 'i': 0})
@@ -474,6 +497,86 @@ class Doze(unittest.TestCase):
                 self.assertFalse(tandem.action('wake')['doze'])
             finally: tandem.on_power, tandem.set_raw, tandem.BACKLIGHTS = old
         self.assertEqual(writes, [('bt', 0), ('bb', 0), ('bt', 700), ('bb', 700)])
+
+    def test_dark_panel_still_wakes_lit(self):  # 18.11.: a doze over already dark panels woke to 0/0
+        writes, old = [], (tandem.on_power, tandem.set_raw, tandem.BACKLIGHTS)
+        with tempfile.TemporaryDirectory() as d:
+            for n in ('top', 'bot'):
+                Path(d, n).mkdir(); Path(d, n, 'brightness').write_text('0'); Path(d, n, 'max_brightness').write_text('400')
+            tandem.on_power, tandem.set_raw = (lambda: True), (lambda k, r: writes.append((k, r)))
+            tandem.BACKLIGHTS = {'bt': d + '/top', 'bb': d + '/bot'}
+            try:
+                tandem.action('suspend'); tandem.action('wake')
+            finally: tandem.on_power, tandem.set_raw, tandem.BACKLIGHTS = old
+        self.assertEqual(writes[-2:], [('bt', 300), ('bb', 300)])
+
+    def test_power_key_and_lid(self):
+        pk = tandem.PowerKey()
+        self.assertIsNone(pk.event(1, 116, 1, 10.0, False))
+        self.assertEqual(pk.event(1, 116, 0, 10.2, False), 'standby')  # short press -> standby
+        self.assertIsNone(pk.event(1, 116, 1, 10.4, False))  # bounce guard
+        self.assertEqual(pk.event(1, 116, 1, 12.0, True), 'wake')  # power press while dozing -> wake
+        self.assertIsNone(pk.event(1, 116, 0, 12.15, False))  # wake release does not bounce back to standby
+        self.assertIsNone(pk.event(1, 116, 1, 20.0, False))
+        self.assertEqual(pk.tick(20.85, False), 'power')  # held >= 0.8 s -> power menu right away
+        self.assertIsNone(pk.tick(21.0, False))  # once per hold
+        self.assertIsNone(pk.event(1, 116, 0, 21.1, False))  # release after hold is ignored
+        self.assertEqual(pk.event(5, 0, 1, 30.0, False), 'standby')  # lid closed -> standby
+        self.assertIsNone(pk.event(1, 116, 1, 35.0, True))  # power bumped with lid closed -> ignored
+        self.assertEqual(pk.event(5, 0, 0, 40.0, True), 'wake')  # lid opened -> wake
+        self.assertIsNone(pk.event(5, 0, 1, 50.0, False, lid_sleep=False))  # lid_sleep disabled
+        pk.event(5, 0, 0, 51.0, False)
+        self.assertEqual(pk.resumed(60.0), 'wake')
+        self.assertIsNone(pk.event(1, 116, 1, 60.5, False))  # post-suspend bounce guard
+
+    def test_standby_pauses_playtime_and_per_game_options(self):
+        t = make()
+        t.dry = True
+        gid = next(g['id'] for g in t.library.games.values() if g['s'] == 'psx')
+        self.assertTrue(t.launch(gid).get('tracked'))
+        t0 = t.run['since']
+        tandem.sleep_game(t, True)
+        tandem.SLEEP_STATE['since'] -= 3600  # 1 hour asleep
+        tandem.sleep_game(t, False)
+        self.assertGreaterEqual(t.run['since'] - t0, 3599)  # slept time shifted out of playtime
+        self.assertEqual(t.gameopt({'profile': 'Eco', 'fps': 45, 'scale': 'linear'}), {'ok': True, 'profile': 'Eco', 'fps': 45, 'scale': 'linear'})
+        self.assertIn('error', t.gameopt({'fps': 99}))
+        t.quit()
+        self.assertIsNone(t.run)
+        self.assertTrue(t.launch(gid).get('tracked'))
+        self.assertEqual((t.run['profile'], t.run['fps']), ('Eco', 45))  # remembered on next launch
+        t.quit()
+        cfg = tandem.save_config({'lid_sleep': False, 'charger_standby': 'sleep'})
+        self.assertEqual((cfg['lid_sleep'], cfg['charger_standby']), (False, 'sleep'))
+        tandem.save_config({'lid_sleep': True, 'charger_standby': 'doze'})
+
+    def test_saves_night_mode_and_scaling(self):
+        import saves
+        fake_home = TMP / 'save-home'
+        touch(fake_home / '.local/share/duckstation/memcards/card1.mcd', 'psx-save')
+        touch(fake_home / '.local/share/banananative/0400486024DEC000/save/slot_00/progress.sav', 'zelda-save')
+        touch(fake_home / '.local/share/banananative/0400486024DEC000/temp/vk_pipelines.bin', 'huge-cache')
+        dest = TMP / 'backups'
+        res = saves.backup(target='', home=fake_home, local_dir=dest, run_rsync=False)
+        self.assertTrue(res.get('ok'), res)
+        self.assertEqual(res['count'], 2)
+        self.assertEqual((dest / 'latest/duckstation/card1.mcd').read_text(), 'psx-save')
+        self.assertEqual((dest / 'latest/banananative-0400486024DEC000/slot_00/progress.sav').read_text(), 'zelda-save')
+        self.assertFalse((dest / 'latest/banananative-0400486024DEC000/vk_pipelines.bin').exists())  # shader caches excluded
+        self.assertEqual(len(list(dest.glob('saves-*.tar.gz'))), 1)
+        # night_mode + save_target validation + per-game scaling
+        cfg = tandem.save_config({'night_mode': 'warm', 'save_auto': False, 'save_target': 'user@server:~/saves'})
+        self.assertEqual((cfg['night_mode'], cfg['save_auto'], cfg['save_target']), ('warm', False, 'user@server:~/saves'))
+        self.assertIn('error', tandem.save_config({'save_target': 'not a ssh target'}))
+        tandem.save_config({'night_mode': 'off', 'save_auto': True, 'save_target': saves.DEFAULT_TARGET})
+        t = make(); t.dry = True
+        gid = next(g['id'] for g in t.library.games.values() if g['s'] == 'psx')
+        t.launch(gid)
+        self.assertEqual(t.gameopt({'scale': 'sgsr'})['scale'], 'sgsr')
+        t.quit()
+        t.launch(gid)
+        self.assertEqual(t.run['scale'], 'sgsr')
+        t.quit()
 
 
 class Themes(unittest.TestCase):
@@ -586,12 +689,58 @@ class ThorHardware(unittest.TestCase):
 
 
 
+class Bluetooth(unittest.TestCase):
+    """bluetooth.py against a stand-in for BlueZ's D-Bus objects (pairing with a real device needs hands at the Thor)."""
+    A1, A2 = 'AA:BB:CC:DD:EE:01', 'AA:BB:CC:DD:EE:02'
+    OBJS = {'/org/bluez': {'org.bluez.AgentManager1': {}},
+            '/org/bluez/hci0': {'org.bluez.Adapter1': {'Powered': True, 'Discovering': True}},
+            '/org/bluez/hci0/dev_1': {'org.bluez.Device1': {'Address': A1, 'Name': 'WH-1000XM4', 'Alias': 'WH-1000XM4', 'Icon': 'audio-headset', 'Paired': True, 'Connected': True},
+                                      'org.bluez.Battery1': {'Percentage': 70}},
+            '/org/bluez/hci0/dev_2': {'org.bluez.Device1': {'Address': A2, 'Name': '8BitDo Pro 2', 'Class': 0x002508, 'Paired': False, 'RSSI': -50}},
+            '/org/bluez/hci0/dev_3': {'org.bluez.Device1': {'Address': 'AA:BB:CC:DD:EE:03', 'Paired': False, 'RSSI': -40}}}  # nameless: left out
+
+    class Bus:
+        def __init__(self, objs): self.objs, self.calls = objs, []
+        def get_object(self, name, path):
+            bus = self
+            class Obj:
+                def __getattr__(self, method): return lambda *a, **k: bus.calls.append((path, method, a)) or (bus.objs if method == 'GetManagedObjects' else None)
+            return Obj()
+
+    def test_state(self):
+        import bluetooth
+        s = bluetooth.state(self.OBJS)
+        self.assertTrue(s['powered'] and s['scanning'])
+        self.assertEqual([(d['name'], d['kind'], d['paired'], d['connected'], d['battery']) for d in s['devices']],
+                         [('WH-1000XM4', 'audio', True, True, 70), ('8BitDo Pro 2', 'pad', False, False, None)])
+        self.assertIn('error', bluetooth.state({}))
+
+    def test_actions(self):
+        try: import dbus  # noqa: F401  only where python3-dbus is (ArmadaOS)
+        except ImportError: self.skipTest('python3-dbus fehlt')
+        import bluetooth
+        b = self.Bus(self.OBJS)
+        agent = []
+        old = bluetooth.Agent.on, bluetooth.Agent.off
+        bluetooth.Agent.on, bluetooth.Agent.off = lambda bus: agent.append('on'), lambda bus: agent.append('off')
+        try:
+            self.assertEqual(bluetooth.act(self.A2, 'pair', b), {'text': '8BitDo Pro 2 verbunden.'})
+            self.assertEqual([c[1] for c in b.calls if c[0].endswith('dev_2')], ['Pair', 'Set', 'Connect'])
+            self.assertEqual(agent, ['on', 'off'])
+            b.calls.clear()
+            self.assertEqual(bluetooth.act(self.A1, 'forget', b)['text'], 'WH-1000XM4 vergessen.')
+            self.assertEqual([c[1] for c in b.calls if c[1] != 'GetManagedObjects'], ['RemoveDevice'])
+            self.assertIn('error', bluetooth.act('AA:BB:CC:DD:EE:09', 'connect', b))
+            self.assertIn('error', bluetooth.act(self.A1, 'rm -rf', b))
+        finally: bluetooth.Agent.on, bluetooth.Agent.off = old
+
+
 class English(unittest.TestCase):
     """The English interface: the setting persists, and every German text the screens can show has an English one."""
     GERMAN = __import__('re').compile(r'[äöüÄÖÜß„]|\b(der|die|das|und|nicht|ist|kein|keine|mit|für|von|auf|noch|wird|bitte|Spiel|Spiele|starten|beenden|'
                                       r'Einstellungen|Taste|Tasten|Akku|Bildschirm|fehlt|gefunden|installiert|läuft|Suche|Fehler|Passwort|Konto)\b')
-    FILES = ['tandem.py', 'thor.py', 'controls.py', 'setup.py', 'ui/tandem_ui.py', 'ui/settings_view.py', 'ui/quick_view.py',
-             'ui/decks/media.py', 'ui/decks/youtube.py', 'ui/decks/plex.py', 'ui/decks/pack.py', 'ui/decks/mpv.py']
+    FILES = ['tandem.py', 'thor.py', 'bluetooth.py', 'controls.py', 'saves.py', 'setup.py', 'ui/tandem_ui.py', 'ui/settings_view.py', 'ui/quick_view.py', 'ui/qr.py',
+             'ui/decks/media.py', 'ui/decks/offline.py', 'ui/decks/youtube.py', 'ui/decks/plex.py', 'ui/decks/gallery.py', 'ui/decks/pack.py', 'ui/decks/mpv.py']
     KEEP = {'Tandem/0.1 (game launcher)', '<p><b>Die PIN stimmt nicht.</b></p>', 'ist', '7: kein 200',  # not shown, or translated as a whole (rules) or by the web page
             'Emulator fehlt (unter Apps oder im Armada Store installieren) – ', ' Installieren: Einstellungsseite › Gerät.', 'Passwort für ', 'keine Spiele',
             'Läuft · ', ' · Akku 7 %7', ' (lädt)', 'Angemeldet und eingetragen in: ', 'Einstellungen · ', ' · geschützt', ' Das Passwort tippst du unten ein.', ' · lädt',
@@ -638,6 +787,83 @@ class English(unittest.TestCase):
                 if '\n' in text or text in self.KEEP or not self.GERMAN.search(text): continue
                 if tr(text) == text: missing.append(f'{name}:{node.lineno}: {text}')
         self.assertEqual(missing, [], "\n".join(missing))
+
+
+class VolumeRepeatTest(unittest.TestCase):
+    def test_vol_repeat(self):
+        v = tandem.VolRepeat()
+        self.assertEqual(v.event(1, 115, 1, 10.0), 5)
+        self.assertEqual(v.tick(10.20), 0)
+        self.assertEqual(v.tick(10.36), 5)
+        self.assertEqual(v.tick(10.46), 5)
+        self.assertEqual(v.event(1, 115, 2, 10.50), 0)  # kernel EV_REP ignored if present
+        self.assertEqual(v.event(1, 115, 0, 10.52), 0)
+        self.assertEqual(v.tick(10.70), 0)
+        self.assertEqual(v.event(1, 114, 1, 20.0), -5)
+        self.assertEqual(v.tick(20.36), -5)
+        v.clear()
+        self.assertEqual(v.tick(20.50), 0)
+
+
+class YouTubeAuthAndPromptTest(unittest.TestCase):
+    def tearDown(self):
+        tandem.save_config({'yt_forget': True})
+
+    def test_firefox_wal_export_and_sso_fallback(self):
+        import sqlite3
+        prof, cfile, _ = tandem.yt_paths()
+        prof.mkdir(parents=True, exist_ok=True)
+        con = sqlite3.connect(prof / 'cookies.sqlite')
+        try:
+            con.execute('PRAGMA journal_mode=WAL')
+            con.execute('CREATE TABLE moz_cookies (host TEXT, path TEXT, isSecure INT, expiry INT, name TEXT, value TEXT)')
+            # Live uncommitted/uncheckpointed WAL rows: Firefox 128+ ms timestamp + session cookie (expiry 0) on .google.com
+            con.execute("INSERT INTO moz_cookies VALUES ('.google.com', '/', 1, 1893456000000, 'SAPISID', 'abc123')")
+            con.execute("INSERT INTO moz_cookies VALUES ('.google.com', '/', 1, 0, 'SID', 'sidval')")
+            con.commit()  # stays in cookies.sqlite-wal while connection is open!
+            self.assertTrue(tandem.yt_cookie_signed_in())
+            self.assertTrue(tandem.export_yt_cookies())
+            self.assertEqual(stat.S_IMODE(cfile.stat().st_mode), 0o600)
+            txt = cfile.read_text()
+            self.assertIn('.google.com\tTRUE\t/\tTRUE\t1893456000\tSAPISID\tabc123', txt)
+            self.assertIn('.youtube.com\tTRUE\t/\tTRUE\t1893456000\tSAPISID\tabc123', txt)  # SSO fallback mirrored to .youtube.com
+        finally:
+            con.close()
+
+    def test_cookie_import_formats_and_forget(self):
+        _, cfile, _ = tandem.yt_paths()
+        self.assertIn('error', tandem.save_config({'yt_cookies': ''}))
+        self.assertIn('error', tandem.save_config({'yt_cookies': '.example.com\tTRUE\t/\tFALSE\t0\tFOO\tbar\n'}))
+        res = tandem.save_config({'yt_cookies': json.dumps([{'domain': '.youtube.com', 'path': '/', 'secure': True, 'expirationDate': 1893456000, 'name': '__Secure-3PAPISID', 'value': 'xyz'}])})
+        self.assertEqual(res.get('text'), 'YouTube-Cookies gespeichert.')
+        self.assertTrue(tandem.public_config()['yt_cookie'])
+        self.assertTrue(tandem.public_config()['yt_set'])
+        self.assertEqual(stat.S_IMODE(cfile.stat().st_mode), 0o600)
+        tandem.save_config({'yt_forget': True})
+        self.assertFalse(tandem.public_config()['yt_cookie'])
+        self.assertFalse(cfile.exists())
+
+    def test_keyboard_type_text_and_prompt_state(self):
+        import sys
+        pressed = []
+        kb = tandem.Keyboard.__new__(tandem.Keyboard)
+        kb.fd = 1
+        kb.press = lambda code, mods=(): pressed.append((code, list(mods))) or {'ok': True}
+        kb.type_text('a@b.de', 'de')
+        self.assertEqual(pressed, [(30, []), (16, ['altgr']), (48, []), (52, []), (32, []), (18, [])])
+        sys.path.insert(0, str(Path(tandem.__file__).parent / 'ui'))
+        import qr
+        m = qr.matrix('https://www.youtube.com/activate?user_code=ABCD-EFGH')
+        self.assertEqual(len(m), 29)  # v3: 29x29
+        self.assertIn('<svg', qr.svg('https://plex.tv/link'))
+        self.assertTrue(qr.png('hi').startswith(b'\x89PNG\r\n\x1a\n'))
+        _, _, afile = tandem.yt_paths()
+        tandem._write_priv_json(afile, {'access': 'a', 'refresh': 'r', 'until': int(time.time()) + 3600, 'tv': True})
+        self.assertTrue(tandem.yt_auth_signed_in())
+        self.assertTrue(tandem.public_config()['yt_set'])
+        tandem.save_config({'yt_forget': True})
+        self.assertFalse(tandem.yt_auth_signed_in())
+        self.assertFalse(tandem.public_config()['yt_set'])
 
 
 if __name__ == '__main__':

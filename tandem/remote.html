@@ -3,33 +3,41 @@
 /* Toravo Studio look (tokens from toravo-os/brand/tokens.css): near-black with a violet tint, Inter, tracked micro labels. */
 :root{--bg:#07070d;--bg2:#0c0c14;--panel:#12111c;--panel2:#181626;--line:#24213a;--text:#f2f2f7;--text2:#a9a8bd;--text3:#9491ad;
  --violet:#8a5cf6;--coral:#d8806a;--green:#4cc38a;--grad:linear-gradient(90deg,#8a5cf6 0%,#6f9be0 55%,#5ab0d0 100%);--r:12px}
-*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:84px}
+*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:84px;color-scheme:dark;scrollbar-color:var(--line) var(--bg);background:var(--bg);color:var(--text)}
+::selection{background:rgba(138,92,246,.32);color:var(--text)}
 body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 Inter,"Inter Variable",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
 header{position:sticky;top:0;z-index:5;height:72px;display:flex;align-items:center;gap:28px;padding:0 max(16px,5vw);background:rgba(7,7,13,.92);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
 .mark{font-weight:700;letter-spacing:.32em;font-size:13px;white-space:nowrap}.mark i{font-style:normal;color:var(--violet)}
-nav{display:flex;gap:22px;overflow-x:auto;font-size:14px;scrollbar-width:none}nav a{color:var(--text2);text-decoration:none;white-space:nowrap;padding:8px 0}nav a:hover,nav a:focus-visible{color:var(--violet)}
+nav{display:flex;gap:22px;overflow-x:auto;font-size:14px;scrollbar-width:none}nav a{color:var(--text2);text-decoration:none;white-space:nowrap;padding:8px 0}nav a:hover,nav a:focus-visible{color:#a47ef9}
 #live{margin-left:auto;display:flex;align-items:center;gap:8px;color:var(--text2);font-size:13px;white-space:nowrap}#live::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--text3)}#live.on::before{background:var(--green)}
 main{max-width:1120px;margin:0 auto;padding:28px max(16px,5vw) 96px;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,330px),1fr));gap:18px;align-items:start}
 section{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:22px}
 section.wide{grid-column:1/-1}
-h2{margin:0 0 4px;font-size:11px;font-weight:600;letter-spacing:.32em;text-transform:uppercase;color:var(--text3)}
-h3{margin:0 0 14px;font-size:19px;font-weight:600}
+h2{margin:0 0 14px;font-size:21px;line-height:1.25;font-weight:600;letter-spacing:-.015em}
+h3{margin:20px 0 12px;font-size:16px;font-weight:600}
 p{margin:0 0 12px;color:var(--text2)}p:last-child{margin-bottom:0}
 label{display:block;margin:14px 0 6px;font-size:13px;color:var(--text2)}label:first-of-type{margin-top:0}
-input,select,button{font:inherit;color:inherit;width:100%;min-height:44px;padding:10px 12px;border-radius:8px;border:1px solid var(--line);background:var(--bg2)}
-input:focus-visible,select:focus-visible,button:focus-visible,a:focus-visible{outline:2px solid var(--violet);outline-offset:2px}
+input,select,textarea,button{font:inherit;color:var(--text);width:100%;min-height:44px;padding:10px 12px;border-radius:8px;border:1px solid var(--line);background:var(--bg2);caret-color:var(--violet)}
+textarea{min-height:84px;resize:vertical;font:13px/1.45 "JetBrains Mono",ui-monospace,monospace}
+input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-visible,summary:focus-visible,a:focus-visible{outline:2px solid var(--violet);outline-offset:2px}
 input[type=range]{padding:0;min-height:32px;border:0;background:none;accent-color:var(--violet)}
 button{cursor:pointer;background:var(--panel2);font-weight:500}button:hover{border-color:var(--violet)}
 button.go{background:var(--violet);border-color:var(--violet);color:#0b0718;font-weight:600;margin-top:16px}button.warn{color:var(--coral)}
-.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-top:14px}.row:first-child{margin-top:0}
-.slider{display:grid;grid-template-columns:1fr 3.2em;gap:12px;align-items:center}.slider output{font:13px "JetBrains Mono",ui-monospace,monospace;color:var(--text2);text-align:right}
-.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px}.stat b{display:block;font-size:19px;font-weight:600;overflow-wrap:anywhere}.stat span{font-size:12px;color:var(--text3)}
+.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-top:14px}.row:first-child{margin-top:0}.row button.go{margin-top:0}
+.slider{display:grid;grid-template-columns:1fr 3.2em;gap:12px;align-items:center}.slider output{font:13px "JetBrains Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums;color:var(--text2);text-align:right}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px}.stat b{display:block;font-size:21px;font-weight:600;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.stat span{font-size:12px;color:var(--text3)}
 .bar{height:6px;border-radius:3px;background:var(--bg2);overflow:hidden;margin-top:8px}.bar i{display:block;height:100%;background:var(--grad)}
 #msg{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);max-width:min(92vw,520px);padding:12px 18px;border-radius:999px;background:var(--panel2);border:1px solid var(--violet);box-shadow:0 12px 40px #0009;opacity:0;pointer-events:none;transition:opacity .2s}
 #msg.show{opacity:1}
 .check{display:flex;align-items:center;gap:12px;margin:14px 0 0;color:var(--text);font-size:15px}.check input{width:22px;min-height:22px;accent-color:var(--violet)}
 .swatches{display:flex;flex-wrap:wrap;gap:10px;margin-top:6px}.swatches button{width:40px;min-height:40px;border-radius:50%;padding:0;border:2px solid var(--line)}.swatches button[aria-pressed=true]{border-color:var(--text);box-shadow:0 0 0 3px var(--bg),0 0 0 5px var(--text)}
-table{width:100%;border-collapse:collapse;font-size:14px}td{padding:8px 0;border-top:1px solid var(--line);vertical-align:top}td:last-child{text-align:right;white-space:nowrap;padding-left:12px;color:var(--text2)}td small{display:block;color:var(--text3);font-size:12px}th{text-align:left;padding:16px 0 4px;font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--text3);font-weight:600}
+table{width:100%;border-collapse:collapse;font-size:14px}td{padding:8px 0;border-top:1px solid var(--line);vertical-align:top}td:last-child{text-align:right;white-space:nowrap;padding-left:12px;color:var(--text2);font-variant-numeric:tabular-nums}td small{display:block;color:var(--text3);font-size:12px}th{text-align:left;padding:16px 0 4px;font-size:12px;color:var(--text3);font-weight:600}
+details{margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}summary{cursor:pointer;font-size:13px;color:var(--text2);user-select:none}summary:hover{color:#a47ef9}details[open] summary{margin-bottom:10px;color:var(--text)}
+.qrbox{margin-top:16px;padding:16px;border-radius:10px;border:1px solid var(--line);background:var(--bg2);display:grid;grid-template-columns:136px 1fr;gap:16px;align-items:center}
+.qrbox[hidden]{display:none}.qrsvg{width:136px;height:136px;border-radius:8px;overflow:hidden;background:#fff;padding:6px}.qrsvg svg{display:block;width:100%;height:100%}
+.qcode{display:inline-block;margin:6px 0 10px;padding:6px 12px;border-radius:8px;background:var(--panel2);border:1px solid var(--line);font:700 18px/1.3 "JetBrains Mono",ui-monospace,monospace;letter-spacing:.06em;color:var(--text)}
+a.go{display:inline-flex;align-items:center;justify-content:center;width:100%;min-height:44px;padding:10px 14px;border-radius:8px;background:var(--violet);color:#0b0718;font-weight:600;text-decoration:none}
+@media(max-width:480px){.qrbox{grid-template-columns:1fr;justify-items:center;text-align:center}}
 .login{max-width:420px;margin:12vh auto 0;padding:0 16px}.login b{color:var(--coral)}
 @media(max-width:640px){header{gap:14px}.mark{letter-spacing:.2em}#live span{display:none}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}#msg{transition:none}}
@@ -40,54 +48,53 @@ if('__LANG__'=='en'){const E=__EN__,R=E.rules.map(([p,t])=>[new RegExp('^(?:'+p+
  const tr=s=>{if(s in E.text)return E.text[s];const c=s.trim();if(c!=s)return c?s.slice(0,s.length-s.trimStart().length)+tr(c)+s.slice(s.trimEnd().length):s;if(s in U)return U[s];
   for(const[r,t]of R){const m=s.match(r);if(m)return t.replace(/\{(\d)\}/g,(_,n)=>tr(m[n]||''))}return s};
  const walk=n=>{if(n.nodeType==3){const t=tr(n.data);if(t!=n.data)n.data=t;return}if(n.nodeType!=1||n.tagName=='SCRIPT'||n.tagName=='STYLE')return;
-  for(const a of['aria-label','title','data-ask']){const v=n.getAttribute(a),t=v&&tr(v);if(t&&t!=v)n.setAttribute(a,t)}n.childNodes.forEach(walk)};
+  for(const a of['aria-label','title','data-ask','placeholder']){const v=n.getAttribute(a),t=v&&tr(v);if(t&&t!=v)n.setAttribute(a,t)}n.childNodes.forEach(walk)};
  document.documentElement.lang='en';addEventListener('DOMContentLoaded',()=>{walk(document.body);  // later texts (load(), say()) too; translated ones do not match again, so this settles
   new MutationObserver(ms=>ms.forEach(m=>m.type=='characterData'?walk(m.target):m.addedNodes.forEach(walk))).observe(document.body,{subtree:true,childList:true,characterData:true})})}
 </script>
 <!--SPLIT-->
 <header><div class="mark">TORAVO<i>/</i>TANDEM</div></header>
-<div class="login"><section><h2>Einrichtung</h2><h3>Mit dem Thor verbinden</h3>
+<div class="login"><section><h2>Mit dem Thor verbinden</h2>
 <p>Die PIN steht auf dem Thor unter „System“. Danach bleibt dieses Gerät ein Jahr angemeldet.</p>__MSG__
 <form method="post"><label for="pin">PIN vom Thor</label><input id="pin" name="pin" inputmode="numeric" autocomplete="off" required autofocus><button class="go">Anmelden</button></form></section></div>
 <!--SPLIT-->
 <header><div class="mark">TORAVO<i>/</i>TANDEM</div>
-<nav aria-label="Bereiche"><a href="#bild">Bildschirme &amp; Ton</a><a href="#controller">Controller</a><a href="#licht">Beleuchtung</a><a href="#leistung">Leistung</a><a href="#netz">WLAN</a><a href="#konten">Konten</a><a href="#aussehen">Aussehen</a><a href="#spiele">Bibliothek</a><a href="#updates">Updates</a><a href="#geraet">Gerät</a></nav>
+<nav aria-label="Bereiche"><a href="#bild">Bildschirme &amp; Ton</a><a href="#controller">Controller</a><a href="#licht">Beleuchtung</a><a href="#leistung">Leistung</a><a href="#netz">WLAN</a><a href="#konten">Konten</a><a href="#youtube">YouTube</a><a href="#aussehen">Aussehen</a><a href="#spiele">Bibliothek</a><a href="#updates">Updates</a><a href="#geraet">Gerät</a></nav>
 <div id="live"><span>verbinde …</span></div></header>
 <main>
-<section class="wide" id="uebersicht"><h2>Übersicht</h2><h3 id="st">–</h3><div class="stats" id="stats"></div></section>
+<section class="wide" id="uebersicht"><h2 id="st">–</h2><div class="stats" id="stats"></div></section>
 
-<section id="bild"><h2>Bildschirme &amp; Ton</h2><h3>Helligkeit und Lautstärke</h3>
+<section id="bild"><h2>Helligkeit und Lautstärke</h2>
 <label for="bt">Oberer Bildschirm</label><div class="slider"><input type="range" id="bt" max="100"><output for="bt"></output></div>
 <label for="bb">Unterer Bildschirm</label><div class="slider"><input type="range" id="bb" max="100"><output for="bb"></output></div>
 <label for="vol">Lautstärke</label><div class="slider"><input type="range" id="vol" max="100"><output for="vol"></output></div>
-<label for="rest">Ruheschutz (OLED): Bildschirme schwarz nach</label><select id="rest"><option value="0">nie</option><option value="1">1 Minute</option><option value="3">3 Minuten</option><option value="10">10 Minuten</option></select></section>
+<label for="night">Nachtmodus (Blaulichtfilter)</label><select id="night"><option value="off">Aus</option><option value="warm">Warm</option><option value="night">Nacht</option></select>
+<label for="rest">Ruheschutz (OLED): Bildschirme schwarz nach</label><select id="rest"><option value="0">nie</option><option value="1">1 Minute</option><option value="3">3 Minuten</option><option value="10">10 Minuten</option></select>
+<label class="check"><input type="checkbox" id="lid"> Beim Zuklappen in Standby</label>
+<label for="cstby">Am Ladegerät</label><select id="cstby"><option value="doze">Erreichbar</option><option value="sleep">Tiefschlaf</option></select></section>
 
-<section id="controller"><h2>Controller &amp; Tasten</h2><h3>Tastenbelegung</h3><p>Bestätigen ist immer A, zurück immer B – in Tandem, in jedem Emulator und in den Ports.</p>
+<section id="controller"><h2>Tastenbelegung</h2><p>Bestätigen ist immer A, zurück immer B – in Tandem, in jedem Emulator und in den Ports.</p>
 <table id="map"></table><p id="off" style="margin-top:14px">–</p><button id="ctrlgo">In allen Emulatoren angleichen</button>
 <label class="check" id="gyrorow" hidden><input type="checkbox" id="gyro"> Gyro (Bewegungssensor)</label>
 <label for="kb">Bildschirmtastatur</label><select id="kb"><option value="de">Deutsch</option><option value="us">Englisch (US)</option></select></section>
 
-<section id="licht"><h2>Beleuchtung</h2><h3>Stick-Ringe</h3><p id="rgbmsg">–</p><div id="rgbbox" hidden>
+<section id="licht"><h2>Stick-Ringe</h2><p id="rgbmsg">–</p><div id="rgbbox" hidden>
 <label class="check"><input type="checkbox" id="rgbon"> Beleuchtung an</label>
 <label>Farbe</label><div class="swatches" id="sw"></div>
 <label for="rgbl">Helligkeit</label><div class="slider"><input type="range" id="rgbl" max="100"><output for="rgbl"></output></div>
 <label class="check"><input type="checkbox" id="rgblink"> Mit dem Bildschirm heller und dunkler</label></div></section>
 
-<section id="leistung"><h2>Leistung &amp; Akku</h2><h3>Leistungsprofil</h3><select id="prof"></select>
+<section id="leistung"><h2>Leistungsprofil</h2><select id="prof"></select>
 <p style="margin-top:12px">Sparsam: länger spielen, leiser. Ausgewogen: für fast alles. Leistung: volle Kraft für PS2, Switch und PC-Spiele.</p><div class="stats" id="pstats"></div></section>
 
-<section id="netz"><h2>Netzwerk</h2><h3>WLAN</h3><p id="wl">–</p>
+<section id="netz"><h2>WLAN</h2><p id="wl">–</p>
 <label for="ssid">Netz</label><select id="ssid"></select>
 <label for="wp">Passwort (leer lassen bei bekanntem Netz)</label><input id="wp" type="password" autocomplete="off">
 <button class="go" id="wgo">Verbinden</button>
 <label for="own">Eigene Adresse dieser Seite (z. B. https://thor.example.de, leer = keine)</label><input id="own" type="url" autocomplete="off" autocapitalize="off" placeholder="https://">
 <button id="owngo">Adresse speichern</button></section>
 
-
-
-
-
-<section id="konten"><h2>Konten</h2><h3>RetroAchievements</h3><p id="ra">–</p>
+<section id="konten"><h2>RetroAchievements</h2><p id="ra">–</p>
 <label for="u">Benutzername</label><input id="u" autocomplete="username" autocapitalize="off">
 <label for="p">Passwort (nur zur Anmeldung, wird nicht gespeichert)</label><input id="p" type="password" autocomplete="current-password">
 <label for="k">Web-API-Schlüssel (für die Anzeige der Erfolge)</label><input id="k" autocomplete="off">
@@ -95,26 +102,47 @@ if('__LANG__'=='en'){const E=__EN__,R=E.rules.map(([p,t])=>[new RegExp('^(?:'+p+
 <h3>Battle.net (WoW Forever)</h3><p id="bn">–</p>
 <label for="be">E-Mail</label><input id="be" type="email" autocomplete="off" autocapitalize="off">
 <label for="bp">Passwort (bleibt nur auf dem Thor, wird nie wieder angezeigt)</label><input id="bp" type="password" autocomplete="off">
-<button class="go" id="bnsave">Speichern</button> <button id="bnforget">Anmeldung vergessen</button></section>
+<div class="row"><button class="go" id="bnsave">Speichern</button><button id="bnforget">Anmeldung vergessen</button></div></section>
 
-<section id="aussehen"><h2>Aussehen</h2><h3>Thema</h3><label for="theme">Farben und Stil der Oberfläche</label><select id="theme"></select>
+<section id="youtube"><h2>YouTube</h2><p id="yt">–</p>
+<p>Für Abos, Playlists und „Mag ich“ bequem über dieses Gerät oder per QR-Code anmelden – ohne Tippen auf dem Thor.</p>
+<div class="row"><button class="go" id="ytqrbtn">Per QR-Code / Link anmelden</button><button id="ytforget">Abmelden</button></div>
+<div class="qrbox" id="ytqrbox" hidden><div class="qrsvg" id="ytqrsvg"></div><div>
+<div style="font-size:13px;color:var(--text2)">Code für youtube.com/activate</div>
+<div class="qcode" id="ytqrcode">–</div>
+<a class="go" id="ytqrlink" href="https://www.youtube.com/activate" target="_blank" rel="noopener">Jetzt bei Google bestätigen ↗</a></div></div>
+<details><summary>Erweitert: Browser-Cookies oder eigener OAuth-Client</summary>
+<label for="yc">Browser-Cookies einfügen (cookies.txt oder JSON)</label><textarea id="yc" rows="3" spellcheck="false" autocomplete="off" placeholder="cookies.txt oder JSON"></textarea>
+<button id="ycsave" style="margin-top:10px">Cookies speichern</button>
+<label for="yi">Client-ID</label><input id="yi" autocomplete="off" autocapitalize="off">
+<label for="ys">Client-Secret</label><input id="ys" type="password" autocomplete="off">
+<button id="ytsave" style="margin-top:12px">Client speichern</button></details></section>
+
+<section id="aussehen"><h2>Aussehen</h2><label for="theme">Farben und Stil der Oberfläche</label><select id="theme"></select>
+<label for="vmode">Ansicht</label><select id="vmode"><option value="grid">Kacheln</option><option value="stage">Bühne</option></select>
+<label class="check"><input type="checkbox" id="ovl"> Plattform-Rahmen (Cocoon)</label>
+<label for="mot">Animationen</label><select id="mot"><option value="full">Flüssig</option><option value="reduced">Reduziert</option></select>
 <label for="lang">Sprache / Language</label><select id="lang"><option value="de">Deutsch</option><option value="en">English</option></select></section>
 
-<section id="spiele"><h2>Bibliothek</h2><h3>Spiele</h3><p id="lib">–</p><p>Spiele gehören in einen Ordner „ROMs“ auf der Karte oder im Gerät, je System ein Unterordner.</p>
-<div class="row"><button data-post="rescan">Neu einlesen und Cover laden</button><button data-post="quit">Laufendes Spiel beenden</button></div></section>
+<section id="spiele"><h2>Spiele</h2><p id="lib">–</p><p>Spiele gehören in einen Ordner „ROMs“ auf der Karte oder im Gerät, je System ein Unterordner.</p>
+<div class="row"><button data-post="rescan">Neu einlesen und Cover laden</button><button data-post="quit">Laufendes Spiel beenden</button></div>
+<h3>Spielstände sichern</h3><p id="svmsg">–</p>
+<label class="check"><input type="checkbox" id="svauto"> Automatisch sichern</label>
+<label for="svdst">Sicherungsziel (SSH, leer = nur Karte)</label><input id="svdst" autocomplete="off" autocapitalize="off">
+<div class="row"><button id="svdstgo">Ziel speichern</button><button class="go" data-post="saves">Spielstände jetzt sichern</button></div></section>
 
-<section id="updates"><h2>Updates</h2><h3>Tandem</h3><p id="ver">–</p>
+<section id="updates"><h2>Updates</h2><p id="ver">–</p>
 <label for="src">Update-Quelle (leer = keine)</label><input id="src" type="url" autocomplete="off" autocapitalize="off" placeholder="https://">
 <div class="row"><button id="srcgo">Quelle speichern</button><button id="upcheck">Nach Update suchen</button><button id="upgo" hidden>Jetzt installieren</button></div>
 <label for="eden">Switch-Emulator (Eden)</label><select id="eden"><option value="eden">Stabile Fassung</option><option value="eden-nightly">Nightly (Tagesstand)</option></select>
 <button class="go" id="edengo">Installieren oder aktualisieren</button></section>
 
-<section id="geraet"><h2>Gerät</h2><h3>Über den Thor</h3><div class="stats" id="about"></div>
-<h3 style="margin-top:20px">Ein und aus</h3>
-<div class="row"><button data-post="action" data-name="suspend">Standby</button><button class="warn" data-post="action" data-name="reboot" data-ask="Den Thor neu starten?">Neustart</button>
+<section id="geraet"><h2>Über den Thor</h2><div class="stats" id="about"></div>
+<h3>Ein und aus</h3>
+<div class="row"><button data-post="action" data-name="suspend">Standby</button><button data-post="action" data-name="sleep">Tiefschlaf</button><button class="warn" data-post="action" data-name="reboot" data-ask="Den Thor neu starten?">Neustart</button>
 <button class="warn" data-post="action" data-name="poweroff" data-ask="Den Thor ausschalten?">Ausschalten</button></div></section>
 
-<section><h2>Anmeldung</h2><h3>Dieser Browser</h3><p>Bleibt ein Jahr angemeldet, auch nach einem Neustart des Thor.</p>
+<section><h2>Dieser Browser</h2><p>Bleibt ein Jahr angemeldet, auch nach einem Neustart des Thor.</p>
 <div class="row"><button data-post="logout">Dieses Gerät abmelden</button><button class="warn" data-post="logout-all" data-ask="Wirklich alle Geräte abmelden?">Alle Geräte abmelden</button></div></section>
 </main>
 <div id="msg" role="status"></div>
@@ -131,13 +159,22 @@ function load(){fetch('api/all').then(r=>r.status==401?location.reload():r.json(
   $('stats').innerHTML=stat(d.games,'Spiele in der Bibliothek')+(d.battery?stat(d.battery.level+' %',d.battery.charging?'Akku, lädt':'Akku',d.battery.level/100):'')
     +d.system.storage.map(s=>stat(gb(s.free)+' frei',s.name+' · '+gb(s.total),1-s.free/s.total)).join('')+stat(d.system.ssid||'offline','WLAN');
   $('lib').textContent=d.games+' Spiele gefunden. Neu einlesen sucht auch fehlende Cover.';
+  $('yt').textContent=d.config.yt_set?'Angemeldet auf dem Thor.':d.config.yt_oauth?'OAuth-Client hinterlegt (noch nicht angemeldet).':'Noch nicht angemeldet.';
+  if(d.config.yt_set)$('ytqrbox').hidden=true;
   $('bn').textContent=d.config.bnet_set?'Hinterlegt. WoW Forever meldet sich beim Start selbst an.':'Noch nicht hinterlegt.'+(secure()?'':' Eintragen geht nur über die https-Adresse.');
   $('ra').textContent=d.config.ra_login?'Angemeldet als '+d.config.ra_user+'.':'Noch nicht angemeldet.'+(d.config.ra_key_set?' Der Web-API-Schlüssel ist hinterlegt.':'');
   if(document.activeElement!=$('u')&&!$('u').value)$('u').value=d.config.ra_user;if(document.activeElement!=$('kb'))$('kb').value=d.layout;
   if(document.activeElement!=$('own'))$('own').value=d.config.remote_url||'';
   $('ver').textContent='Installiert: Version '+d.config.version;if(document.activeElement!=$('src'))$('src').value=d.config.update_url||'';
   if(document.activeElement!=$('rest'))$('rest').value=d.config.rest_min;if(document.activeElement!=$('lang'))$('lang').value=d.config.lang||'de';
+  $('lid').checked=d.config.lid_sleep!==false;if(document.activeElement!=$('cstby'))$('cstby').value=d.config.charger_standby||'doze';
+  if(document.activeElement!=$('night'))$('night').value=d.config.night_mode||'off';
+  $('svauto').checked=d.config.save_auto!==false;if(document.activeElement!=$('svdst'))$('svdst').value=d.config.save_target||'';
+  const sv=d.saves||{};$('svmsg').textContent=sv.last?'Gesichert ('+(sv.where||'lokal')+') · '+sv.count+' Ordner.':'Noch keine Sicherung.';
   if(document.activeElement!=$('theme')){$('theme').replaceChildren(...(d.config.themes||[]).map(t=>new Option(t.name,t.id)));$('theme').value=d.config.theme}
+  if(document.activeElement!=$('vmode'))$('vmode').value=d.config.view_mode||'grid';
+  $('ovl').checked=d.config.overlays!==false;
+  if(document.activeElement!=$('mot'))$('mot').value=d.config.motion||'full';
   const T=d.thor||{},rgb=T.rgb,pw=T.power,C=d.controls||{};
   $('map').innerHTML=(C.table||[]).map((r,i,a)=>(i==0||a[i-1].group!=r.group?`<tr><th colspan="2">${esc(r.group||'')}</th></tr>`:'')+`<tr><td>${esc(r.what)}<small>${esc(r.where||'')}</small></td><td>${esc(r.pad)}</td></tr>`).join('');
   const off=[...new Set((C.off||[]).map(o=>o.emu))];$('off').textContent=off.length?'Abweichend: '+off.join(', ')+'.':'Alle Emulatoren haben die Tandem-Belegung.';
@@ -157,6 +194,21 @@ const secure=()=>location.protocol=='https:'||['127.0.0.1','localhost'].includes
 $('bnsave').onclick=()=>{if(!secure())return say('Nur über die https-Adresse des Thor – im WLAN ohne https könnte das Passwort mitgelesen werden.');
   if(!$('be').value||!$('bp').value)return say('Bitte E-Mail und Passwort eintragen.');
   post('config',{bnet_email:$('be').value,bnet_password:$('bp').value}).then(()=>{$('be').value=$('bp').value='';say('Gespeichert.');load()})};
+let ytTimer=null;
+function ytStep(act,silent){fetch('api/ytlogin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({a:act})}).then(r=>r.json()).then(d=>{
+  if(d&&d.error){if(!silent)say(d.error);return}
+  if(d&&d.signed_in){clearInterval(ytTimer);ytTimer=null;$('ytqrbox').hidden=true;say('Bei YouTube angemeldet.');load();return}
+  if(d&&d.code){$('ytqrcode').textContent=d.code;$('ytqrlink').href=d.qr||'https://www.youtube.com/activate';$('ytqrsvg').innerHTML=d.svg||'';$('ytqrbox').hidden=false;
+    if(!ytTimer)ytTimer=setInterval(()=>ytStep('qr',true),5000)}
+})}
+$('ytqrbtn').onclick=()=>ytStep('qr',false);
+$('ycsave').onclick=()=>{if(!secure())return say('Nur über die https-Adresse des Thor.');
+  if(!$('yc').value.trim())return say('Bitte Cookies einfügen.');
+  post('config',{yt_cookies:$('yc').value}).then(d=>{if(!d||!d.error)$('yc').value='';say(d&&d.error||d&&d.text||'Gespeichert.');load()})};
+$('ytsave').onclick=()=>{if(!secure())return say('Nur über die https-Adresse des Thor.');
+  if(!$('yi').value||!$('ys').value)return say('Bitte Client-ID und Client-Secret eintragen.');
+  post('config',{yt_client_id:$('yi').value,yt_client_secret:$('ys').value}).then(d=>{$('yi').value=$('ys').value='';say(d&&d.error||'Gespeichert.');load()})};
+$('ytforget').onclick=()=>{clearInterval(ytTimer);ytTimer=null;$('ytqrbox').hidden=true;post('config',{yt_forget:true}).then(()=>{say('YouTube-Anmeldung gelöscht.');load()})};
 $('bnforget').onclick=()=>post('config',{bnet_forget:true}).then(()=>{say('Battle.net-Anmeldung gelöscht.');load()});
 $('rasave').onclick=()=>post('config',{ra_user:$('u').value,ra_password:$('p').value,ra_key:$('k').value}).then(d=>{$('p').value=$('k').value='';if(d&&d.applied)say('Angemeldet in: '+d.applied.join(', '));load()});
 $('wgo').onclick=()=>{say('Verbinde …');post('wifi',{ssid:$('ssid').value,password:$('wp').value}).then(()=>{$('wp').value='';load()})};
@@ -170,7 +222,15 @@ $('prof').onchange=e=>post('thor',{key:'profile',value:e.target.value});
 $('ctrlgo').onclick=()=>{say('Gleiche an …');post('controls',{}).then(load)};
 $('kb').onchange=e=>post('layout',{layout:e.target.value});
 $('theme').onchange=e=>post('config',{theme:e.target.value});
+$('vmode').onchange=e=>post('config',{view_mode:e.target.value});
+$('ovl').onchange=e=>post('config',{overlays:e.target.checked});
+$('mot').onchange=e=>post('config',{motion:e.target.value});
 $('rest').onchange=e=>post('config',{rest_min:+e.target.value});
+$('lid').onchange=e=>post('config',{lid_sleep:e.target.checked});
+$('cstby').onchange=e=>post('config',{charger_standby:e.target.value});
+$('night').onchange=e=>post('config',{night_mode:e.target.value});
+$('svauto').onchange=e=>post('config',{save_auto:e.target.checked});
+$('svdstgo').onclick=()=>post('config',{save_target:$('svdst').value}).then(load);
 $('lang').onchange=e=>post('config',{lang:e.target.value}).then(()=>location.reload());
 $('srcgo').onclick=()=>post('config',{update_url:$('src').value}).then(load);
 const up=apply=>post('selfupdate',{apply}).then(d=>{say(d.error||d.text);$('upgo').hidden=apply||!d.new});

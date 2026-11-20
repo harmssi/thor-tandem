@@ -6,15 +6,22 @@ plex.tv/link with the owner's account, plex.tv hands out a token. Which server, 
 written into this file. Token and server are kept in ~/.config/tandem/media/plex.json, readable only by the user; the
 token travels in a header (X-Plex-Token), never in an address, so it shows up in no log.
 Files play as they are (Direct Play: the Thor decodes H.264/HEVC/VP9 in hardware); where playback stands goes back to
-the server (/:/timeline) every ten seconds and on pause and stop, so "Weiterschauen" is right on every Plex app.
+the server (/:/timeline) every ten seconds and on pause and stop, so "Weiterschauen" is right on every Plex app; at
+90 % the item counts as watched (/:/scrobble). Start shows the server's own home hubs (/hubs/promoted), a film or an
+episode opens a detail page first (backdrop, year, length, rating, summary; play, resume, from the start, watched,
+download); an intro marker shows "Intro überspringen" while it runs.
+Downloads (decks/offline.py) take the original file (/library/parts/…?download=1, resumable with Range); what is watched
+offline is kept beside the file and goes to the server (timeline, scrobble) as soon as it answers again.
 """
 import json, os, threading, time, urllib.error, urllib.parse, urllib.request, uuid
 from pathlib import Path
 
-from decks import media
+from decks import media, offline
 
 PLEX_TV = 'https://plex.tv'
 STORE = Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config') / 'tandem/media/plex.json'
+try: LANG = 'en' if json.loads((STORE.parent.parent / 'config.json').read_text()).get('lang') == 'en' else 'de'  # the hub titles come from the server
+except (OSError, ValueError): LANG = 'de'
 PLAYABLE = {'movie', 'episode', 'clip', 'track'}
 OPENS = {'show', 'season', 'artist', 'album', 'collection', 'playlist'}
 
@@ -64,7 +71,8 @@ def pick_connections(resource):
 
 
 class Plex:
-    name, accent, tabs = 'Plex', '#e5a00d', ('Start', 'Bibliotheken', 'Suche')
+    name, accent, tabs, offline_app = 'Plex', '#e5a00d', ('Start', 'Bibliotheken', 'Suche', 'Downloads'), 'plex'
+    LIB = 'com.plexapp.plugins.library'
     search_title = 'Plex durchsuchen'
 
     def __init__(self, store=STORE):
@@ -77,7 +85,7 @@ class Plex:
 
     def head(self, token=None):
         h = {'Accept': 'application/json', 'X-Plex-Product': 'Toravo Tandem', 'X-Plex-Version': '1.0', 'X-Plex-Client-Identifier': self.data['client'],
-             'X-Plex-Platform': 'Linux', 'X-Plex-Device': 'AYN Thor', 'X-Plex-Device-Name': 'Thor (Tandem)', 'X-Plex-Provides': 'player'}
+             'X-Plex-Platform': 'Linux', 'X-Plex-Device': 'AYN Thor', 'X-Plex-Device-Name': 'Thor (Tandem)', 'X-Plex-Provides': 'player', 'X-Plex-Language': LANG}
         if token: h['X-Plex-Token'] = token
         return h
 
@@ -149,6 +157,7 @@ class Plex:
         return [card(m, server) for m in container.get('Metadata') or [] if m.get('type') != 'photo']
 
     def page(self, tab):
+        if tab == 'Downloads': return media.offline_page('plex', 'Filme und Folgen, die du auf ihrer Seite herunterlädst, gehen hier auch ohne Netz – im Flugzeug.')
         gate = self.ready()
         if gate: return gate
         try: return self.tab_page(tab)
@@ -159,9 +168,12 @@ class Plex:
 
     def tab_page(self, tab):
         if tab == 'Start':
-            going = self.cards(self.pms('/library/onDeck', **{'X-Plex-Container-Size': 12}))
-            new = self.cards(self.pms('/library/recentlyAdded', **{'X-Plex-Container-Size': 18}))
-            items = ([media.header('Weiterschauen')] + going if going else []) + ([media.header('Zuletzt hinzugefügt')] + new if new else [])
+            self.sync()
+            items, seen = [], set()
+            for hub in self.pms('/hubs/promoted', count=12).get('Hub') or []:  # the server's own home rows, as the Plex apps show them
+                found = [c for c in self.cards(hub) if c['id'] not in seen]  # "On Deck" repeats "Continue Watching"
+                seen |= {c['id'] for c in found}
+                if found and hub.get('type') != 'playlist': items += [media.header(hub.get('title') or '')] + found
             return {'title': self.data['server'].get('name') or 'Plex', 'items': items, 'note': '' if items else 'Auf dem Server ist noch nichts.'}
         if tab == 'Bibliotheken':
             sections = self.pms('/library/sections').get('Directory') or []
@@ -188,28 +200,130 @@ class Plex:
             if found: items += [media.header(hub.get('title') or '')] + found
         return {'title': f'„{query}“', 'search': True, 'query': query, 'items': items, 'note': '' if items else 'Nichts gefunden.'}
 
+    # ---- detail page ----------------------------------------------------------------------------------------------------
+    def detail(self, item):
+        """The page before a film or an episode plays: from the server, or for a download from the card (no network)."""
+        local = offline.find('plex', item['id'])
+        m = None
+        if not local or self.data.get('server'):
+            try: m = (self.pms(f'/library/metadata/{item["id"]}').get('Metadata') or [None])[0]
+            except media.Problem:
+                if not local: raise
+        if m is None:
+            meta, file = local
+            pic = file.parent / meta['thumb_file'] if meta.get('thumb_file') else None
+            pos, dur = meta.get('pos'), meta.get('dur')
+            play = [('Fortsetzen ab ' + media.clock(pos), lambda: {'play': {**item, **meta}}), ('Von Anfang', lambda: {'play': {**item, **meta, 'from_start': True}})] \
+                if media.resumable(pos, dur) else [('Abspielen', lambda: {'play': {**item, **meta}})]
+            return {'title': meta.get('title'), 'item': item, 'buttons': play + media.offline_actions('plex', item),
+                    'detail': {'title': meta.get('title'), 'meta': ' · '.join(x for x in (meta.get('sub'), media.clock(dur), 'auf der Karte') if x), 'summary': meta.get('summary'),
+                               'backdrop': pic.as_uri() if pic and pic.is_file() else None}}
+        server = self.data['server']['uri']
+        dur, offset = (m.get('duration') or 0) / 1000 or None, (m.get('viewOffset') or 0) / 1000
+        if m.get('type') == 'episode':
+            title, bits = m.get('grandparentTitle') or '', [f'S{m.get("parentIndex", "?")} E{m.get("index", "?")} · {m.get("title", "")}']
+        else: title, bits = m.get('title') or '', [str(m['year']) if m.get('year') else None]
+        rating = m.get('audienceRating') or m.get('rating')
+        bits += [f'{round(dur / 60)} Min.' if dur else None, m.get('contentRating'), f'★ {rating:.1f}'.replace('.', ',') if rating else None]
+        card_ = card(m, server)
+        play = [('Fortsetzen ab ' + media.clock(offset), lambda: {'play': card_}), ('Von Anfang', lambda: {'play': {**card_, 'from_start': True}})] \
+            if media.resumable(offset, dur) else [('Abspielen', lambda: {'play': card_})]
+        seen = bool(m.get('viewCount')) and not offset
+        mark = ('Als ungesehen markieren' if seen else 'Als gesehen markieren', lambda: self.mark(item['id'], not seen))
+        art = m.get('art') or m.get('grandparentArt') or m.get('thumb')
+        return {'title': title, 'item': item, 'buttons': play + [mark] + media.offline_actions('plex', {**card_, 'id': item['id']}),
+                'detail': {'title': title, 'meta': ' · '.join(x for x in bits if x), 'summary': m.get('summary'), 'backdrop': art and server + art}}
+
+    def mark(self, rid, watched):
+        self.pms('/:/scrobble' if watched else '/:/unscrobble', identifier=self.LIB, key=rid)
+        if offline.find('plex', rid): offline.update('plex', rid, watched=watched, pos=0)
+        return {'reload': True}
+
+    # ---- offline ----------------------------------------------------------------------------------------------------------
+    def fetch(self, job, base, progress):
+        """One download for decks/offline.py: the original file, resumed where it stopped (Range)."""
+        if self.ready(): raise media.Problem('Plex ist nicht angemeldet.')
+        s = self.data['server']
+        m = (self.pms(f'/library/metadata/{job["id"]}').get('Metadata') or [{}])[0]
+        part = ((m.get('Media') or [{}])[0].get('Part') or [{}])[0]
+        if not part.get('key'): raise media.Problem('Zu diesem Eintrag gibt es keine Datei.')
+        ext = (part.get('container') or Path(part.get('file') or 'x.mkv').suffix.lstrip('.') or 'mkv')[:5]
+        size = part.get('size') or 0
+        tmp = Path(f'{base}.{ext}.part')
+        have = tmp.stat().st_size if tmp.exists() else 0
+        if size and size - have > __import__('shutil').disk_usage(base.parent).free - offline.RESERVE: raise offline.Full()
+        progress(100 * have / size if size else 0, size)
+        req = urllib.request.Request(s['uri'] + part['key'] + '?download=1', headers={**self.head(s['token']), **({'Range': f'bytes={have}-'} if have else {})})
+        try: r = urllib.request.urlopen(req, timeout=30)
+        except urllib.error.HTTPError as error:
+            raise media.Problem('Der Plex-Server erlaubt keine Downloads (Einstellungen › Bibliothek).' if error.code in (401, 403) else f'Plex: Fehler {error.code}.')
+        with r, open(tmp, 'ab' if have and r.status == 206 else 'wb') as out:
+            got = have if r.status == 206 else 0
+            while True:
+                chunk = r.read(1 << 20)
+                if not chunk: break
+                out.write(chunk); got += len(chunk)
+                progress(100 * got / size if size else 0)
+        if size and tmp.stat().st_size < size: raise media.Problem('Download unvollständig.')
+        os.replace(tmp, f'{base}.{ext}')
+        art = m.get('thumb') or m.get('art') or m.get('grandparentArt')
+        try:
+            with urllib.request.urlopen(urllib.request.Request(self.thumb(s['uri'] + art, 640, 360), headers=self.head(s['token'])), timeout=15) as r: picture = r.read()
+        except (OSError, TypeError): picture = None
+        c = card(m)
+        return {'file': f'{base.name}.{ext}', 'thumb_bytes': picture,
+                'meta': {'title': c['title'], 'sub': c['sub'], 'type': m.get('type'), 'dur': c['dur'], 'summary': m.get('summary'), 'pos': (m.get('viewOffset') or 0) / 1000}}
+
+    def sync(self):
+        """What was watched without a network goes to the server now (position, watched)."""
+        for meta, _ in offline.items('plex'):
+            if not meta.get('dirty'): continue
+            try:
+                if meta.get('watched'): self.pms('/:/scrobble', identifier=self.LIB, key=meta['id'])
+                elif meta.get('pos'): self.pms('/:/timeline', ratingKey=meta['id'], key=f'/library/metadata/{meta["id"]}', state='stopped',
+                                               time=int(meta['pos'] * 1000), duration=int((meta.get('dur') or 0) * 1000))
+                offline.update('plex', meta['id'], dirty=False)
+            except media.Problem: return
+
     # ---- playing --------------------------------------------------------------------------------------------------------
     def resolve(self, item):
-        m = (self.pms(f'/library/metadata/{item["id"]}').get('Metadata') or [{}])[0]
+        local = offline.find('plex', item['id'])
+        if local:
+            meta, file = local
+            start = None if item.get('from_start') else meta.get('pos') if media.resumable(meta.get('pos'), meta.get('dur')) else None
+            item['dur'] = item.get('dur') or meta.get('dur')
+            return {'url': str(file), 'subs': [], 'opts': {'start': start, 'force_media_title': f'{meta.get("title")} – {meta.get("sub")}' if meta.get('sub') else meta.get('title')}}
+        m = (self.pms(f'/library/metadata/{item["id"]}', includeMarkers=1).get('Metadata') or [{}])[0]
+        intro = next((k for k in m.get('Marker') or [] if k.get('type') == 'intro'), None)
+        if intro: item['skip'] = [intro.get('startTimeOffset', 0) / 1000, intro.get('endTimeOffset', 0) / 1000]
         part = ((m.get('Media') or [{}])[0].get('Part') or [{}])[0]
         if not part.get('key'): raise media.Problem('Zu diesem Eintrag gibt es keine Datei.')
         s = self.data['server']
         # shortcut: Direct Play only (mpv plays nearly every file); add Plex's transcoder when a file is too heavy for the Thor
         subs = [(s['uri'] + st['key'], st.get('displayTitle') or st.get('language') or 'Untertitel', st.get('languageCode') or '')
                 for st in part.get('Stream') or [] if st.get('streamType') == 3 and st.get('key')]  # subtitles in their own files; those inside the file mpv sees itself
-        offset = (m.get('viewOffset') or 0) / 1000
+        offset = 0 if item.get('from_start') else (m.get('viewOffset') or 0) / 1000
         item['dur'] = item.get('dur') or (m.get('duration') or 0) / 1000 or None
         return {'url': s['uri'] + part['key'], 'subs': subs,
                 'opts': {'start': offset if media.resumable(offset, item['dur']) else None, 'force_media_title': f'{item["title"]} – {item["sub"]}' if item.get('sub') else item['title'],
                          'http_header_fields': f'X-Plex-Token: {s["token"]}'}}
 
     def progress(self, item, pos, dur, state):
-        if pos is None or not self.data.get('server'): return
+        if pos is None: return
+        dur = dur or item.get('dur') or 0
+        done = bool(dur and pos >= .9 * dur)
+        local = offline.find('plex', item['id'])
+        if local: offline.update('plex', item['id'], pos=0 if done else pos, watched=done or local[0].get('watched', False), dirty=True)
+        if not self.data.get('server'): return
         try:
-            self.pms('/:/timeline', ratingKey=item['id'], key=f'/library/metadata/{item["id"]}', state=state, time=int(pos * 1000), duration=int((dur or item.get('dur') or 0) * 1000))
-        except media.Problem: pass  # the next report tries again
+            self.pms('/:/timeline', ratingKey=item['id'], key=f'/library/metadata/{item["id"]}', state=state, time=int(pos * 1000), duration=int(dur * 1000))
+            if done and not item.get('scrobbled'):
+                self.pms('/:/scrobble', identifier=self.LIB, key=item['id'])
+                item['scrobbled'] = True
+            if local: offline.update('plex', item['id'], dirty=False)
+        except media.Problem: pass  # the next report tries again; a download keeps it for later (sync)
 
-    def actions(self, item): return []
+    def actions(self, item): return media.offline_actions('plex', item)
 
     def headers(self, url):
         s = self.data.get('server')

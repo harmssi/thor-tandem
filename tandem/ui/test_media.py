@@ -1,19 +1,21 @@
 """Self-check for the media apps (decks/media.py, youtube.py, plex.py, mpv.py): python3 ui/test_media.py.
 Plex runs against a stand-in for plex.tv and a Plex server, mpv against a stand-in socket; nothing goes on the network.
 Needs PySide6 (skipped without it); paints the deck offscreen (TANDEM_UI_SHOTS=folder saves the pictures)."""
-import json, os, socket, stat, sys, tempfile, threading, time, unittest
+import atexit, json, os, shutil, socket, stat, sys, tempfile, threading, time, unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 TMP = Path(tempfile.mkdtemp(prefix='tandem-media-'))
+atexit.register(shutil.rmtree, TMP, True)
 os.environ['XDG_CONFIG_HOME'] = str(TMP / 'config')
 os.environ['XDG_DATA_HOME'] = str(TMP / 'data')
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
     from PySide6.QtCore import QObject, Signal
     from PySide6.QtGui import QFontDatabase, QGuiApplication, QImage, QPainter
-    from decks import media, mpv, plex, youtube
+    from decks import media, mpv, offline, plex, youtube
+    offline.root = lambda: TMP / 'card'  # never the real SD card
 except ImportError: media = None
 SHOTS = os.environ.get('TANDEM_UI_SHOTS')
 TOKEN = 'secret-token-123'
@@ -53,8 +55,17 @@ class FakePlex(BaseHTTPRequestHandler):
                  '/library/metadata/31/children': {'Metadata': [ep, {**ep, 'ratingKey': '12', 'index': 2, 'title': 'Zwei', 'viewOffset': 0}]},
                  '/library/metadata/11': {'Metadata': [{**ep, 'Media': [{'Part': [{'key': '/library/parts/5/file.mkv', 'Stream': [{'streamType': 3, 'key': '/library/streams/9', 'displayTitle': 'Deutsch (SRT)', 'languageCode': 'ger'}, {'streamType': 3, 'displayTitle': 'Englisch'}]}]}]}]},
                  '/hubs/search': {'Hub': [{'title': 'Filme', 'Metadata': [{'type': 'movie', 'ratingKey': '20', 'title': 'Film'}]}, {'title': 'Leer', 'Metadata': []}]},
-                 '/:/timeline': {}}
-        if path == '/:/timeline': FakePlex.timeline.append(query)
+                 '/hubs/promoted': {'Hub': [{'title': 'Weiterschauen', 'hubIdentifier': 'home.continue', 'Metadata': [ep]},
+                                            {'title': 'Auf Deck', 'hubIdentifier': 'home.ondeck', 'Metadata': [ep]},  # the same again: left out
+                                            {'title': 'Zuletzt hinzugefügt', 'hubIdentifier': 'movie.recentlyadded.1', 'Metadata': [{'type': 'movie', 'ratingKey': '20', 'title': 'Film', 'year': 2024, 'duration': 6000000, 'viewCount': 1, 'art': '/a/20'}]}]},
+                 '/library/metadata/20': {'Metadata': [{'type': 'movie', 'ratingKey': '20', 'title': 'Film', 'year': 2024, 'duration': 6000000, 'audienceRating': 8.1, 'summary': 'Ein Film.',
+                                                        'art': '/a/20', 'Media': [{'Part': [{'key': '/library/parts/6/film.mp4', 'container': 'mp4', 'size': 3000}]}]}]},
+                 '/:/timeline': {}, '/:/scrobble': {}, '/:/unscrobble': {}}
+        if path == '/library/parts/6/film.mp4':
+            body, start = b'x' * 3000, int((self.headers.get('Range') or 'bytes=0-')[6:].split('-')[0])
+            self.send_response(206 if start else 200); self.send_header('Content-Length', str(3000 - start)); self.end_headers()
+            return self.wfile.write(body[start:])
+        if path in ('/:/timeline', '/:/scrobble', '/:/unscrobble'): FakePlex.timeline.append(path + '?' + query)
         if path in pages: return self.reply({'MediaContainer': pages[path]})
         self.reply({}, 404)
 
@@ -142,6 +153,53 @@ class MediaTest(unittest.TestCase):
         tl = [{'type': 'audio', 'id': 1, 'lang': 'eng', 'title': 'videoplayback?expire=1&a=b', 'selected': True}, {'type': 'sub', 'id': 2, 'lang': 'ger', 'title': 'Forced'}, {'type': 'sub', 'id': 3}]
         self.assertEqual((mpv.tracks(tl, 'audio'), mpv.tracks(tl, 'sub')), ([(1, 'Englisch', True)], [(2, 'Forced (Deutsch)', False), (3, 'Spur 3', False)]))
 
+    def test_youtube_sign_in_on_thor(self):  # QR device-code sign-in (phone/PC) + TV InnerTube tile parsing + cookie fallback
+        import sqlite3
+        yt = youtube.YouTube.__new__(youtube.YouTube)
+        yt.lock, yt.cache, yt.auth = threading.Lock(), {}, {}
+        old_post, old_client = youtube.post_form, youtube.yt_tv_client
+        calls = []
+        def fake_post(url, fields, ua=None):
+            calls.append((url, fields))
+            if 'device/code' in url:
+                return {'device_code': 'dev-1', 'user_code': 'ABCD-EFGH', 'expires_in': 1800, 'interval': 5}
+            return {'access_token': 'tok-123', 'refresh_token': 'ref-456', 'expires_in': 3600}
+        youtube.post_form = fake_post
+        youtube.yt_tv_client = lambda: ('test-tv-id', 'test-tv-secret')
+        try:
+            page = yt.account_page('Abos')
+            self.assertEqual((page['code'], page['link'], page['qr']), ('ABCD-EFGH', 'youtube.com/activate', 'https://www.youtube.com/activate?user_code=ABCD-EFGH'))
+            # Simulate poll interval elapsed -> approves token and writes 0600 youtube-auth.json
+            d = json.loads(youtube.DEVICE_STATE.read_text()); d['polled'] = 0; youtube.DEVICE_STATE.write_text(json.dumps(d))
+            yt.cache[('tv', 'Abos')] = (time.time(), [{'id': 'v1234567890', 'title': 'Abo-Video'}])
+            got_tv = yt.account_page('Abos')
+            self.assertEqual([i['id'] for i in got_tv['items']], ['v1234567890', 'logout'])
+            self.assertTrue(youtube.tv_signed_in())
+            # Also verify TVHTML5 tileRenderer parser (video + playlist)
+            vtile = {'header': {'tileHeaderRenderer': {'thumbnailOverlays': [{'thumbnailOverlayTimeStatusRenderer': {'text': {'simpleText': '12:34'}}}]}},
+                     'metadata': {'tileMetadataRenderer': {'title': {'simpleText': 'Clip'}, 'lines': [
+                         {'lineRenderer': {'items': [{'lineItemRenderer': {'text': {'runs': [{'text': 'Toravo', 'navigationEndpoint': {'browseEndpoint': {'browseId': 'UC123'}}}]}}}]}},
+                         {'lineRenderer': {'items': [{'lineItemRenderer': {'text': {'simpleText': '10 Tsd. Aufrufe'}}}]}}]}},
+                     'onSelectCommand': {'watchEndpoint': {'videoId': '12345678901'}}}
+            vcard = youtube.tv_tile_to_card(vtile, 'video')
+            self.assertEqual((vcard['id'], vcard['dur'], vcard['sub'], vcard['channel']['url']), ('12345678901', 754, 'Toravo · 10 Tsd. Aufrufe', 'https://www.youtube.com/channel/UC123'))
+            ptile = {'header': {'tileHeaderRenderer': {'thumbnail': {'thumbnails': [{'url': 'https://t/p.jpg'}]}, 'thumbnailOverlays': [{'thumbnailOverlayTimeStatusRenderer': {'text': {'runs': [{'text': '8'}, {'text': ' Videos'}]}}}] }},
+                     'metadata': {'tileMetadataRenderer': {'title': {'simpleText': 'Mix'}}},
+                     'onSelectCommand': {'browseEndpoint': {'browseId': 'VLPL99'}}}
+            pcard = youtube.tv_tile_to_card(ptile, 'playlist')
+            self.assertEqual((pcard['id'], pcard['tv_playlist'], pcard['sub']), ('PL99', 'VLPL99', '8 Videos'))
+            youtube.AUTH.unlink(missing_ok=True); yt.auth = {}
+        finally:
+            youtube.post_form, youtube.yt_tv_client = old_post, old_client
+        youtube.PROFILE.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(youtube.PROFILE / 'cookies.sqlite') as con:
+            con.execute('CREATE TABLE moz_cookies (name TEXT, host TEXT, value TEXT)')
+            con.execute("INSERT INTO moz_cookies VALUES ('SAPISID', '.youtube.com', 'x')")
+        self.assertTrue(youtube.browser_signed_in())
+        yt.cache[('acct', youtube.ACCOUNT_FEEDS['Abos'])] = (time.time(), [{'id': 'abcdefghijk', 'title': 'T'}])
+        got = yt.account_page('Abos')
+        self.assertEqual([i['id'] for i in got['items']], ['abcdefghijk', 'logout'])
+
     def test_youtube_parsing(self):
         e = {'id': 'abcdefghijk', 'title': 'T', 'duration': 75, 'channel': 'K', 'channel_url': 'https://y/c', 'view_count': 56000}
         self.assertEqual(youtube.entry(e), {'id': 'abcdefghijk', 'title': 'T', 'sub': 'K · 56 Tsd. Aufrufe', 'thumb': 'https://i.ytimg.com/vi/abcdefghijk/hqdefault.jpg', 'kind': 'video',
@@ -159,7 +217,13 @@ class MediaTest(unittest.TestCase):
         self.assertEqual(json.loads(youtube.STORE.read_text())['history']['abcdefghijk']['pos'], 40)
         label, fn = yt.actions(it)[0]
         self.assertEqual((label, fn(), yt.actions(it)[0][0]), ('Kanal merken', '„K“ gemerkt.', 'Kanal vergessen'))
+        self.assertEqual((yt.actions(it)[1][0], yt.actions(it)[1][1]()['open_channel']['url']), ('Zum Kanal', 'https://y/c'))
         self.assertEqual(yt.page('Kanäle')['items'][0]['channel']['url'], 'https://y/c')
+        ch = youtube.channel_entry({'ie_key': 'YoutubeChannel', 'channel': 'Toravo', 'channel_url': 'https://www.youtube.com/@Toravo', 'channel_follower_count': 4200, 'thumbnails': [{'url': '//yt3.ggpht.com/a.jpg'}]})
+        self.assertEqual((ch['kind'], ch['title'], ch['sub'], ch['thumb']), ('folder', 'Toravo', 'Kanal · 4200 Abonnenten', 'https://yt3.ggpht.com/a.jpg'))
+        yt.ytdlp = lambda *a: {'url': None, 'requested_formats': [{'vcodec': 'avc1', 'url': 'https://v', 'http_headers': {'User-Agent': 'UA/1'}}, {'vcodec': 'none', 'url': 'https://a'}]}
+        res = yt.resolve({'id': 'abcdefghijk', 'title': 'T'})
+        self.assertEqual((res['url'], res['opts']['audio_file'], res['opts']['user_agent'], res['opts']['referrer']), ('https://v', 'https://a', 'UA/1', 'https://www.youtube.com/'))
 
     def test_plex(self):
         FakePlex.linked, FakePlex.timeline[:] = False, []
@@ -186,6 +250,24 @@ class MediaTest(unittest.TestCase):
         self.assertNotIn(TOKEN, got['url'] + ''.join(s[0] for s in got['subs']))
         p.progress({'id': '11', 'dur': 1200}, 310.5, 1200, 'paused')
         self.assertIn('state=paused&time=310500&duration=1200000', FakePlex.timeline[-1])
+        p.progress({'id': '11', 'dur': 1200}, 1100, 1200, 'playing')  # past 90 %: watched
+        self.assertTrue(FakePlex.timeline[-1].startswith('/:/scrobble?') and 'key=11' in FakePlex.timeline[-1])
+        film = p.detail({'id': '20', 'title': 'Film'})
+        self.assertEqual((film['detail']['meta'], [b[0] for b in film['buttons']]), ('2024 · 100 Min. · ★ 8,1', ['Abspielen', 'Als gesehen markieren', 'Herunterladen']))
+        # a download: the original file onto the "card", resumed after a break; then it plays from there without the server
+        part = TMP / 'card/plex/20.mp4.part'
+        part.parent.mkdir(parents=True, exist_ok=True); part.write_bytes(b'x' * 1000)
+        shown = []
+        got = p.fetch({'id': '20', 'item': {'id': '20', 'title': 'Film'}}, TMP / 'card/plex/20', lambda pct, size=None: shown.append(pct))
+        self.assertEqual((got['file'], (TMP / 'card/plex/20.mp4').stat().st_size, round(shown[0]), shown[-1]), ('20.mp4', 3000, 33, 100))
+        offline._write(TMP / 'card/plex/20.json', {'id': '20', **got['meta'], 'file': got['file']})
+        self.assertEqual(p.resolve({'id': '20', 'title': 'Film'})['url'], str(TMP / 'card/plex/20.mp4'))
+        p.progress({'id': '20', 'dur': 6000}, 5900, 6000, 'stopped')
+        self.assertTrue(offline.find('plex', '20')[0]['watched'])
+        self.assertEqual([i['title'] for i in p.page('Downloads')['items']], ['Film'])
+        self.assertEqual(p.detail({'id': '20', 'title': 'Film'})['buttons'][-1][0], 'Download löschen')
+        offline.delete('plex', '20')
+        self.assertFalse(list((TMP / 'card/plex').iterdir()))
         self.assertFalse([t for t in FakePlex.seen_tokens if TOKEN in t])  # never in an address
         again = plex.Plex(TMP / 'plex.json')
         self.assertEqual(again.data['token'], TOKEN)
@@ -225,7 +307,7 @@ class MediaTest(unittest.TestCase):
         self.assertEqual([q['title'] for q in deck.queue], ['Video 4'])
         self.spin(lambda: deck.mpv.props.get('track-list'))
         names = paint('playing')
-        self.assertIn('Tonspur:Original (Englisch)', names); self.assertIn('Untertitel:Deutsch (SRT)', names); self.assertIn('Kanal merken', names) if deck.now.get('channel') else None
+        self.assertIn('Tonspur:Original (Englisch)', names); self.assertIn('Untertitel:Deutsch (SRT)', names); self.assertIn('Tempo:1,5×', names)
         deck.key('left'); deck.key('ok'); deck.key('up')
         self.spin(lambda: [c for c in fake.commands if c[0] == 'cycle'])
         self.assertEqual([c[:3] for c in fake.commands if c[0] in ('seek', 'cycle')][-2:], [['seek', -10, 'relative'], ['cycle', 'pause']])
