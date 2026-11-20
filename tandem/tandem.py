@@ -11,7 +11,9 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import bluetooth  # BlueZ over D-Bus: headphones and a second gamepad, for the settings
+import companion  # per-game notes/sketches, guides, visual save states, dual-screen touch, trackpad & uploads
 import saves  # rolling local + SSH savegame backups (SD card + optional SSH host)
+import telemetry  # battery wattage/playtime, CPU/RAM, PipeWire mixer, dock state & Wake-on-LAN
 import thor  # the Thor's own hardware: stick lights, gyro, performance profile
 
 HOME = Path.home()
@@ -25,6 +27,7 @@ RA_WIDE_CORE = RA_CORES[0] / 'tandem-wide/mgba_libretro.so'
 RA_WIDE = RA_CORES[0].parent / 'system/tandem-wide'  # what it reads: the pack's game.lua and the switch "on"
 FLATPAK_DIRS = [Path('/var/lib/flatpak/app'), HOME / '.local/share/flatpak/app']
 IMAGES = {'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.svg': 'image/svg+xml'}
+VIDEOS = {'.mp4': 'video/mp4', '.webm': 'video/webm', '.mkv': 'video/x-matroska'}
 
 
 def app(pattern, *args): return ('appimage', pattern, args)
@@ -39,8 +42,14 @@ SYSTEMS = {
     'gbc': ('Game Boy Color', 275, 'gbc gb zip 7z', [('RetroArch', ra('gambatte', 'sameboy', 'mgba'))]),
     'gba': ('Game Boy Advance', 255, 'gba zip 7z', [('RetroArch', ra('mgba', 'vba_next', 'gpsp'))]),
     'nes': ('NES', 0, 'nes fds unf unif zip 7z', [('RetroArch', ra('nestopia', 'fceumm', 'mesen'))]),
-    'snes': ('Super Nintendo', 285, 'sfc smc fig swc bs zip 7z', [('RetroArch', ra('snes9x', 'bsnes'))]),
+    'famicom': ('Famicom', 5, 'nes fds unf unif zip 7z', [('RetroArch', ra('nestopia', 'fceumm', 'mesen'))]),
+    'fds': ('Famicom Disk System', 12, 'fds nes zip 7z', [('RetroArch', ra('nestopia', 'fceumm', 'mesen'))]),
+    'snes': ('Super Nintendo', 285, 'sfc smc fig swc bs zip 7z', [('RetroArch', ra('snes9x', 'bsnes', 'snes9x2010'))]),
+    'sfc': ('Super Famicom', 280, 'sfc smc fig swc bs zip 7z', [('RetroArch', ra('snes9x', 'bsnes', 'snes9x2010'))]),
     'n64': ('Nintendo 64', 130, 'z64 n64 v64 zip 7z', [('RetroArch', ra('mupen64plus_next', 'parallel_n64'))]),
+    'virtualboy': ('Virtual Boy', 355, 'vb vboy zip 7z', [('RetroArch', ra('mednafen_vb'))]),
+    'pokemini': ('Pokémon Mini', 50, 'min zip 7z', [('RetroArch', ra('pokemini'))]),
+    'gameandwatch': ('Game & Watch', 35, 'mgw zip 7z', [('RetroArch', ra('gw'))]),
     'nds': ('Nintendo DS', 200, 'nds app zip 7z', [('melonDS', app('melonDS*.AppImage')), ('melonDS', fp('net.kuribo64.melonDS')),
                                                    ('RetroArch', ra('melondsds', 'desmume'))]),
     'n3ds': ('Nintendo 3DS', 350, '3ds 3dsx cci cxi cia', [('Azahar', app('Azahar*.AppImage'))]),
@@ -52,15 +61,57 @@ SYSTEMS = {
     'ps2': ('PlayStation 2', 235, 'chd iso cso zso', [('ARMSX2', app('ARMSX2*.AppImage'))]),
     'psp': ('PSP', 205, 'iso cso chd pbp', [('PPSSPP', fp('org.ppsspp.PPSSPP')), ('RetroArch', ra('ppsspp'))]),
     'dreamcast': ('Dreamcast', 20, 'chd cdi gdi cue m3u', [('Flycast', fp('org.flycast.Flycast')), ('RetroArch', ra('flycast'))]),
+    'naomi': ('Sega NAOMI', 22, 'zip 7z lst bin dat', [('Flycast', fp('org.flycast.Flycast')), ('RetroArch', ra('flycast'))]),
+    'atomiswave': ('Atomiswave', 26, 'zip 7z lst bin', [('Flycast', fp('org.flycast.Flycast')), ('RetroArch', ra('flycast'))]),
     'genesis': ('Genesis', 215, 'md gen bin smd zip 7z', [('RetroArch', ra('genesis_plus_gx', 'picodrive'))]),
     'megadrive': ('Mega Drive', 215, 'md gen bin smd zip 7z', [('RetroArch', ra('genesis_plus_gx', 'picodrive'))]),
+    'sega32x': ('Sega 32X', 210, '32x bin md zip 7z', [('RetroArch', ra('picodrive'))]),
     'mastersystem': ('Master System', 215, 'sms zip 7z', [('RetroArch', ra('genesis_plus_gx', 'picodrive'))]),
+    'sg-1000': ('SG-1000', 212, 'sg zip 7z', [('RetroArch', ra('genesis_plus_gx', 'bluemsx'))]),
     'gamegear': ('Game Gear', 150, 'gg zip 7z', [('RetroArch', ra('genesis_plus_gx'))]),
     'segacd': ('Sega CD', 215, 'chd cue iso m3u', [('RetroArch', ra('genesis_plus_gx', 'picodrive'))]),
     'saturn': ('Saturn', 300, 'chd cue iso m3u', [('Ymir', fp('io.github.strikerx3.ymir')), ('RetroArch', ra('mednafen_saturn', 'yabause'))]),
     'pcengine': ('PC Engine', 25, 'pce chd cue zip 7z', [('RetroArch', ra('mednafen_pce_fast', 'mednafen_pce'))]),
+    'pcenginecd': ('PC Engine CD', 28, 'chd cue ccd m3u pce', [('RetroArch', ra('mednafen_pce_fast', 'mednafen_pce'))]),
+    'supergrafx': ('SuperGrafx', 32, 'sgx pce zip 7z', [('RetroArch', ra('mednafen_supergrafx', 'mednafen_pce_fast'))]),
+    'neogeo': ('Neo Geo', 42, 'zip 7z', [('RetroArch', ra('fbneo', 'mame2003_plus'))]),
+    'neogeocd': ('Neo Geo CD', 44, 'chd cue iso m3u', [('RetroArch', ra('neocd', 'fbneo'))]),
+    'ngp': ('Neo Geo Pocket', 180, 'ngp zip 7z', [('RetroArch', ra('mednafen_ngp'))]),
+    'ngpc': ('Neo Geo Pocket Color', 185, 'ngc ngp zip 7z', [('RetroArch', ra('mednafen_ngp'))]),
+    'wonderswan': ('WonderSwan', 202, 'ws zip 7z', [('RetroArch', ra('mednafen_wswan'))]),
+    'wonderswancolor': ('WonderSwan Color', 208, 'wsc ws zip 7z', [('RetroArch', ra('mednafen_wswan'))]),
     'arcade': ('Arcade', 5, 'zip 7z', [('RetroArch', ra('fbneo', 'mame2003_plus'))]),
+    'mame': ('MAME', 8, 'zip 7z', [('RetroArch', ra('mame2003_plus', 'mame', 'fbneo'))]),
     'fbneo': ('FinalBurn Neo', 5, 'zip 7z', [('RetroArch', ra('fbneo'))]),
+    'fba': ('FinalBurn Alpha', 6, 'zip 7z', [('RetroArch', ra('fbneo', 'fbalpha2012'))]),
+    'cps': ('Capcom CPS', 38, 'zip 7z', [('RetroArch', ra('fbneo', 'mame2003_plus'))]),
+    'cps1': ('Capcom CPS-1', 38, 'zip 7z', [('RetroArch', ra('fbneo', 'mame2003_plus'))]),
+    'cps2': ('Capcom CPS-2', 40, 'zip 7z', [('RetroArch', ra('fbneo', 'mame2003_plus'))]),
+    'cps3': ('Capcom CPS-3', 42, 'zip 7z', [('RetroArch', ra('fbneo', 'mame2003_plus'))]),
+    'atari2600': ('Atari 2600', 18, 'a26 bin zip 7z', [('RetroArch', ra('stella', 'stella2014'))]),
+    'atari5200': ('Atari 5200', 16, 'a52 bin zip 7z', [('RetroArch', ra('atari800', 'a5200'))]),
+    'atari7800': ('Atari 7800', 14, 'a78 bin zip 7z', [('RetroArch', ra('prosystem'))]),
+    'atarilynx': ('Atari Lynx', 34, 'lnx zip 7z', [('RetroArch', ra('handy', 'mednafen_lynx'))]),
+    'atarijaguar': ('Atari Jaguar', 2, 'j64 jag zip 7z', [('RetroArch', ra('virtualjaguar'))]),
+    '3do': ('3DO', 45, 'chd iso cue m3u', [('RetroArch', ra('opera'))]),
+    'colecovision': ('ColecoVision', 225, 'col rom zip 7z', [('RetroArch', ra('bluemsx', 'gearcoleco'))]),
+    'intellivision': ('Intellivision', 48, 'int bin zip 7z', [('RetroArch', ra('freeintv'))]),
+    'vectrex': ('Vectrex', 195, 'vec zip 7z', [('RetroArch', ra('vecx'))]),
+    'odyssey2': ('Odyssey 2', 30, 'bin zip 7z', [('RetroArch', ra('o2em'))]),
+    'msx': ('MSX', 218, 'rom mx1 dsk zip 7z', [('RetroArch', ra('bluemsx', 'fmsx'))]),
+    'msx2': ('MSX2', 222, 'rom mx2 dsk zip 7z', [('RetroArch', ra('bluemsx', 'fmsx'))]),
+    'amiga': ('Amiga', 165, 'adf lha hdf zip', [('RetroArch', ra('puae'))]),
+    'amiga600': ('Amiga 600', 165, 'adf lha hdf zip', [('RetroArch', ra('puae'))]),
+    'amiga1200': ('Amiga 1200', 168, 'adf lha hdf zip', [('RetroArch', ra('puae'))]),
+    'amigacd32': ('Amiga CD32', 172, 'chd cue iso lha', [('RetroArch', ra('puae'))]),
+    'c64': ('Commodore 64', 212, 'd64 t64 prg crt tap zip', [('RetroArch', ra('vice_x64sc', 'vice_x64'))]),
+    'zxspectrum': ('ZX Spectrum', 340, 'tzx tap z80 sna zip', [('RetroArch', ra('fuse'))]),
+    'amstradcpc': ('Amstrad CPC', 115, 'dsk sna cpr zip', [('RetroArch', ra('cap32', 'crocods'))]),
+    'dos': ('MS-DOS', 60, 'dosz zip exe com bat conf', [('RetroArch', ra('dosbox_pure'))]),
+    'scummvm': ('ScummVM', 142, 'scummvm svm', [('ScummVM', fp('org.scummvm.ScummVM')), ('RetroArch', ra('scummvm'))]),
+    'doom': ('DOOM', 0, 'wad iwad pwad', [('RetroArch', ra('prboom'))]),
+    'quake': ('Quake', 25, 'pak', [('RetroArch', ra('tyrquake'))]),
+    'pico8': ('PICO-8', 325, 'p8 png zip', [('RetroArch', ra('fake08', 'retro8'))]),
     'switch': ('Switch', 355, 'nsp xci nsz', [('Eden', app('Eden*.AppImage', '-f', '-g'))]),  # not in the Armada Store: Tandem's own updater fetches it
     'port': ('Ports', 28, '', []),  # no folder of ROMs: the games in PORTS
 }
@@ -91,6 +142,7 @@ YT_FORMAT = 'bv*[height<=1080][vcodec^=avc1]+ba[acodec^=mp4a]/bv*[height<=1080]+
 MPV_ARGS = ('--gpu-context=x11egl', '--idle=yes', '--force-window=yes', '--fullscreen', '--image-display-duration=inf', f'--input-ipc-server={MEDIA_SOCKET}', '--hwdec=v4l2m2m-copy', '--ytdl=yes', '--ytdl-format=' + YT_FORMAT,  # yt-dlp only when a direct load fails (YouTube pages)
             '--really-quiet', '--script-opts=osc-idlescreen=no', '--cache=yes', '--demuxer-max-bytes=150MiB', '--sub-auto=no')  # quiet: no addresses in launch.log
 MEDIA_APPS = {'YouTube': 'youtube', 'Plex': 'plex', 'Aufnahmen': 'gallery'}
+PCSTREAM_APPS = {'Moonlight', 'Chiaki'}
 APPS += [(name, 'flatpak', 'io.mpv.Mpv', MPV_ARGS) for name in MEDIA_APPS]
 def steam_apps(path):
     """Names, kinds and install folders from Steam's appinfo.vdf (binary). Only the first 'name', 'type' and 'installdir'
@@ -287,11 +339,37 @@ def wide_core(cmd, pack, on):
     return cmd[:at] + [str(RA_WIDE_CORE)] + cmd[at + 1:], bool(on)
 
 
-def emulator(system):
-    """(label, command prefix) of the first usable emulator, or (None, what to install)."""
+def emulators_for(system):
+    """List every usable emulator / RetroArch core option for `system` -> [{'id', 'emu', 'label', 'cmd'}]."""
+    if system not in SYSTEMS or system == 'port': return []
+    out, seen = [], set()
+    for label, (kind, target, args) in SYSTEMS[system][3]:
+        if kind == 'retroarch':
+            if not has_flatpak(RA_REF): continue
+            for core in target:
+                for folder in RA_CORES:
+                    so = folder / f'{core}_libretro.so'
+                    if so.is_file() and f'ra:{core}' not in seen:
+                        seen.add(f'ra:{core}')
+                        out.append({'id': f'ra:{core}', 'emu': 'RetroArch', 'label': f'RetroArch ({core})',
+                                    'cmd': ['flatpak', 'run', RA_REF, '-L', str(so)]})
+                        break
+        else:
+            cmd, _ = resolve(kind, target, args)
+            if cmd and label not in seen:
+                seen.add(label)
+                out.append({'id': label, 'emu': label, 'label': label, 'cmd': cmd})
+    return out
+
+
+def emulator(system, prefer=None):
+    """(label, command prefix) of the preferred or first usable emulator, or (None, what to install)."""
     if system == 'port': return 'Port', []
     emus = SYSTEMS[system][3]
     if not emus: return None, 'Für dieses System bietet der Armada Store keinen Emulator.'
+    if prefer:
+        hit = next((e for e in emulators_for(system) if e['id'] == prefer), None)
+        if hit: return hit['emu'], hit['cmd']
     reasons = []
     for label, (kind, target, args) in emus:
         cmd, why = resolve(kind, target, args)
@@ -303,12 +381,35 @@ def emulator(system):
 MEDIA = Path(os.environ.get('XDG_DATA_HOME', HOME / '.local/share')) / 'tandem/media'  # art Tandem fetched itself
 # Folder -> playlist name on thumbnails.libretro.com (free box art and screenshots, named after No-Intro/Redump sets)
 LIBRETRO = {'gb': 'Nintendo - Game Boy', 'gbc': 'Nintendo - Game Boy Color', 'gba': 'Nintendo - Game Boy Advance',
-            'nes': 'Nintendo - Nintendo Entertainment System', 'snes': 'Nintendo - Super Nintendo Entertainment System',
-            'n64': 'Nintendo - Nintendo 64', 'nds': 'Nintendo - Nintendo DS', 'n3ds': 'Nintendo - Nintendo 3DS', 'gc': 'Nintendo - GameCube',
+            'nes': 'Nintendo - Nintendo Entertainment System', 'famicom': 'Nintendo - Nintendo Entertainment System',
+            'fds': 'Nintendo - Family Computer Disk System',
+            'snes': 'Nintendo - Super Nintendo Entertainment System', 'sfc': 'Nintendo - Super Nintendo Entertainment System',
+            'n64': 'Nintendo - Nintendo 64', 'virtualboy': 'Nintendo - Virtual Boy', 'pokemini': 'Nintendo - Pokemon Mini',
+            'nds': 'Nintendo - Nintendo DS', 'n3ds': 'Nintendo - Nintendo 3DS', 'gc': 'Nintendo - GameCube',
             'wii': 'Nintendo - Wii', 'wiiu': 'Nintendo - Wii U', 'psx': 'Sony - PlayStation', 'ps2': 'Sony - PlayStation 2',
             'psp': 'Sony - PlayStation Portable', 'dreamcast': 'Sega - Dreamcast', 'genesis': 'Sega - Mega Drive - Genesis',
-            'megadrive': 'Sega - Mega Drive - Genesis', 'mastersystem': 'Sega - Master System - Mark III', 'gamegear': 'Sega - Game Gear',
-            'segacd': 'Sega - Mega-CD - Sega CD', 'saturn': 'Sega - Saturn', 'pcengine': 'NEC - PC Engine - TurboGrafx 16'}
+            'megadrive': 'Sega - Mega Drive - Genesis', 'sega32x': 'Sega - 32X',
+            'mastersystem': 'Sega - Master System - Mark III', 'sg-1000': 'Sega - SG-1000', 'gamegear': 'Sega - Game Gear',
+            'segacd': 'Sega - Mega-CD - Sega CD', 'saturn': 'Sega - Saturn',
+            'pcengine': 'NEC - PC Engine - TurboGrafx 16', 'pcenginecd': 'NEC - PC Engine CD - TurboGrafx-CD',
+            'supergrafx': 'NEC - PC Engine SuperGrafx', 'neogeo': 'SNK - Neo Geo', 'neogeocd': 'SNK - Neo Geo CD',
+            'ngp': 'SNK - Neo Geo Pocket', 'ngpc': 'SNK - Neo Geo Pocket Color',
+            'wonderswan': 'Bandai - WonderSwan', 'wonderswancolor': 'Bandai - WonderSwan Color',
+            'atari2600': 'Atari - 2600', 'atari5200': 'Atari - 5200', 'atari7800': 'Atari - 7800',
+            'atarilynx': 'Atari - Lynx', 'atarijaguar': 'Atari - Jaguar', '3do': 'The 3DO Company - 3DO',
+            'colecovision': 'Coleco - ColecoVision', 'intellivision': 'Mattel - Intellivision', 'vectrex': 'GCE - Vectrex',
+            'odyssey2': 'Magnavox - Odyssey2', 'msx': 'Microsoft - MSX', 'msx2': 'Microsoft - MSX2',
+            'amiga': 'Commodore - Amiga', 'amiga600': 'Commodore - Amiga', 'amiga1200': 'Commodore - Amiga',
+            'amigacd32': 'Commodore -CD32', 'c64': 'Commodore - 64', 'zxspectrum': 'Sinclair - ZX Spectrum',
+            'amstradcpc': 'Amstrad - CPC', 'dos': 'DOS', 'scummvm': 'ScummVM', 'doom': 'DOOM',
+            'arcade': 'FBNeo - Arcade Games', 'fbneo': 'FBNeo - Arcade Games', 'fba': 'FBNeo - Arcade Games',
+            'cps': 'FBNeo - Arcade Games', 'cps1': 'FBNeo - Arcade Games', 'cps2': 'FBNeo - Arcade Games', 'cps3': 'FBNeo - Arcade Games',
+            'mame': 'MAME'}
+
+SYS_ALIASES = {'sfc': ['snes'], 'snes': ['sfc'], 'famicom': ['nes'], 'nes': ['famicom'],
+               'megadrive': ['genesis'], 'genesis': ['megadrive'], 'n3ds': ['3ds'], 'gc': ['gamecube'],
+               'psx': ['ps1'], 'port': ['windows', 'pc'], 'fba': ['fbneo', 'arcade'],
+               'cps': ['arcade', 'fbneo'], 'cps1': ['arcade', 'fbneo'], 'cps2': ['arcade', 'fbneo'], 'cps3': ['arcade', 'fbneo']}
 
 
 def scrape(games):
@@ -339,32 +440,71 @@ class Library:
     def __init__(self, roots, steam):
         self.roots, self.steam, self.media, self.games, self.lock = roots, steam, {}, {}, threading.Lock()
 
-    def _media_index(self, folder):
+    def _media_index(self, folder, exts=IMAGES):
         """stem -> file for one media folder; Cocoon appends '__cocoon_edit_<n>_<hash>' to the ROM stem."""
         index = {}
         try:
             for entry in os.scandir(folder):
-                if Path(entry.name).suffix.lower() in IMAGES:
+                if Path(entry.name).suffix.lower() in exts:
                     index[Path(entry.name).stem.split('__cocoon_edit_')[0]] = entry.path
         except OSError: pass
         return index
 
     def _art(self, root, system):
         base = Path(root).parent
-        cover, hero, logo, shot = {}, {}, {}, {}
-        for media, covers, heroes, logos, shots in (
-                (base / 'ES-DE/downloaded_media', ('covers', 'miximages', 'screenshots'), ('fanart', 'screenshots'), ('marquees', 'wheel'), ('screenshots',)),
-                (HOME / 'ES-DE/downloaded_media', ('covers', 'miximages', 'screenshots'), ('fanart', 'screenshots'), ('marquees', 'wheel'), ('screenshots',)),
-                (base / 'Cocoon/downloaded_media', ('icon', 'screenshot_title'), ('hero', 'screenshot_gameplay'), ('logo',), ('screenshot_gameplay', 'screenshot_title')),
-                (MEDIA, ('covers',), ('snaps',), (), ('snaps',))):
-            for kinds, target in ((covers, cover), (heroes, hero), (logos, logo), (shots, shot)):
-                for kind in reversed(kinds):  # earlier names win
-                    target.update(self._media_index(media / system / kind))
-        return cover, hero, logo, shot
+        cover, hero, logo, shot, vid = {}, {}, {}, {}, {}
+        sys_names = list(reversed([system] + SYS_ALIASES.get(system, [])))  # primary system name wins over alias
+        for sname in sys_names:
+            for media, covers, heroes, logos, shots, vids in (
+                    (base / 'ES-DE/downloaded_media', ('covers', 'miximages', 'screenshots'), ('fanart', 'screenshots'), ('marquees', 'wheel'), ('screenshots',), ('videos',)),
+                    (HOME / 'ES-DE/downloaded_media', ('covers', 'miximages', 'screenshots'), ('fanart', 'screenshots'), ('marquees', 'wheel'), ('screenshots',), ('videos',)),
+                    (base / 'Cocoon/downloaded_media', ('icon', 'screenshot_title'), ('hero', 'screenshot_gameplay'), ('logo',), ('screenshot_gameplay', 'screenshot_title'), ('videos', 'video')),
+                    (MEDIA, ('covers',), ('snaps',), (), ('snaps',), ())):
+                for kinds, target in ((covers, cover), (heroes, hero), (logos, logo), (shots, shot)):
+                    for kind in reversed(kinds):  # earlier names win
+                        target.update(self._media_index(media / sname / kind))
+                for vkind in reversed(vids):
+                    vid.update(self._media_index(media / sname / vkind, VIDEOS))
+        return cover, hero, logo, shot, vid
+
+    def _gamelist(self, root, system):
+        """stem -> {'name', 'desc', 'genre', 'dev', 'year', 'ttb'} from Cocoon or ES-DE gamelist.xml."""
+        import xml.etree.ElementTree as ET
+        base = Path(root).parent
+        meta = {}
+        sys_names = list(reversed([system] + SYS_ALIASES.get(system, [])))
+        for sname in sys_names:
+            for xml_path in (Path(root) / sname / 'gamelist.xml', base / f'ES-DE/gamelists/{sname}/gamelist.xml',
+                             HOME / f'ES-DE/gamelists/{sname}/gamelist.xml', base / f'Cocoon/gamelists/{sname}/gamelist.xml'):
+                if not xml_path.is_file(): continue
+                try:
+                    raw = xml_path.read_text(encoding='utf-8', errors='replace')
+                    # Strip undeclared namespace prefixes (e.g. cocoon:timetobeathastily) so ElementTree parses cleanly
+                    raw = re.sub(r'<(/?)[a-zA-Z0-9_]+:([a-zA-Z0-9_]+)', r'<\1\2', raw)
+                    tree = ET.fromstring(raw)
+                except (OSError, ET.ParseError): continue
+                for g in tree.findall('game'):
+                    p = (g.findtext('path') or '').strip()
+                    if not p: continue
+                    stem = Path(p).stem
+                    info = meta.setdefault(stem, {})
+                    for k, tag in (('name', 'name'), ('desc', 'desc'), ('genre', 'genre'), ('dev', 'developer')):
+                        v = (g.findtext(tag) or '').strip()
+                        if v: info[k] = v
+                    if not info.get('dev'):
+                        pub = (g.findtext('publisher') or '').strip()
+                        if pub: info['dev'] = pub
+                    rd = (g.findtext('releasedate') or '').strip()
+                    if len(rd) >= 4 and rd[:4].isdigit() and int(rd[:4]) > 1971:
+                        info['year'] = rd[:4]
+                    ttb = (g.findtext('timetobeathastily') or '').strip()
+                    if ttb.isdigit() and int(ttb) >= 600:
+                        info['ttb'] = round(int(ttb) / 3600, 1)
+        return meta
 
     def _system_art(self, system):
         """Platform artwork of a Cocoon theme on the card (assets/smart_folders/<pack>/smart_folders/by_platform/<system>/)."""
-        names = [system] + {'megadrive': ['genesis'], 'genesis': ['megadrive'], 'n3ds': ['3ds'], 'gc': ['gamecube'], 'psx': ['ps1'], 'port': ['windows']}.get(system, [])
+        names = [system] + SYS_ALIASES.get(system, [])
         for root in self.roots:
             for name in names:
                 for folder in sorted(glob.glob(str(Path(root).parent / f'Cocoon/assets/smart_folders/*/smart_folders/by_platform/{name}'))):
@@ -374,7 +514,7 @@ class Library:
 
     def _overlay_art(self, system):
         """Platform tile frame (mask.png + overlay.png) of a Cocoon icon-overlay pack on the card."""
-        names = [system] + {'megadrive': ['genesis'], 'genesis': ['megadrive'], 'n3ds': ['3ds'], 'gc': ['gamecube'], 'psx': ['ps1'], 'port': ['windows', 'pc']}.get(system, [])
+        names = [system] + SYS_ALIASES.get(system, [])
         for root in self.roots:
             for name in names:
                 for folder in sorted(glob.glob(str(Path(root).parent / f'Cocoon/assets/icon_overlays/*/icon_overlays/{name}'))):
@@ -397,17 +537,35 @@ class Library:
             for system, (name, hue, exts, _) in SYSTEMS.items():
                 folder = Path(root) / system
                 if not folder.is_dir(): continue
-                cover, hero, logo, shot = self._art(root, system)
+                cover, hero, logo, shot, vid = self._art(root, system)
+                gmeta = self._gamelist(root, system)
                 wanted = {'.' + e for e in exts.split()}
-                for entry in sorted(os.scandir(folder), key=lambda e: e.name.lower()):
+                entries = sorted((e for e in os.scandir(folder) if not e.name.startswith('.') and e.is_file()), key=lambda e: e.name.lower())
+                # Multi-disc .m3u playlists hide their individual disc files so multi-disc games appear once
+                m3u_discs = set()
+                if '.m3u' in wanted:
+                    for e in entries:
+                        if e.name.lower().endswith('.m3u'):
+                            try:
+                                for ln in Path(e.path).read_text(errors='ignore').splitlines():
+                                    ln = ln.strip()
+                                    if ln and not ln.startswith('#'): m3u_discs.add(os.path.basename(ln).lower())
+                            except OSError: pass
+                for entry in entries:
                     path = Path(entry.path)
-                    if entry.name.startswith('.') or not entry.is_file() or path.suffix.lower() not in wanted: continue
+                    if path.suffix.lower() not in wanted or entry.name.lower() in m3u_discs: continue
                     gid = ident(system, entry.name)
                     c_img, h_img = self._image(cover.get(path.stem)), self._image(hero.get(path.stem) or cover.get(path.stem))
                     l_img, s_img = self._image(logo.get(path.stem)), self._image(shot.get(path.stem))
-                    game = {'id': gid, 't': clean(path.stem), 's': system, 'path': entry.path, 'cover': c_img, 'hero': h_img}
+                    v_file = self._image(vid.get(path.stem))
+                    gm = gmeta.get(path.stem) or {}
+                    title = clean(gm['name']) if gm.get('name') else clean(path.stem)
+                    game = {'id': gid, 't': title, 's': system, 'path': entry.path, 'cover': c_img, 'hero': h_img}
                     if l_img: game['logo'] = l_img
                     if s_img and s_img not in (h_img, c_img): game['shot'] = s_img
+                    if v_file: game['video'] = v_file
+                    for mk in ('desc', 'genre', 'dev', 'year', 'ttb'):
+                        if gm.get(mk): game[mk] = gm[mk]
                     games[gid] = game
         for manifest in glob.glob(str(self.steam / 'steamapps/appmanifest_*.acf')):
             text = Path(manifest).read_text(errors='ignore')
@@ -468,8 +626,12 @@ class Library:
             if ov: overlays[s] = {'mask': self._image(ov['mask']), 'overlay': self._image(ov['overlay'])}
         apps = [{'id': 'app' + str(i), 't': a[0], 's': 'app', 'icon': self._image(app_icon(*a[1:3]) if a[0] not in MEDIA_APPS else None)}
                 for i, a in enumerate(APPS) if resolve(*a[1:])[0]]
+        emus = {s: [{'id': e['id'], 'label': e['label']} for e in emulators_for(s)] for s in systems}
         public = [{k: v for k, v in g.items() if k not in ('path', 'direct')} for g in self.games.values()]
-        return {'systems': info, 'overlays': overlays, 'games': public, 'apps': apps, 'fav': saved.get('fav', []), 'played': saved.get('played', {}), 'extras': extras_state()}
+        return {'systems': info, 'overlays': overlays, 'emulators': emus, 'games': public, 'apps': apps,
+                'fav': saved.get('fav', []), 'played': saved.get('played', {}), 'sessions': saved.get('sessions', {}),
+                'collections': saved.get('collections', {}), 'hidden': saved.get('hidden', []),
+                'sort': saved.get('sort', 'recent'), 'gameopt': saved.get('gameopt', {}), 'extras': extras_state()}
 
 
 def focused_window():
@@ -577,7 +739,8 @@ class Tandem:
         if game.get('direct'): return 'BananaNative', game['direct']
         if game['s'] == 'steam': return 'Steam', ['steam', '-silent', f'steam://rungameid/{game.get("gameid") or game["appid"]}']  # no Steam window, only the game
         if game['s'] == 'port': return 'Port', [str(PORTS_DIR / PORTS[game['port']][1] / 'run'), PORTS[game['port']][2]]
-        label, cmd = emulator(game['s'])
+        prefer = (self.saved.get('gameopt', {}).get(game['id']) or {}).get('emu')
+        label, cmd = emulator(game['s'], prefer)
         return (label, cmd + [game['path']]) if label else (None, cmd)
 
     def launch(self, gid):
@@ -593,6 +756,7 @@ class Tandem:
                 entry = APPS[int(gid[3:])]
                 game, (label, (cmd, why)) = {'id': gid, 't': entry[0], 's': 'app'}, (entry[0], resolve(*entry[1:]))
                 if entry[0] in MEDIA_APPS: game['media'] = {'deck': MEDIA_APPS[entry[0]], 'socket': str(MEDIA_SOCKET), 'pad': True}
+                elif entry[0] in PCSTREAM_APPS: game['media'] = {'deck': 'pcstream', 'pad': False}
                 if not cmd: label, cmd = None, why
             else:
                 game = self.library.games.get(gid)
@@ -611,11 +775,16 @@ class Tandem:
             prof = opt.get('profile') or ('Performance' if label == 'BananaNative' else '')
             fps = opt.get('fps') if opt.get('fps') in FPS_LIMITS else 0
             scale = opt.get('scale') if opt.get('scale') in SCALING_FILTERS else 'linear'
+            is_dual = bool((game['s'] == 'wiiu') or (game['s'] == 'nds' and label == 'melonDS') or (game['s'] == 'n3ds' and label == 'Azahar'))
             with open(STATE / 'launch.log', 'ab') as log:  # the child keeps its own copy of the handle
                 log.write(f'\n== {time.strftime("%F %T")} {game["t"]}: {cmd}\n'.encode()); log.flush()
                 if not self.dry:
                     env = None
-                    if game['s'] == 'wiiu': env = {**os.environ, 'DISABLE_GAMESCOPE_WSI': '1'}; cemu_pad_window()  # see mirror_pad
+                    if label == 'RetroArch': companion.ensure_retroarch_thumbnails()
+                    if is_dual:
+                        env = {**os.environ, 'DISABLE_GAMESCOPE_WSI': '1'}
+                        if game['s'] == 'wiiu': cemu_pad_window()
+                        else: companion.setup_dual_emu(game['s'], label)
                     if game['s'] == 'port': env = {**os.environ, 'TANDEM_DECK_SOCKET': str(DECK_SOCKET)}
                     if label == 'BananaNative':
                         env = {**os.environ, 'DISPLAY': os.environ.get('DISPLAY') or ':0',
@@ -644,48 +813,96 @@ class Tandem:
                 self.run = {'id': gid, 't': game['t'], 's': game['s'], 'emu': label, 'since': int(time.time()), 'hero': game.get('hero'),
                             'layout': game.get('layout'), 'appid': game.get('appid'), 'keys': game.get('keys'),
                             'deck': f'deck/{game["appid"]}.html' if game.get('appid') and (HERE / f'decks/{game["appid"]}.html').is_file() else None,
-                            'pack': pack, 'wide': wide, 'profile': prof, 'fps': fps, 'scale': scale,
+                            'pack': pack, 'wide': wide, 'dual': is_dual, 'profile': prof, 'fps': fps, 'scale': scale,
                             **({'flatpak': fp_id} if fp_id else {}),
                             'port': game.get('media') or ({'deck': PORTS[game['port']][3], 'socket': str(DECK_SOCKET)} if game['s'] == 'port' else None)}
                 if not self.dry: threading.Thread(target=self.watch, args=(self.proc, gid, game.get('appid')), daemon=True).start()
-                if not self.dry and game['s'] == 'wiiu': threading.Thread(target=self.mirror_pad, args=(gid,), daemon=True).start()
+                if not self.dry and game['s'] == 'wiiu' and load_config().get('wiiu_ffplay'):
+                    threading.Thread(target=self.mirror_pad, args=(gid,), daemon=True).start()
         self.publish()
         return {'ok': True, 'cmd': cmd, 'tracked': tracked}
 
     def gameopt(self, data):
-        """Per-game performance profile, frame-rate cap and scaling filter: remembered in state.json and applied right away."""
+        """Per-game emulator/core, performance profile, frame-rate cap and scaling filter: remembered in state.json."""
+        gid_req = data.get('id') if isinstance(data.get('id'), str) else None
         with self.lock:
             run = self.run
-            if not run: return {'error': 'Es läuft kein Spiel.'}
-            opt = self.saved.setdefault('gameopt', {}).setdefault(run['id'], {})
-            prof, fps, scale = data.get('profile'), data.get('fps'), data.get('scale')
+            gid = gid_req or (run['id'] if run else None)
+            if not gid: return {'error': 'Es läuft kein Spiel.'}
+            game = self.library.games.get(gid)
+            opt = self.saved.setdefault('gameopt', {}).setdefault(gid, {})
+            emu_id, prof, fps, scale = data.get('emu'), data.get('profile'), data.get('fps'), data.get('scale')
+            if emu_id is not None and game:
+                valid_ids = {e['id'] for e in emulators_for(game['s'])}
+                if emu_id == '' or emu_id is False: opt.pop('emu', None)
+                elif emu_id in valid_ids: opt['emu'] = emu_id
+                else: return {'error': 'Unbekannter Emulator.'}
             if prof is not None:
                 if prof not in ('', *thor.PROFILES): return {'error': 'Unbekanntes Leistungsprofil.'}
                 if prof: opt['profile'] = prof
                 else: opt.pop('profile', None)
-                run['profile'] = opt.get('profile') or ('Performance' if run.get('emu') == 'BananaNative' else '')
+                if run and run['id'] == gid:
+                    run['profile'] = opt.get('profile') or ('Performance' if run.get('emu') == 'BananaNative' else '')
             if fps is not None:
                 if fps not in FPS_LIMITS: return {'error': 'unbekannte Einstellung'}
                 if fps: opt['fps'] = int(fps)
                 else: opt.pop('fps', None)
-                run['fps'] = int(fps)
+                if run and run['id'] == gid: run['fps'] = int(fps)
             if scale is not None:
                 if scale not in SCALING_FILTERS: return {'error': 'unbekannte Einstellung'}
                 if scale != 'linear': opt['scale'] = scale
                 else: opt.pop('scale', None)
-                run['scale'] = scale
-            if not opt: self.saved.get('gameopt', {}).pop(run['id'], None)
+                if run and run['id'] == gid: run['scale'] = scale
+            if not opt: self.saved.get('gameopt', {}).pop(gid, None)
             self.save()
-            target_prof = run.get('profile') or load_config().get('perf_profile') or 'Balanced'
-            target_fps = run.get('fps', 0)
-            target_scale = run.get('scale', 'linear')
-        thor_res = None
-        if prof is not None and not self.dry: thor_res = thor.change('profile', target_prof)
-        if fps is not None and not self.dry: apply_fps_limit(target_fps)
-        if scale is not None and not self.dry: apply_scaling_filter(target_scale)
-        if thor_res and 'error' not in thor_res: self.publish('thor', {'thor': thor_res})
-        self.publish()
-        return {'ok': True, 'profile': run.get('profile', ''), 'fps': run.get('fps', 0), 'scale': run.get('scale', 'linear')}
+            active = bool(run and run['id'] == gid)
+            target_prof = (run.get('profile') if active else opt.get('profile')) or load_config().get('perf_profile') or 'Balanced'
+            target_fps = run.get('fps', 0) if active else opt.get('fps', 0)
+            target_scale = run.get('scale', 'linear') if active else opt.get('scale', 'linear')
+        if active:
+            thor_res = None
+            if prof is not None and not self.dry: thor_res = thor.change('profile', target_prof)
+            if fps is not None and not self.dry: apply_fps_limit(target_fps)
+            if scale is not None and not self.dry: apply_scaling_filter(target_scale)
+            if thor_res and 'error' not in thor_res: self.publish('thor', {'thor': thor_res})
+            self.publish()
+        else:
+            self.publish('library')
+        out = {'ok': True, 'profile': opt.get('profile', ''), 'fps': opt.get('fps', 0), 'scale': opt.get('scale', 'linear')}
+        if emu_id is not None or opt.get('emu'): out['emu'] = opt.get('emu', '')
+        return out
+
+    def collection_act(self, data):
+        """Manage custom collections, hidden games, and library sort order in state.json."""
+        act = str(data.get('a') or '')
+        gid = str(data.get('id') or '')
+        name = str(data.get('name') or '').strip()[:40]
+        with self.lock:
+            cols = self.saved.setdefault('collections', {})
+            hidden = self.saved.setdefault('hidden', [])
+            if act == 'sort':
+                s = str(data.get('sort') or 'recent')
+                if s not in ('recent', 'az', 'time', 'year'): return {'error': 'unbekannte Sortierung'}
+                self.saved['sort'] = s
+            elif act == 'hide' and gid:
+                if gid in hidden: hidden.remove(gid)
+                else: hidden.append(gid)
+            elif act == 'toggle' and name and gid:
+                lst = cols.setdefault(name, [])
+                if gid in lst: lst.remove(gid)
+                else: lst.append(gid)
+                if not lst: cols.pop(name, None)
+            elif act == 'create' and name:
+                lst = cols.setdefault(name, [])
+                if gid and gid not in lst: lst.append(gid)
+            elif act == 'delete' and name:
+                cols.pop(name, None)
+            else:
+                return {'error': 'unbekannte Aktion'}
+            self.save()
+        self.publish('library')
+        return {'ok': True, 'collections': self.saved.get('collections', {}),
+                'hidden': self.saved.get('hidden', []), 'sort': self.saved.get('sort', 'recent')}
 
     def wide(self, on):
         """The Wide view switch of the running game's pack ('on', 'off', else toggle); the choice is kept per game."""
@@ -793,7 +1010,13 @@ class Tandem:
             if not self.run or self.run['id'] != gid: return
             extra = max(0, int(time.time() - SLEEP_STATE['since'])) if SLEEP_STATE['since'] else 0
             SLEEP_STATE['since'], SLEEP_STATE['froze'] = 0.0, False
-            self.saved['played'][gid]['secs'] += max(0, int(time.time()) - self.run['since'] - extra)
+            delta = max(0, int(time.time()) - self.run['since'] - extra)
+            self.saved['played'][gid]['secs'] += delta
+            if delta > 0 and self.run.get('s') not in ('app', 'term'):
+                sess = self.saved.setdefault('sessions', {})
+                day_k = time.strftime('%Y-%m-%d')
+                sess[day_k] = int(sess.get(day_k, 0)) + delta
+                for old_k in sorted(sess)[:-60]: sess.pop(old_k, None)
             self.save()  # before the run is cleared: whoever sees "no game running" also finds the play time on disk
             steam, had_prof, had_fps = self.run.get('appid'), bool(self.run.get('profile')), bool(self.run.get('fps'))
             had_scale = self.run.get('scale', 'linear') != 'linear'
@@ -809,6 +1032,34 @@ class Tandem:
             trigger_saves_backup(self, quiet=True)
         self.publish()
         threading.Thread(target=self.come_home, daemon=True).start()
+
+    def stats_payload(self):
+        """Activity & playtime summary: total time, 7-day daily history, top played games, and recent games."""
+        import datetime
+        played = self.saved.get('played') or {}
+        sessions = self.saved.get('sessions') or {}
+        games = self.library.games
+        total_secs = sum(int((v or {}).get('secs') or 0) for gid, v in played.items() if gid in games)
+        played_count = sum(1 for gid, v in played.items() if gid in games and ((v or {}).get('secs') or (v or {}).get('last')))
+        wd_names = ('Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So')
+        today = datetime.date.today()
+        days = []
+        for back in range(6, -1, -1):
+            d = today - datetime.timedelta(days=back)
+            ds = d.isoformat()
+            days.append({'day': wd_names[d.weekday()], 'date': ds, 'secs': int(sessions.get(ds) or 0)})
+        week_secs = sum(x['secs'] for x in days)
+        def entry(g):
+            p = played.get(g['id']) or {}
+            sys_lbl = 'Steam' if g['s'] == 'steam' else SYSTEMS.get(g['s'], (g['s'],))[0]
+            return {'id': g['id'], 't': g['t'], 'sys': sys_lbl, 'secs': int(p.get('secs') or 0),
+                    'last': int(p.get('last') or 0), 'cover': g.get('cover')}
+        all_p = [entry(g) for g in games.values() if g['id'] in played and g.get('s') not in ('app', 'term')]
+        top_games = sorted((x for x in all_p if x['secs'] > 0), key=lambda x: (-x['secs'], -x['last']))[:6]
+        recent_games = sorted((x for x in all_p if x['last'] > 0), key=lambda x: -x['last'])[:5]
+        return {'total_secs': total_secs, 'week_secs': week_secs, 'played_count': played_count,
+                'total_games': len(games), 'fav_count': len(self.saved.get('fav') or []),
+                'days': days, 'top_games': top_games, 'recent_games': recent_games}
 
     def come_home(self):
         """After a game the top compositor can be left with no window in front and keeps showing the game's last picture
@@ -1528,6 +1779,23 @@ def retroarch(name):
     return {'ok': True}
 
 
+def retroarch_slot_act(tandem, slot, mode):
+    """Switch RetroArch to `slot` (0..5) and trigger 'save' or 'load' over UDP."""
+    if mode not in ('save', 'load'): return {'error': 'unbekannte Aktion'}
+    run = tandem.run
+    if not run or run.get('emu') != 'RetroArch':
+        return {'error': 'Direkte Slot-Steuerung wird aktuell von RetroArch unterstützt.'}
+    target = max(0, min(9, int(slot)))
+    cur = int(run.get('ra_slot', 0))
+    step_cmd = 'slot+' if target > cur else 'slot-'
+    for _ in range(abs(target - cur)):
+        retroarch(step_cmd)
+        time.sleep(0.03)
+    run['ra_slot'] = target
+    retroarch(mode)
+    return {'ok': True, 'slot': target, 'mode': mode}
+
+
 # panel -> raw brightness before a doze; empty while awake. Kept in a file too: a Tandem restart during a doze left both
 # panels at 0 with nothing to wake them (17.11.)
 DOZE_FILE = Path(os.environ.get('XDG_RUNTIME_DIR') or '/tmp') / 'tandem-doze.json'
@@ -1602,21 +1870,22 @@ def sleep_game(tandem, on):
                 except ProcessLookupError: pass
 
 
-def doze(on, tandem=None):
-    """Standby on a charger: panels asleep, sound muted, stick lights off, game frozen, power profile on Eco; the Thor
-    stays reachable over Wi-Fi/USB."""
+def doze(on, tandem=None, keep_audio=False):
+    """Standby on a charger (or closed-lid music mode when keep_audio=True): panels asleep, stick lights off, Eco profile."""
     hw = (set_raw is _SET_RAW) and not (tandem and tandem.dry)
     if on and not DOZE:
-        sleep_game(tandem, True)
+        if not keep_audio:
+            sleep_game(tandem, True)
         for key, name in BACKLIGHTS.items():
             try: DOZE[key] = lit(key, int((Path('/sys/class/backlight') / name / 'brightness').read_text()))
             except (OSError, ValueError): continue
             set_raw(key, 0)
+        if keep_audio: DOZE['music'] = 1
         try: DOZE_FILE.write_text(json.dumps(DOZE))
         except OSError: pass
         if hw:
             panel_sleep(True)
-            if shutil.which('wpctl'):
+            if not keep_audio and shutil.which('wpctl'):
                 SLEEP_STATE['muted'] = '[MUTED]' in run_quiet(['wpctl', 'get-volume', '@DEFAULT_AUDIO_SINK@'])
                 run_quiet(['wpctl', 'set-mute', '@DEFAULT_AUDIO_SINK@', '1'])
             if shutil.which('armada-rgb'): run_quiet(['armada-rgb', 'sleep'])
@@ -1629,7 +1898,8 @@ def doze(on, tandem=None):
     elif not on:
         was = bool(DOZE)
         if was and hw: panel_sleep(False)
-        for key, raw in list(DOZE.items()): set_raw(key, lit(key, raw))
+        for key, raw in list(DOZE.items()):
+            if key in BACKLIGHTS: set_raw(key, lit(key, raw))
         DOZE.clear()
         DOZE_FILE.unlink(missing_ok=True)
         if hw:
@@ -1703,7 +1973,12 @@ def save_config(data):
         ok, err = import_yt_cookies_text(data['yt_cookies'])
         if not ok: return {**public_config(), 'error': err}
         extra['text'] = 'YouTube-Cookies gespeichert.'
-    if data.get('kb_layout') in ('de', 'us'): config['kb_layout'] = data['kb_layout']
+    if isinstance(data.get('kb_layout'), str) and data.get('kb_layout') in ('de', 'us'): config['kb_layout'] = data['kb_layout']
+    if data.get('controls_style') in ('thor', 'xbox'):
+        config['controls_style'] = data['controls_style']
+    if data.get('hud_level') in (0, 1, 2, 3):
+        config['hud_level'] = int(data['hud_level'])
+        telemetry.set_hud(config['hud_level'])
     if isinstance(data.get('kb_haptics'), bool): config['kb_haptics'] = data['kb_haptics']
     if data.get('lang') in ('de', 'en'): config['lang'] = data['lang']
     if data.get('theme') in [t['id'] for t in themes()]: config['theme'] = data['theme']
@@ -1712,6 +1987,13 @@ def save_config(data):
     if data.get('motion') in ('full', 'reduced'): config['motion'] = data['motion']
     if data.get('rest_min') in (0, 1, 3, 10): config['rest_min'] = data['rest_min']
     if isinstance(data.get('lid_sleep'), bool): config['lid_sleep'] = data['lid_sleep']
+    if isinstance(data.get('lid_music'), bool): config['lid_music'] = data['lid_music']
+    if isinstance(data.get('dock_dim'), bool): config['dock_dim'] = data['dock_dim']
+    if isinstance(data.get('wol_mac'), str):
+        mac = data['wol_mac'].strip()
+        if not mac: config.pop('wol_mac', None)
+        elif re.fullmatch(r'[0-9A-Fa-f]{2}([:\-][0-9A-Fa-f]{2}){5}', mac): config['wol_mac'] = mac.upper().replace('-', ':')
+        else: return {**public_config(), 'error': 'Bitte eine gültige MAC-Adresse eintragen (z. B. AA:BB:CC:DD:EE:FF).'}
     if data.get('charger_standby') in ('doze', 'sleep'): config['charger_standby'] = data['charger_standby']
     if data.get('night_mode') in NIGHT_MODES:
         config['night_mode'] = data['night_mode']
@@ -1747,6 +2029,12 @@ def save_config(data):
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, 'w') as handle: json.dump(config, handle)
     os.replace(tmp, CONFIG)
+    if data.get('controls_style') in ('thor', 'xbox'):
+        try:
+            import controls
+            done = controls.apply(config['controls_style'])
+            if done: extra['text'] = 'Angeglichen: ' + ', '.join(done)
+        except Exception: pass
     return {**public_config(), **extra}
 
 
@@ -1871,6 +2159,8 @@ def public_config():
             'bnet_set': bool(config.get('bnet_email') and config.get('bnet_password')),
             'yt_set': yt_auth or yt_cookie, 'yt_auth': yt_auth, 'yt_cookie': yt_cookie, 'yt_oauth': yt_oauth,
             'plex_set': plex_ok, 'lid_sleep': config.get('lid_sleep', True),
+            'lid_music': config.get('lid_music', True), 'dock_dim': config.get('dock_dim', True),
+            'wol_mac': config.get('wol_mac', ''),
             'charger_standby': config.get('charger_standby') if config.get('charger_standby') in ('doze', 'sleep') else 'doze',
             'night_mode': config.get('night_mode') if config.get('night_mode') in NIGHT_MODES else 'off',
             'save_auto': config.get('save_auto', True),
@@ -1878,12 +2168,20 @@ def public_config():
             'view_mode': config.get('view_mode') if config.get('view_mode') in ('grid', 'stage') else 'grid',
             'overlays': config.get('overlays', True),
             'motion': config.get('motion') if config.get('motion') in ('full', 'reduced') else 'full',
-            'kb_layout': config.get('kb_layout', ''), 'kb_haptics': config.get('kb_haptics', True), 'lang': 'en' if config.get('lang') == 'en' else 'de', 'remote_url': config.get('remote_url', ''), 'rest_min': config.get('rest_min', 3), 'version': VERSION, 'update_url': config.get('update_url', UPDATE_URL), 'theme': config.get('theme') if config.get('theme') in [t['id'] for t in looks] else 'toravo', 'themes': looks}
+            'kb_layout': config.get('kb_layout', ''), 'kb_haptics': config.get('kb_haptics', True),
+            'controls_style': config.get('controls_style') if config.get('controls_style') in ('thor', 'xbox') else 'thor',
+            'hud_level': int(config['hud_level']) if config.get('hud_level') in (0, 1, 2, 3) else 0,
+            'lang': 'en' if config.get('lang') == 'en' else 'de', 'remote_url': config.get('remote_url', ''), 'rest_min': config.get('rest_min', 3), 'version': VERSION, 'update_url': config.get('update_url', UPDATE_URL), 'theme': config.get('theme') if config.get('theme') in [t['id'] for t in looks] else 'toravo', 'themes': looks}
 
 
-RA_CONSOLES = {'megadrive': 1, 'genesis': 1, 'n64': 2, 'snes': 3, 'gb': 4, 'gba': 5, 'gbc': 6, 'nes': 7, 'pcengine': 8, 'segacd': 9,
-               'mastersystem': 11, 'psx': 12, 'gamegear': 15, 'gc': 16, 'nds': 18, 'wii': 19, 'ps2': 21, 'arcade': 27, 'saturn': 39,
-               'dreamcast': 40, 'psp': 41, 'n3ds': 62}
+RA_CONSOLES = {'megadrive': 1, 'genesis': 1, 'n64': 2, 'snes': 3, 'sfc': 3, 'gb': 4, 'gba': 5, 'gbc': 6,
+               'nes': 7, 'famicom': 7, 'fds': 7, 'pcengine': 8, 'supergrafx': 8, 'segacd': 9, 'sega32x': 10,
+               'mastersystem': 11, 'sg-1000': 33, 'psx': 12, 'atarilynx': 13, 'ngp': 14, 'ngpc': 14,
+               'gamegear': 15, 'gc': 16, 'nds': 18, 'wii': 19, 'ps2': 21, 'pokemini': 24, 'atari2600': 25,
+               'arcade': 27, 'fbneo': 27, 'fba': 27, 'neogeo': 27, 'cps': 27, 'cps1': 27, 'cps2': 27, 'cps3': 27, 'mame': 27,
+               'virtualboy': 28, 'msx': 29, 'msx2': 29, 'saturn': 39, 'dreamcast': 40, 'psp': 41, '3do': 43,
+               'colecovision': 44, 'intellivision': 45, 'vectrex': 46, 'atari7800': 51,
+               'wonderswan': 53, 'wonderswancolor': 53, 'neogeocd': 56, 'n3ds': 62, 'pcenginecd': 76}
 RA_CACHE = {}  # (kind, id) -> (time, data)
 
 
@@ -2308,7 +2606,7 @@ def controls_info():
     except ImportError: return {'table': [], 'off': []}
     try: off = controls.check()
     except Exception: off = []  # an unreadable emulator file must not cost the overview
-    return {'table': controls.TABLE, 'off': off}
+    return {'table': controls.table(), 'off': off, 'style': controls.current_style()}
 
 
 def controls_apply():
@@ -2343,10 +2641,27 @@ def handler(tandem):
             if re.fullmatch(r'/deck/\d+\.html', path):  # a game's own page for the bottom screen
                 file = HERE / 'decks' / path[6:]
                 return self.send(200, file.read_bytes(), 'text/html; charset=utf-8') if file.is_file() else self.send(404, {'error': 'kein Begleiter'})
-            if path == '/api/state': return self.send(200, {**tandem.snapshot(), 'battery': battery(), 'wifi': wifi_link(), 'settings': settings(), 'muted': MUTED['on'], 'config': public_config(), 'pair': pair_info()})
+            if path == '/api/state': return self.send(200, {**tandem.snapshot(), 'battery': battery(), 'wifi': wifi_link(), 'settings': settings(), 'muted': MUTED['on'], 'config': public_config(), 'pair': pair_info(), 'dock': telemetry.dock_state()})
             if path.startswith('/media/'):
                 file = tandem.library.media.get(path[7:])  # only files the scan indexed, never a path from the request
-                if file and os.path.isfile(file): return self.send(200, Path(file).read_bytes(), IMAGES[Path(file).suffix.lower()], 'max-age=86400')
+                if file and os.path.isfile(file):
+                    ext = Path(file).suffix.lower()
+                    if ext in VIDEOS:
+                        size = os.path.getsize(file)
+                        rng = re.match(r'bytes=(\d+)-(\d*)', self.headers.get('Range') or '')
+                        start = int(rng[1]) if rng else 0
+                        end = min(size - 1, int(rng[2]) if rng and rng[2] else size - 1)
+                        if start >= size: return self.send(416, b'', VIDEOS[ext])
+                        with open(file, 'rb') as vf:
+                            vf.seek(start)
+                            chunk = vf.read(end - start + 1)
+                        self.send_response(206 if rng else 200)
+                        for hk, hv in (('Content-Type', VIDEOS[ext]), ('Content-Length', str(len(chunk))),
+                                       ('Accept-Ranges', 'bytes'), *((('Content-Range', f'bytes {start}-{end}/{size}'),) if rng else ())):
+                            self.send_header(hk, hv)
+                        self.end_headers(); self.wfile.write(chunk)
+                        return
+                    return self.send(200, Path(file).read_bytes(), IMAGES[ext], 'max-age=86400')
                 return self.send(404, {'error': 'kein Bild'})
             if path == '/api/setup': return self.send(200, {**tandem.setup, **setup_info(tandem)})
             if path == '/api/system': return self.send(200, system_info(tandem.library.roots, 'scan' in self.path))
@@ -2356,6 +2671,46 @@ def handler(tandem):
             if path == '/api/controls': return self.send(200, controls_info())
             if path == '/api/bluetooth': return self.send(200, bluetooth.state())
             if path == '/api/saves': return self.send(200, saves.status())
+            if path == '/api/stats': return self.send(200, tandem.stats_payload())
+            if path == '/api/hud': return self.send(200, {'level': public_config()['hud_level']})
+            if path == '/api/telemetry': return self.send(200, telemetry.snapshot())
+            if path == '/api/bgm': return self.send(200, telemetry.bgm_status())
+            if path == '/api/dualwin':
+                sys_id = (tandem.run or {}).get('s', '')
+                return self.send(200, companion.find_secondary_window(sys_id) or {'wid': 0})
+            if path == '/api/savestates':
+                run = tandem.run
+                game = run and tandem.library.games.get(run['id'])
+                st = companion.savestates_list(game, run)
+                for s in st.get('slots', ()):
+                    if s.get('thumb'): s['thumb'] = tandem.library._image(s['thumb'])
+                return self.send(200, st)
+            if path == '/api/notes':
+                from urllib.parse import parse_qs
+                qs = parse_qs(urlparse(self.path).query)
+                gid = (qs.get('id') or [(tandem.run or {}).get('id', '')])[0]
+                return self.send(200, companion.notes_get(gid))
+            if path == '/api/sketch':
+                from urllib.parse import parse_qs
+                qs = parse_qs(urlparse(self.path).query)
+                gid = (qs.get('id') or [(tandem.run or {}).get('id', '')])[0]
+                raw_png = companion.sketch_bytes(gid)
+                return self.send(200, raw_png, 'image/png') if raw_png else self.send(404, {'error': 'keine Skizze'})
+            if path == '/api/guides':
+                from urllib.parse import parse_qs
+                qs = parse_qs(urlparse(self.path).query)
+                gid = (qs.get('id') or [(tandem.run or {}).get('id', '')])[0]
+                return self.send(200, companion.guides_list(gid, tandem.library.games.get(gid)))
+            if path == '/api/guide_file':
+                from urllib.parse import parse_qs
+                qs = parse_qs(urlparse(self.path).query)
+                gid = (qs.get('id') or [(tandem.run or {}).get('id', '')])[0]
+                name = (qs.get('name') or [''])[0]
+                gf = companion.guide_file(gid, name, tandem.library.games.get(gid))
+                if not gf: return self.send(404, {'error': 'nicht gefunden'})
+                ext = gf.suffix.lower()
+                if ext in IMAGES: return self.send(200, gf.read_bytes(), IMAGES[ext])
+                return self.send(200, {'name': gf.name, 'text': gf.read_text(encoding='utf-8', errors='replace')[:250000]})
             if path == '/api/achievements':
                 run = tandem.run and tandem.library.games.get(tandem.run['id'])
                 return self.send(200, achievements(run) if run else {'note': 'Es läuft kein Spiel.'})
@@ -2381,14 +2736,29 @@ def handler(tandem):
             # Only the two kiosk windows may give orders: a page from another origin must not start programs.
             origin = self.headers.get('Origin')
             if origin and urlparse(origin).netloc != self.headers.get('Host'): return self.send(403, {'error': 'fremde Herkunft'})
+            path = urlparse(self.path).path
+            if path == '/api/sketch':
+                from urllib.parse import parse_qs
+                qs = parse_qs(urlparse(self.path).query)
+                gid = (qs.get('id') or [(tandem.run or {}).get('id', '')])[0]
+                ln = min(int(self.headers.get('Content-Length') or 0), 4 << 20)
+                return self.send(200, companion.sketch_save(gid, self.rfile.read(ln) if ln > 0 else b''))
+            if path == '/api/upload':
+                ln = int(self.headers.get('Content-Length') or 0)
+                res = companion.handle_upload(self.rfile, ln, self.headers.get('X-File-Name'), self.headers.get('X-Kind', 'rom'),
+                                              self.headers.get('X-System', 'auto'), self.headers.get('X-Game', ''),
+                                              tandem.library.roots, CONFIG.parent, set(SYSTEMS))
+                if res.get('ok'):
+                    tandem.library.scan(); tandem.publish('library')
+                return self.send(200, res)
             try: data = json.loads(self.rfile.read(int(self.headers.get('Content-Length') or 0)) or b'{}')
             except ValueError: return self.send(400, {'error': 'kein JSON'})
-            path = urlparse(self.path).path
             if path == '/api/ui':
                 system = data.get('sys')
                 page = data.get('page')  # the settings: which page and whether the focus is on its list (0) or on the page (1)
                 q = data.get('q').strip()[:60] if isinstance(data.get('q'), str) else ''
-                tandem.ui = {'tab': int(data.get('tab', 0)), 'sys': system if isinstance(system, str) and system in SYSTEMS else None, 'i': int(data.get('i', 0)),
+                valid_sys = isinstance(system, str) and (system in SYSTEMS or system == '_hidden' or (system.startswith('col:') and len(system) <= 44))
+                tandem.ui = {'tab': int(data.get('tab', 0)), 'sys': system if valid_sys else None, 'i': int(data.get('i', 0)),
                              'page': page if isinstance(page, str) and re.fullmatch(r'[a-z>]{0,30}', page) else '', 'pane': 1 if data.get('pane') == 1 else 0,
                              'dev': data['dev'] if isinstance(data.get('dev'), str) and re.fullmatch(r'[0-9A-F]{2}(:[0-9A-F]{2}){5}', data['dev']) else '',
                              **({'q': q} if q else {})}  # the Bluetooth device a settings page shows; q = library search
@@ -2415,6 +2785,11 @@ def handler(tandem):
             if path == '/api/record': return self.send(200, record(tandem, data.get('action')))
             if path == '/api/shot': return self.send(200, screenshot())
             if path == '/api/framegen': return self.send(200, frame_gen(bool(data.get('on'))))
+            if path == '/api/hud':
+                lvl = data.get('level', 0)
+                res = save_config({'hud_level': lvl if lvl in (0, 1, 2, 3) else 0})
+                tandem.publish('config', {'config': public_config()})
+                return self.send(200, {'ok': True, 'level': res['hud_level']})
             if path == '/api/mute':
                 mode = data.get('on') if isinstance(data.get('on'), bool) else 'toggle'
                 result = mute(mode)
@@ -2470,6 +2845,30 @@ def handler(tandem):
             if path == '/api/thor': return self.send(200, thor_change(tandem, data))
             if path == '/api/controls': return self.send(200, controls_apply())
             if path == '/api/saves': return self.send(200, trigger_saves_backup(tandem, quiet=False))
+            if path == '/api/saves_restore':
+                res = saves.restore(data.get('file'), data.get('only'))
+                if res.get('ok'): tandem.publish('saves', {'saves': saves.status()})
+                return self.send(200, res)
+            if path == '/api/collection': return self.send(200, tandem.collection_act(data))
+            if path == '/api/savestates':
+                return self.send(200, retroarch_slot_act(tandem, data.get('slot', 0), str(data.get('mode', 'load'))))
+            if path == '/api/notes':
+                gid = str(data.get('id') or (tandem.run or {}).get('id', ''))
+                return self.send(200, companion.notes_save(gid, data))
+            if path == '/api/guides':
+                gid = str(data.get('id') or (tandem.run or {}).get('id', ''))
+                return self.send(200, companion.guide_fetch_wiki(gid, data.get('q', ''), public_config()['lang']))
+            if path == '/api/bgm':
+                if data.get('action') == 'stream_vol':
+                    return self.send(200, telemetry.set_stream_volume(data.get('id', 0), data.get('vol', 80)))
+                return self.send(200, telemetry.bgm_control(str(data.get('action', 'toggle')), str(data.get('path', '')), data.get('vol')))
+            if path == '/api/dualtouch':
+                return self.send(200, companion.send_window_touch(data.get('wid', 0), data.get('x', 0.5), data.get('y', 0.5), data.get('phase', 'down')))
+            if path == '/api/mouse':
+                return self.send(200, companion.MOUSE.send(data.get('dx', 0), data.get('dy', 0), data.get('wheel', 0), str(data.get('btn', '')), str(data.get('action', 'click'))))
+            if path == '/api/wol':
+                mac = str(data.get('mac') or load_config().get('wol_mac') or '')
+                return self.send(200, telemetry.wake_on_lan(mac))
             if path == '/api/selfupdate': return self.send(200, self_update(bool(data.get('apply'))))
             if path == '/api/wide': return self.send(200, tandem.wide(str(data.get('on', ''))))
             if path == '/api/retroarch': return self.send(200, retroarch(str(data.get('name', ''))))
@@ -2560,15 +2959,30 @@ def pair_handler(tandem):
             if path == '/api/all':
                 if not self.allowed(): return self.reply(401, {'error': 'nicht angemeldet'}, 'application/json')
                 run = tandem.run and tandem.library.games.get(tandem.run['id'])
+                sys_opts = [{'id': s, 'name': SYSTEMS[s][0]} for s in sorted(SYSTEMS, key=lambda k: SYSTEMS[k][0].lower()) if s != 'port']
+                game_opts = [{'id': g['id'], 't': f"{g['t']} ({SYSTEMS.get(g['s'], ('Steam',))[0]})"} for g in sorted(tandem.library.games.values(), key=lambda x: x['t'].lower())[:500]]
                 return self.reply(200, {'settings': settings(), 'config': public_config(), 'layout': region_layout(), 'battery': battery(), 'thor': thor.state(), 'controls': controls_info(),
                                         'system': system_info(tandem.library.roots), 'games': len(tandem.library.games), 'saves': saves.status(),
+                                        'stats': tandem.stats_payload(), 'systems_list': sys_opts, 'games_list': game_opts, 'dock': telemetry.dock_state(),
                                         'run': (tandem.run or {}).get('t') or (run or {}).get('t') or (tandem.run or {}).get('id')}, 'application/json')
             self.reply(200, (REMOTE_PAGE if self.allowed() else PAIR_PAGE.replace('__MSG__', '')).replace('__LANG__', public_config()['lang']))
 
         def do_POST(self):
             import hmac, secrets, urllib.parse
-            raw = self.rfile.read(min(int(self.headers.get('Content-Length') or 0), 262144))
             path = urlparse(self.path).path
+            if path == '/api/upload':
+                if not self.allowed(): return self.reply(401, {'error': 'nicht angemeldet'}, 'application/json')
+                origin = self.headers.get('Origin')
+                if origin and urlparse(origin).netloc != self.headers.get('Host'): return self.reply(403, {'error': 'fremde Herkunft'}, 'application/json')
+                ln = int(self.headers.get('Content-Length') or 0)
+                res = companion.handle_upload(self.rfile, ln, self.headers.get('X-File-Name'), self.headers.get('X-Kind', 'rom'),
+                                              self.headers.get('X-System', 'auto'), self.headers.get('X-Game', ''),
+                                              tandem.library.roots, CONFIG.parent, set(SYSTEMS))
+                if res.get('ok'):
+                    tandem.library.scan(); tandem.publish('library')
+                    tandem.publish('toast', {'text': res['text']})
+                return self.reply(200, res, 'application/json')
+            raw = self.rfile.read(min(int(self.headers.get('Content-Length') or 0), 262144))
             if not path.startswith('/api/'):  # the PIN form
                 form = {k: v[0] for k, v in urllib.parse.parse_qs(raw.decode(errors='replace')).items()}
                 if not hmac.compare_digest(form.get('pin', ''), PAIR['pin']):
@@ -2613,6 +3027,12 @@ def pair_handler(tandem):
             elif what == 'saves':
                 result = saves.backup(load_config().get('save_target', saves.DEFAULT_TARGET))
                 tandem.publish('saves', {'saves': saves.status()})
+            elif what == 'saves_restore':
+                result = saves.restore(data.get('file'), data.get('only'))
+                if result.get('ok'): tandem.publish('saves', {'saves': saves.status()})
+            elif what == 'wol':
+                mac = str(data.get('mac') or load_config().get('wol_mac') or '')
+                result = telemetry.wake_on_lan(mac)
             elif what == 'selfupdate': result = self_update(bool(data.get('apply')))
             elif what in ('logout', 'logout-all'):
                 mine = token_hash(re.search(r'tandem=([0-9a-f]{32})', self.headers.get('Cookie') or '')[1])
@@ -2627,7 +3047,7 @@ def pair_handler(tandem):
 # Controller buttons as they arrive (evdev codes of the emulated "Microsoft X-Box 360 pad"; the Thor prints them
 # Nintendo-style): A ok (right, BTN_EAST), B back (bottom, BTN_SOUTH), X close (top: 308, the Thor's InputPlumber map swaps
 # top and left like a real Xbox pad, see controls.py), Y favourite (left: 307), LB/RB previous/next tab, Select (314) search.
-PAD_KEYS = {305: 'ok', 304: 'back', 308: 'close', 307: 'fav', 310: 'prev', 311: 'next', 314: 'search'}
+PAD_KEYS = {305: 'ok', 304: 'back', 308: 'close', 307: 'fav', 310: 'prev', 311: 'next', 314: 'search', 315: 'menu'}
 
 
 class PowerKey:
@@ -2744,7 +3164,17 @@ def watch_buttons(tandem):
     nav = lambda actions: [tandem.publish('key', {'a': a}) for a in actions if free()]
     slept = lambda: time.clock_gettime(time.CLOCK_BOOTTIME) - time.monotonic()  # grows by real kernel suspend
     asleep, fake_asleep, pwr, vol_rep = slept(), FAKE_SUSPEND_FLAG.exists(), PowerKey(), VolRepeat()
-    run_pwr = lambda act: tandem.act('suspend') if act == 'standby' else doze(False, tandem) if act == 'wake' else tandem.act('power_menu') if act == 'power' else None
+    def lid_music_ok():
+        cfg = load_config()
+        if not cfg.get('lid_music', True): return False
+        playing_media = bool((tandem.run and (tandem.run.get('port') or {}).get('deck') in ('youtube', 'plex')) or telemetry.bgm_playing())
+        return playing_media and telemetry.headphones_active()
+    def run_pwr(act, from_lid=False):
+        if act == 'standby':
+            if from_lid and lid_music_ok(): return doze(True, tandem, keep_audio=True)
+            return tandem.act('suspend')
+        if act == 'wake': return doze(False, tandem)
+        if act == 'power': return tandem.act('power_menu')
     def step_vol(delta):
         if not delta: return
         vol = settings().get('vol')
@@ -2792,9 +3222,11 @@ def watch_buttons(tandem):
                 t_ev = time.time()
                 if (kind == 5 and code == 0) or (kind == 1 and code == 116):
                     vol_rep.clear()
-                    run_pwr(pwr.event(kind, code, value, t_ev, bool(DOZE), load_config().get('lid_sleep', True)))
+                    run_pwr(pwr.event(kind, code, value, t_ev, bool(DOZE), load_config().get('lid_sleep', True)), from_lid=(kind == 5))
                     continue
                 if pwr.lid_closed:
+                    if DOZE.get('music') and kind == 1 and code in (114, 115):
+                        step_vol(vol_rep.event(kind, code, value, t_ev)); continue
                     vol_rep.clear(); continue  # nothing wakes or navigates while the clamshell is shut
                 if DOZE:
                     vol_rep.clear()
@@ -2845,6 +3277,27 @@ def main():
     server = ThreadingHTTPServer(('127.0.0.1', args.port), handler(tandem))
     server.daemon_threads = True
     threading.Thread(target=watch_buttons, args=(tandem,), daemon=True).start()
+    def watch_dock():
+        prev, dimmed = False, {}
+        while True:
+            time.sleep(4)
+            st = telemetry.dock_state()
+            now_dock = bool(st.get('connected'))
+            if now_dock != prev:
+                prev = now_dock
+                tandem.publish('dock', {'dock': st})
+                tandem.publish('toast', {'text': 'TV / Monitor verbunden (Dock-Modus).' if now_dock else 'TV / Monitor getrennt.'})
+                if not args.dry_run and load_config().get('dock_dim', True):
+                    if now_dock:
+                        for k, nm in BACKLIGHTS.items():
+                            try:
+                                dimmed[k] = lit(k, int((Path('/sys/class/backlight') / nm / 'brightness').read_text()))
+                                set_raw(k, lit(k, min(15, dimmed[k])))
+                            except (OSError, ValueError): pass
+                    elif dimmed:
+                        for k, v in dimmed.items(): set_raw(k, lit(k, v))
+                        dimmed.clear()
+    if not args.dry_run: threading.Thread(target=watch_dock, daemon=True).start()
     def look_for_update():  # once a day, and only where the owner entered a source: says so, installs nothing by itself
         while True:
             time.sleep(120)
@@ -2856,6 +3309,8 @@ def main():
     if profile and not args.dry_run: threading.Thread(target=thor.change, args=('profile', profile), daemon=True).start()
     night = load_config().get('night_mode', 'off')
     if night in ('warm', 'night') and not args.dry_run: threading.Thread(target=apply_night_mode, args=(night,), daemon=True).start()
+    hud_lvl = load_config().get('hud_level', 0)
+    if hud_lvl in (1, 2, 3) and not args.dry_run: threading.Thread(target=telemetry.set_hud, args=(hud_lvl,), daemon=True).start()
     if not args.dry_run: threading.Thread(target=hide_steam, args=(tandem,), daemon=True).start()
     new_pin()
     if not args.dry_run: kill_stale()

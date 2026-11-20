@@ -1,0 +1,316 @@
+"""Live hardware telemetry, PipeWire per-stream audio mixer, USB-C dock state, and Wake-on-LAN for Toravo Tandem.
+Standard library + wpctl/mpv IPC only; safe on systems without battery/DRM sysfs (returns None/empty cleanly)."""
+import glob, json, os, re, shutil, socket, subprocess, threading, time
+from collections import deque
+from pathlib import Path
+
+import thor
+
+BGM_SOCKET = Path(f'/tmp/tandem-bgm-{os.getuid()}.sock')
+LOCK = threading.Lock()
+_CPU_PREV = [0, 0]
+_HIST = {'watts': deque(maxlen=36), 'cpu': deque(maxlen=36), 'temp': deque(maxlen=36), 'at': 0.0}
+_BGM = {'proc': None, 'track': '', 'playlist': [], 'idx': 0, 'paused': False, 'vol': 65}
+
+
+def _read_int(path):
+    try: return int(Path(path).read_text().strip())
+    except (OSError, ValueError): return None
+
+
+def battery_detail(root='/sys/class/power_supply'):
+    """Detailed battery telemetry: level %, charging/discharging, live watts, and remaining playtime in minutes."""
+    base = Path(root)
+    bat = next((p for p in sorted(base.glob('*')) if (p / 'type').is_file() and (p / 'type').read_text(errors='ignore').strip() == 'Battery'), None)
+    if not bat:
+        return None
+    cap = _read_int(bat / 'capacity')
+    status = (bat / 'status').read_text(errors='ignore').strip() if (bat / 'status').is_file() else ''
+    v_uv = _read_int(bat / 'voltage_now')
+    i_ua = _read_int(bat / 'current_now')
+    p_uw = _read_int(bat / 'power_now')
+    c_uah = _read_int(bat / 'charge_now')
+    cf_uah = _read_int(bat / 'charge_full')
+    e_uwh = _read_int(bat / 'energy_now')
+    ef_uwh = _read_int(bat / 'energy_full')
+    charging = status in ('Charging', 'Full')
+    watts = None
+    if v_uv and v_uv > 0 and i_ua is not None:
+        watts = round(abs(i_ua) * v_uv / 1e12, 1)
+    elif p_uw is not None and status == 'Discharging':
+        w = round(abs(p_uw) / 1e6, 1)
+        if 0.1 <= w <= 45.0: watts = w
+    if status == 'Full' and (i_ua == 0 or watts and watts > 25):
+        watts = 0.0
+    mins_left = None
+    if status == 'Discharging':
+        if i_ua and abs(i_ua) > 50_000 and c_uah and c_uah > 0:
+            mins_left = max(1, min(2400, round((c_uah / abs(i_ua)) * 60)))
+        elif watts and watts >= 0.5 and e_uwh and e_uwh > 0:
+            mins_left = max(1, min(2400, round(((e_uwh / 1e6) / watts) * 60)))
+    wh_full = round(ef_uwh / 1e6, 1) if ef_uwh else (round((cf_uah * 3.85) / 1e6, 1) if cf_uah else None)
+    return {'level': cap if cap is not None else 0, 'status': status, 'charging': charging,
+            'watts': watts, 'mins_left': mins_left, 'wh_full': wh_full}
+
+
+def cpu_ram():
+    """(cpu_percent, ram_used_gb, ram_total_gb) from /proc/stat and /proc/meminfo."""
+    cpu_pct = None
+    try:
+        parts = [int(x) for x in Path('/proc/stat').read_text().splitlines()[0].split()[1:9]]
+        idle, total = parts[3] + (parts[4] if len(parts) > 4 else 0), sum(parts)
+        with LOCK:
+            p_idle, p_total = _CPU_PREV
+            _CPU_PREV[0], _CPU_PREV[1] = idle, total
+        if p_total and total > p_total:
+            cpu_pct = round(100.0 * (1.0 - (idle - p_idle) / (total - p_total)), 1)
+    except (OSError, ValueError, IndexError): pass
+    used_gb = total_gb = None
+    try:
+        mem = {}
+        for line in Path('/proc/meminfo').read_text().splitlines():
+            m = re.match(r'^(\w+):\s+(\d+)', line)
+            if m: mem[m[1]] = int(m[2])
+        if 'MemTotal' in mem and 'MemAvailable' in mem:
+            total_gb = round(mem['MemTotal'] / 1048576, 1)
+            used_gb = round((mem['MemTotal'] - mem['MemAvailable']) / 1048576, 1)
+    except OSError: pass
+    return cpu_pct, used_gb, total_gb
+
+
+def dock_state(drm_glob='/sys/class/drm/card*-*/status'):
+    """Detect connected external USB-C DisplayPort / HDMI monitors (ignoring internal DSI/eDP/Writeback)."""
+    ext = []
+    for p in sorted(glob.glob(drm_glob)):
+        name = Path(p).parent.name  # e.g. card1-DP-1, card1-HDMI-A-1
+        if any(tag in name for tag in ('-DSI-', '-eDP-', '-Writeback-')): continue
+        try:
+            if Path(p).read_text().strip() == 'connected': ext.append(name.split('-', 1)[-1])
+        except OSError: pass
+    return {'connected': bool(ext), 'outputs': ext}
+
+
+def headphones_active():
+    """True when the active PipeWire default audio sink is headphones or Bluetooth audio (not the built-in speaker)."""
+    if not shutil.which('wpctl'): return False
+    try: out = subprocess.run(['wpctl', 'status'], capture_output=True, text=True, timeout=3).stdout
+    except (OSError, subprocess.SubprocessError): return False
+    in_sinks = False
+    for line in out.splitlines():
+        if 'Sinks:' in line: in_sinks = True; continue
+        if in_sinks and any(h in line for h in ('Sources:', 'Filters:', 'Streams:', 'Video')): break
+        if in_sinks and '*' in line:
+            low = line.lower()
+            return any(k in low for k in ('headphone', 'headset', 'bluez', 'bluetooth', 'airpods', 'buds', 'usb')) and 'speaker' not in low
+    return False
+
+
+def audio_streams(status_text=None):
+    """Parse PipeWire active playback streams from `wpctl status` -> [{'id', 'name', 'vol', 'muted', 'bgm'}]."""
+    if status_text is None:
+        if not shutil.which('wpctl'): return []
+        try: status_text = subprocess.run(['wpctl', 'status'], capture_output=True, text=True, timeout=3).stdout
+        except (OSError, subprocess.SubprocessError): return []
+    streams, in_streams = [], False
+    for line in status_text.splitlines():
+        if 'Streams:' in line: in_streams = True; continue
+        if in_streams and line and not line.startswith((' ', '\t', '│', '├', '└')): break
+        if not in_streams: continue
+        m = re.search(r'(\d+)\.\s+([^\[]+?)(?:\s+\[vol:\s*([0-9.]+)(\s+MUTED)?\])?\s*$', line)
+        if not m: continue
+        sid, name = int(m[1]), m[2].strip()
+        if any(skip in name.lower() for skip in ('output_', 'input_', 'monitor', 'capture')): continue
+        vol = round(float(m[3]) * 100) if m[3] else None
+        is_bgm = 'tandem-bgm' in name.lower()
+        streams.append({'id': sid, 'name': name, 'vol': vol, 'muted': bool(m[4]), 'bgm': is_bgm})
+    return streams
+
+
+def set_stream_volume(stream_id, pct):
+    """Set volume (0..100) of a single PipeWire stream via wpctl."""
+    if not shutil.which('wpctl'): return {'error': 'wpctl fehlt'}
+    v = max(0, min(100, int(pct))) / 100.0
+    try:
+        subprocess.run(['wpctl', 'set-volume', str(int(stream_id)), f'{v:.2f}'], capture_output=True, timeout=3)
+        return {'ok': True, 'id': int(stream_id), 'vol': round(v * 100)}
+    except (OSError, subprocess.SubprocessError, ValueError) as e:
+        return {'error': str(e)}
+
+
+# ---- Background music player (headless mpv --no-video, independent from top-screen game audio) ----
+AUDIO_EXTS = {'.mp3', '.flac', '.ogg', '.opus', '.m4a', '.wav', '.aac'}
+
+
+def music_tracks(extra_dirs=()):
+    """Scan ~/Music and SD card Music/ folders for audio files -> [{'title', 'sub', 'path'}]."""
+    roots = [Path.home() / 'Music', Path.home() / 'Musik', *(Path(p) for p in glob.glob('/run/media/*/*/Music')),
+             *(Path(p) for p in glob.glob('/run/media/*/*/Musik')), *(Path(p) for p in extra_dirs)]
+    tracks, seen = [], set()
+    for r in roots:
+        if not r.is_dir(): continue
+        for dp, _, files in os.walk(r):
+            for f in sorted(files):
+                fp = Path(dp) / f
+                if fp.suffix.lower() not in AUDIO_EXTS: continue
+                rp = str(fp)
+                if rp in seen: continue
+                seen.add(rp)
+                folder = fp.parent.name if fp.parent != r else 'Musik'
+                tracks.append({'title': fp.stem.replace('_', ' '), 'sub': folder, 'path': rp})
+                if len(tracks) >= 300: return tracks
+    return tracks
+
+
+def _bgm_ipc(*cmd):
+    if not BGM_SOCKET.exists(): return None
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+            s.settimeout(1.0)
+            s.connect(str(BGM_SOCKET))
+            s.sendall(json.dumps({'command': list(cmd)}).encode() + b'\n')
+            return json.loads(s.recv(4096).splitlines()[0])
+    except (OSError, ValueError, IndexError): return None
+
+
+def bgm_playing():
+    p = _BGM['proc']
+    return bool(p and p.poll() is None and not _BGM['paused'] and _BGM['track'])
+
+
+def bgm_status():
+    p = _BGM['proc']
+    alive = bool(p and p.poll() is None)
+    if not alive: _BGM['track'] = ''
+    return {'playing': alive and not _BGM['paused'] and bool(_BGM['track']), 'paused': bool(alive and _BGM['paused']),
+            'track': _BGM['track'], 'vol': _BGM['vol'], 'tracks': music_tracks()[:80], 'streams': audio_streams()}
+
+
+def bgm_control(action, path='', vol=None):
+    """action: 'play' | 'toggle' | 'next' | 'prev' | 'stop' | 'vol'."""
+    if action == 'vol' and vol is not None:
+        _BGM['vol'] = max(0, min(100, int(vol)))
+        _bgm_ipc('set_property', 'volume', _BGM['vol'])
+        return bgm_status()
+    if action == 'stop':
+        p, _BGM['proc'], _BGM['track'], _BGM['paused'] = _BGM['proc'], None, '', False
+        if p and p.poll() is None:
+            p.terminate()
+            threading.Thread(target=p.wait, daemon=True).start()
+        BGM_SOCKET.unlink(missing_ok=True)
+        return bgm_status()
+    tracks = music_tracks()
+    if action in ('next', 'prev') and tracks:
+        cur = next((i for i, t in enumerate(tracks) if t['title'] == _BGM['track']), 0)
+        pick = tracks[(cur + (1 if action == 'next' else -1)) % len(tracks)]
+        action, path = 'play', pick['path']
+    if action == 'toggle':
+        if _BGM['proc'] and _BGM['proc'].poll() is None:
+            _BGM['paused'] = not _BGM['paused']
+            _bgm_ipc('set_property', 'pause', _BGM['paused'])
+            return bgm_status()
+        if tracks: action, path = 'play', tracks[0]['path']
+        else: return {**bgm_status(), 'error': 'Keine Musikdateien in ~/Music oder auf der Karte (Music/) gefunden.'}
+    if action == 'play' and path:
+        if not os.path.isfile(path) and not path.startswith(('http://', 'https://')):
+            return {'error': 'Datei nicht gefunden.'}
+        if not (_BGM['proc'] and _BGM['proc'].poll() is None):
+            BGM_SOCKET.unlink(missing_ok=True)
+            cmd = (['mpv'] if shutil.which('mpv') else ['flatpak', 'run', 'io.mpv.Mpv']) + [
+                '--no-video', '--idle=yes', '--really-quiet', f'--volume={_BGM["vol"]}',
+                '--audio-client-name=tandem-bgm', f'--input-ipc-server={BGM_SOCKET}']
+            try: _BGM['proc'] = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+            except OSError as e: return {'error': f'Musik-Player nicht verfügbar ({e}).'}
+            for _ in range(25):
+                if BGM_SOCKET.exists(): break
+                time.sleep(0.08)
+        _bgm_ipc('loadfile', path, 'replace')
+        _bgm_ipc('set_property', 'pause', False)
+        _BGM['paused'] = False
+        _BGM['track'] = Path(path).stem.replace('_', ' ') if not path.startswith('http') else path
+    return bgm_status()
+
+
+def snapshot(sample=True):
+    """Combined telemetry snapshot for the in-game Cockpit tab."""
+    bat = battery_detail()
+    cpu, ram_u, ram_t = cpu_ram()
+    pwr = thor.power() or {}
+    dock = dock_state()
+    now = time.time()
+    if sample and now - _HIST['at'] >= 1.5:
+        _HIST['at'] = now
+        if bat and bat.get('watts') is not None: _HIST['watts'].append(bat['watts'])
+        if cpu is not None: _HIST['cpu'].append(cpu)
+        if pwr.get('temp') is not None: _HIST['temp'].append(pwr['temp'])
+    return {'battery': bat, 'cpu': cpu, 'ram_used': ram_u, 'ram_total': ram_t,
+            'temp': pwr.get('temp'), 'fan': pwr.get('fan'), 'profile': pwr.get('profile'),
+            'dock': dock, 'hist': {k: list(_HIST[k]) for k in ('watts', 'cpu', 'temp')}}
+
+
+def wake_on_lan(mac, broadcast='255.255.255.255', port=9):
+    """Send a 102-byte Wake-on-LAN magic UDP packet to wake a sleeping PC (e.g. for Moonlight streaming)."""
+    clean = re.sub(r'[:\-\.\s]', '', str(mac or '')).upper()
+    if not re.fullmatch(r'[0-9A-F]{12}', clean):
+        return {'error': 'Bitte eine gültige MAC-Adresse eintragen (z. B. AA:BB:CC:DD:EE:FF).'}
+    pkt = b'\xff' * 6 + bytes.fromhex(clean) * 16
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            s.sendto(pkt, (broadcast, int(port)))
+        return {'ok': True, 'text': 'Aufweck-Signal (Wake-on-LAN) gesendet.'}
+    except OSError as e:
+        return {'error': f'Wake-on-LAN fehlgeschlagen: {e}'}
+
+
+# ---- Top-screen Gamescope / mangoapp FPS & Performance HUD -----------------------------------------------------------
+HUD_PRESETS = {
+    0: 'no_display\n',
+    1: 'legacy_layout=false\nhorizontal\nhud_no_margin\nbackground_alpha=0.45\nround_corners=8\nfont_scale=1.05\nfps\nframetime=0\n',
+    2: 'legacy_layout=false\nhorizontal\nhud_no_margin\nbackground_alpha=0.52\nround_corners=8\nfont_scale=0.95\nfps\ncpu_stats\ngpu_stats\nbattery\nbattery_watt\nframe_timing=0\n',
+    3: 'legacy_layout=false\nposition=top-left\nbackground_alpha=0.58\nround_corners=10\nfps\ncpu_stats\ncpu_temp\ngpu_stats\ngpu_temp\nram\nbattery\nbattery_watt\nbattery_time\nframe_timing=1\n',
+}
+
+
+def mangohud_files(tmp_dir='/tmp'):
+    """Locate active mangoapp MANGOHUD_CONFIGFILE(s) via /proc (no pgrep) plus recent user-owned /tmp/mangohud.* files."""
+    found = []
+    uid = os.getuid()
+    for comm in glob.glob('/proc/[0-9]*/comm'):
+        try:
+            p = Path(comm)
+            if p.stat().st_uid != uid or p.read_text(errors='ignore').strip() != 'mangoapp':
+                continue
+            env = (p.parent / 'environ').read_bytes().split(b'\0')
+            for item in env:
+                if item.startswith(b'MANGOHUD_CONFIGFILE='):
+                    cf = Path(item.split(b'=', 1)[1].decode('utf-8', 'ignore'))
+                    if cf.is_file() and cf not in found: found.append(cf)
+        except OSError:
+            continue
+    if not found:
+        cand = []
+        for f in Path(tmp_dir).glob('mangohud.*'):
+            try:
+                st = f.stat()
+                if st.st_uid == uid and f.is_file(): cand.append((st.st_mtime, f))
+            except OSError: pass
+        if cand:
+            found.append(max(cand, key=lambda x: x[0])[1])
+    return found
+
+
+def set_hud(level, tmp_dir='/tmp'):
+    """Write preset `level` (0=Off, 1=FPS, 2=Bar, 3=Full Graph) in-place so mangoapp's inotify watch reloads immediately."""
+    lvl = int(level) if level in (0, 1, 2, 3) else 0
+    preset = HUD_PRESETS[lvl]
+    files = mangohud_files(tmp_dir)
+    wrote = 0
+    for f in files:
+        try:
+            with open(f, 'w', encoding='utf-8') as out:
+                out.write(preset)
+            wrote += 1
+        except OSError:
+            pass
+    return {'ok': True, 'level': lvl, 'active': bool(wrote)}
+

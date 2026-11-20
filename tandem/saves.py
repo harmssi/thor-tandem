@@ -11,8 +11,8 @@ LOCK = threading.Lock()
 EXCLUDE_NAMES = {'files', 'cl_dlls', 'dlls', 'cache', 'logs', 'temp', '__pycache__', 'Content'}
 
 
-def sources(home=None):
-    """[(key, Path)] of save folders that actually exist on this device (pure saves only, never shader caches or game data)."""
+def all_candidates(home=None):
+    """[(key, Path)] of every known save directory on this device, whether populated yet or not."""
     h = Path(home) if home else HOME
     ports = Path(os.environ.get('XDG_DATA_HOME', h / '.local/share')) / 'tandem-ports'
     candidates = [
@@ -48,8 +48,13 @@ def sources(home=None):
     if bn_root.is_dir():
         for sub in sorted(bn_root.iterdir()):
             if (sub / 'save').is_dir(): candidates.append((f'banananative-{sub.name}', sub / 'save'))
+    return candidates
+
+
+def sources(home=None):
+    """[(key, Path)] of save folders that actually exist on this device (pure saves only, never shader caches or game data)."""
     out, seen = [], set()
-    for key, path in candidates:
+    for key, path in all_candidates(home):
         if not path.is_dir(): continue
         try:
             rp = path.resolve()
@@ -85,11 +90,33 @@ def copy_clean(src, dst):
             except OSError: pass
 
 
-def status():
+def snapshots(local_dir=None):
+    """List local rolling save archives (newest first) -> [{'file', 'at', 'size', 'items'}]."""
+    dest_dir = Path(local_dir) if local_dir else card_backup_dir()
+    if not dest_dir.is_dir(): return []
+    out = []
+    for arc in sorted(dest_dir.glob('saves-*.tar.gz'), reverse=True)[:12]:
+        try:
+            st = arc.stat()
+            items, at = [], int(st.st_mtime)
+            with tarfile.open(arc, 'r:gz') as tar:
+                try:
+                    mf = tar.extractfile('saves/manifest.json')
+                    if mf:
+                        meta = json.loads(mf.read())
+                        items = meta.get('items') or []
+                        at = int(meta.get('at') or at)
+                except (KeyError, ValueError): pass
+            out.append({'file': arc.name, 'at': at, 'size': st.st_size, 'items': items})
+        except (OSError, tarfile.TarError): continue
+    return out
+
+
+def status(local_dir=None):
     try: data = json.loads(STATUS_FILE.read_text())
     except (OSError, ValueError): data = {}
     return {'last': data.get('last', 0), 'count': data.get('count', 0), 'where': data.get('where', ''),
-            'error': data.get('error', ''), 'sources': len(sources())}
+            'error': data.get('error', ''), 'sources': len(sources()), 'snapshots': snapshots(local_dir)}
 
 
 def save_status(info):
@@ -123,7 +150,7 @@ def backup(target=None, home=None, local_dir=None, run_rsync=True):
             archive = dest_dir / f'saves-{stamp}.tar.gz'
             with tarfile.open(archive, 'w:gz') as tar:
                 tar.add(stage, arcname='saves')
-            old = sorted(dest_dir.glob('saves-*.tar.gz'))[:-5]
+            old = sorted(dest_dir.glob('saves-*.tar.gz'))[:-10]
             for f in old: f.unlink(missing_ok=True)
         places = ['Karte' if str(dest_dir).startswith(('/run/media', '/media')) else 'Gerät']
         remote = (DEFAULT_TARGET if target is None else target).strip()
@@ -152,9 +179,54 @@ def backup(target=None, home=None, local_dir=None, run_rsync=True):
         now = int(time.time())
         save_status({'last': now, 'count': len(found), 'where': where, 'error': remote_err})
         text = f'Spielstände gesichert: {len(found)} Ordner ({where}).'
-        return {**status(), 'ok': True, 'text': text}
+        return {**status(local_dir), 'ok': True, 'text': text}
     except (OSError, subprocess.SubprocessError, tarfile.TarError) as error:
-        save_status({**status(), 'error': str(error)})
+        save_status({**status(local_dir), 'error': str(error)})
         return {'error': f'Sicherung fehlgeschlagen: {error}'}
+    finally:
+        LOCK.release()
+
+
+def restore(archive_name, only_key=None, home=None, local_dir=None):
+    """Restore saved games from a local snapshot archive (all folders or one specific key). Creates a safety backup first."""
+    import re
+    if not re.fullmatch(r'saves-[0-9]{8}-[0-9]{6}\.tar\.gz', str(archive_name or '')):
+        return {'error': 'Ungültiges Sicherungsarchiv.'}
+    dest_dir = Path(local_dir) if local_dir else card_backup_dir()
+    arc = dest_dir / archive_name
+    if not arc.is_file():
+        return {'error': 'Sicherungsarchiv nicht gefunden.'}
+    # Safety snapshot before overwriting live saves (best-effort, local only)
+    if sources(home):
+        backup(target='', home=home, local_dir=dest_dir, run_rsync=False)
+    if not LOCK.acquire(blocking=False):
+        return {'error': 'Sicherung läuft bereits.'}
+    try:
+        h = Path(home) if home else HOME
+        targets = dict(all_candidates(h))
+        restored = []
+        with tempfile.TemporaryDirectory(prefix='tandem-restore-') as tmp:
+            with tarfile.open(arc, 'r:gz') as tar:
+                tar.extractall(tmp, filter='data')
+            stage = Path(tmp) / 'saves'
+            if not stage.is_dir():
+                return {'error': 'Archiv enthält keine Spielstände.'}
+            for sub in sorted(stage.iterdir()):
+                if not sub.is_dir(): continue
+                key = sub.name
+                if only_key and key != only_key: continue
+                dst = targets.get(key)
+                if dst is None and key.startswith('banananative-'):
+                    dst = h / '.local/share/banananative' / key.split('banananative-', 1)[1] / 'save'
+                if dst is None: continue
+                dst.mkdir(parents=True, exist_ok=True)
+                copy_clean(sub, dst)
+                restored.append(key)
+        if not restored:
+            return {'error': 'Keine passenden Spielstände im Archiv gefunden.'}
+        return {**status(local_dir), 'ok': True, 'restored': restored,
+                'text': f'Spielstände wiederhergestellt: {len(restored)} Ordner aus {archive_name}.'}
+    except (OSError, tarfile.TarError) as error:
+        return {'error': f'Wiederherstellung fehlgeschlagen: {error}'}
     finally:
         LOCK.release()

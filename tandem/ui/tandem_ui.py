@@ -355,6 +355,7 @@ class Tandem(QRasterWindow):
         self.L = {'systems': {}, 'games': [], 'apps': [], 'fav': [], 'played': {}}
         self.S, self.RUN, self.BATT, self.SET, self.CFG = {'tab': 0, 'sys': None, 'i': 0}, None, None, {'bt': None, 'bb': None, 'vol': None}, {}
         self.ACH = self.PAIR = self.SYS = self.PROMPT = self.CONFIRM = self.OSD = self.SETUP = self.QUICK = self.REC = self.SAVES = None
+        self.GAME_MENU, self.DOCK = None, None
         self.DOZE, self.MUTED, self.POWER_OPEN, self.PROMPT_OPEN, self.power_i = False, False, False, False, 0
         self.kb_rc, self.kb_pad = (1, 0), False
         self.kb_keys, self.kb_down, self.kb_flash = [], None, None
@@ -502,6 +503,7 @@ class Tandem(QRasterWindow):
         if kind == 'toast': return self.toast(m.get('text', ''))
         if kind == 'mute': self.MUTED = bool(m.get('muted')); return self.update()
         if kind == 'saves': self.SAVES = m.get('saves'); return self.update()
+        if kind == 'dock': self.DOCK = m.get('dock'); return self.update()
         if kind == 'quick':  # the Thor key: its menu lives on the bottom screen
             if self.side == 'bottom': self.wake(); quick_view.toggle(self)
             return
@@ -523,6 +525,12 @@ class Tandem(QRasterWindow):
             if self.PROMPT or self.PROMPT_OPEN:
                 if self.side == 'bottom' and self.PROMPT:
                     self.kb_key(m['a'], self.prompt_key, skip=(29, 56, 1, 103, 105, 108, 106, 15, 58), cancel=self.cancel_prompt)
+                return self.update()
+            if self.GAME_MENU:
+                if self.side == 'bottom': self.game_menu_key(m['a'])
+                return self.update()
+            if m['a'] == 'menu' and not self.playing() and not self.CONFIRM and not self.SETUP and not settings_view.open_now(self):
+                if self.side == 'bottom': self.open_game_menu()
                 return self.update()
             if self.playing() and (self.RUN.get('port') or {}).get('pad'):  # a media app: its deck has the controller (decks/media.py)
                 if self.deck and hasattr(self.deck, 'key') and not self.PROMPT: self.deck.key(m['a'])
@@ -614,8 +622,19 @@ class Tandem(QRasterWindow):
 
     def show_deck(self, p):
         """The running game's own bottom screen, if there is a native one. Loaded on first use, see DECKS."""
-        name = DECKS.get(str(self.RUN.get('appid'))) or (self.RUN.get('port') or {}).get('deck') or ('pack' if self.RUN.get('pack') else None)
-        if not name or self.deck is False: return False
+        name = (DECKS.get(str(self.RUN.get('appid')))
+                or (self.RUN.get('port') or {}).get('deck')
+                or ('pack' if self.RUN.get('pack') else None)
+                or ('dualscreen' if self.RUN.get('dual') else None)
+                or ('universal' if self.RUN.get('s') not in ('term',) and not self.RUN.get('keys') else None))
+        if not name: return False
+        if self.deck is not None and getattr(self, 'deck_name', None) is None:
+            self.deck_name = name
+        elif getattr(self, 'deck_name', None) != name:
+            if self.deck and self.deck is not False: self.deck.close()
+            self.deck = None
+            self.deck_name = name
+        if self.deck is False: return False
         if self.deck is None:
             try: self.deck = (importlib.import_module('decks.' + name), name)[0].Deck(self)
             except Exception as error:
@@ -626,8 +645,8 @@ class Tandem(QRasterWindow):
         return self.deck.paint(p)
 
     def drop_deck(self):  # the game is over: its deck, the module and the pictures go
-        if self.deck: self.deck.close()
-        self.deck = None
+        if self.deck and self.deck is not False: self.deck.close()
+        self.deck, self.deck_name = None, None
         for name in [n for n in sys.modules if n.startswith('decks.')]: del sys.modules[name]
         gc.collect()  # a deck is full of closures: collect it now …
         try: ctypes.CDLL(None).malloc_trim(0)  # … and hand the freed memory back to the system (glibc would keep it)
@@ -642,21 +661,51 @@ class Tandem(QRasterWindow):
     # ---- behaviour (as in index.html) ---------------------------------------------------------------------------------
     def playing(self): return bool(self.RUN and not self.RUN.get('paused'))
 
+    def _sort_games(self, seq):
+        L, mode = self.L, self.L.get('sort') or 'recent'
+        last = lambda g: (L['played'].get(g['id']) or {}).get('last') or 0
+        secs = lambda g: (L['played'].get(g['id']) or {}).get('secs') or 0
+        yr = lambda g: int(g['year']) if str(g.get('year', '')).isdigit() else 0
+        if mode == 'az': return sorted(seq, key=lambda g: g['t'].lower())
+        if mode == 'time': return sorted(seq, key=lambda g: (-secs(g), -last(g), g['t'].lower()))
+        if mode == 'year': return sorted(seq, key=lambda g: (-yr(g), g['t'].lower()))
+        return sorted(seq, key=lambda g: (g['id'] not in L['fav'], -last(g), g['t'].lower()))
+
     def items(self):
         L, S, RUN, games = self.L, self.S, self.RUN, self.L['games']
+        hidden = set(L.get('hidden') or [])
         if S.get('q'):
             words = S['q'].lower().split()
             last = lambda g: (L['played'].get(g['id']) or {}).get('last') or 0
-            hit = lambda g: all(w in f'{g["t"]} {self.sys_name(g)} {g["s"]}'.lower() for w in words)
-            return sorted((g for g in games if hit(g)), key=lambda g: (g['id'] not in L['fav'], -last(g), g['t']))
-        if S['sys']: return [g for g in games if g['s'] == S['sys']]
+            hit = lambda g: all(w in f'{g["t"]} {self.sys_name(g)} {g["s"]} {g.get("genre", "")} {g.get("dev", "")}'.lower() for w in words)
+            return sorted((g for g in games if hit(g)), key=lambda g: (g['id'] in hidden, g['id'] not in L['fav'], -last(g), g['t']))
+        if S['sys'] == '_hidden':
+            return sorted((g for g in games if g['id'] in hidden), key=lambda g: g['t'].lower())
+        if isinstance(S['sys'], str) and S['sys'].startswith('col:'):
+            cname = S['sys'][4:]
+            cset = set((L.get('collections') or {}).get(cname) or [])
+            return self._sort_games(g for g in games if g['id'] in cset and g['id'] not in hidden)
+        if S['sys']:
+            return self._sort_games(g for g in games if g['s'] == S['sys'] and g['id'] not in hidden)
         if S['tab'] == 0:
             last = lambda g: (L['played'].get(g['id']) or {}).get('last') or 0
             held = next((g for g in games if g['id'] == RUN['id']), None) if RUN and RUN.get('paused') else None  # like the Switch: the suspended game stands in front
-            rest = sorted((g for g in games if (last(g) or g['id'] in L['fav']) and g is not held), key=lambda g: (-last(g), g['t']))[:30]
+            rest = sorted((g for g in games if g['id'] not in hidden and (last(g) or g['id'] in L['fav']) and g is not held), key=lambda g: (-last(g), g['t']))[:30]
             return ([held] if held else []) + rest
-        if S['tab'] == 1: return [{'id': 'sys:' + s, 't': v['name'], 's': s, 'kind': 'sys', 'n': v['n'], 'cover': v.get('cover'), 'hero': v.get('hero'), 'logo': v.get('logo')} for s, v in L['systems'].items()]
-        if S['tab'] == 2: return sorted((g for g in games if g['s'] == 'steam'), key=lambda g: (g.get('inst') == 'no', g.get('inst') != 'load'))  # loading first, then installed, then the rest
+        if S['tab'] == 1:
+            sys_items = [{'id': 'sys:' + s, 't': v['name'], 's': s, 'kind': 'sys', 'n': v['n'], 'cover': v.get('cover'), 'hero': v.get('hero'), 'logo': v.get('logo')}
+                         for s, v in L['systems'].items()]
+            col_items = []
+            for cname, gids in sorted((L.get('collections') or {}).items()):
+                cnt = sum(1 for g in games if g['id'] in set(gids) and g['id'] not in hidden)
+                if cnt:
+                    sample = next((g for g in games if g['id'] in set(gids) and g.get('cover')), None)
+                    col_items.append({'id': 'col:' + cname, 't': '★ ' + cname, 's': 'col:' + cname, 'kind': 'sys', 'n': cnt,
+                                      'cover': sample.get('cover') if sample else None, 'hero': sample.get('hero') if sample else None})
+            hid_cnt = sum(1 for g in games if g['id'] in hidden)
+            hid_items = [{'id': 'sys:_hidden', 't': 'Ausgeblendet', 's': '_hidden', 'kind': 'sys', 'n': hid_cnt}] if hid_cnt else []
+            return col_items + sys_items + hid_items
+        if S['tab'] == 2: return sorted((g for g in games if g['s'] == 'steam' and g['id'] not in hidden), key=lambda g: (g.get('inst') == 'no', g.get('inst') != 'load'))  # loading first, then installed, then the rest
         if S['tab'] == 4: return []
         return [{'id': 'term', 't': 'Terminal', 's': 'app'}, *L['apps'],
                 *({'id': 'upd:' + e['id'], 't': e['name'] + (' aktualisieren' if e.get('installed') else ' installieren'), 's': 'app'} for e in L.get('extras') or []),
@@ -664,6 +713,8 @@ class Tandem(QRasterWindow):
 
     def sys_name(self, it):
         s = it['s']
+        if s == '_hidden': return 'Ausgeblendet'
+        if isinstance(s, str) and s.startswith('col:'): return s[4:]
         return 'Steam' if s == 'steam' else 'App' if s == 'app' else 'Linux-Shell' if s == 'term' else (self.L['systems'].get(s) or {'name': s})['name']
 
     def toast(self, text):
@@ -809,6 +860,78 @@ class Tandem(QRasterWindow):
             self.post('api/config', {'save_target': value.strip()}, then=saved)
         self.ask('Sicherungsziel (SSH)', False, done, self.CFG.get('save_target', ''))
         self.update()
+
+    def ask_wol_mac(self):
+        def done(value):
+            def saved(c):
+                if c is None: return self.toast('Speichern fehlgeschlagen.')
+                self.CFG = c
+                self.toast(c.get('error') or 'Gespeichert.')
+            self.post('api/config', {'wol_mac': value.strip()}, then=saved)
+        self.ask('PC-MAC-Adresse (AA:BB:CC:DD:EE:FF)', False, done, self.CFG.get('wol_mac', ''))
+        self.update()
+
+    def cycle_sort(self):
+        order = ('recent', 'az', 'time', 'year')
+        cur = self.L.get('sort') or 'recent'
+        nxt = order[(order.index(cur) + 1) % len(order)] if cur in order else 'az'
+        self.L['sort'] = nxt
+        self.post('api/collection', {'a': 'sort', 'sort': nxt})
+        self.update()
+
+    def open_game_menu(self, it=None):
+        if it is None:
+            items = self.items()
+            it = items[self.S['i']] if items and 0 <= self.S['i'] < len(items) else None
+        if not it or it.get('kind') or it['s'] in ('app', 'term'):
+            return
+        self.GAME_MENU = {'id': it['id'], 'i': 0}
+        self.update()
+
+    def _game_menu_rows(self, g):
+        L = self.L
+        gid, s = g['id'], g['s']
+        opt = (L.get('gameopt') or {}).get(gid) or {}
+        emus = (L.get('emulators') or {}).get(s) or []
+        rows = [('▶ Spiel starten', '', lambda: (setattr(self, 'GAME_MENU', None), self.start(g)))]
+        if len(emus) > 1:
+            cur_e = opt.get('emu', '')
+            cur_lbl = next((e['label'] for e in emus if e['id'] == cur_e), 'Standard')
+            ids = [''] + [e['id'] for e in emus]
+            nxt_e = ids[(ids.index(cur_e) + 1) % len(ids)] if cur_e in ids else emus[0]['id']
+            rows.append(('Emulator / Core', cur_lbl, lambda ne=nxt_e: self.post('api/gameopt', {'id': gid, 'emu': ne})))
+        profs = [('', 'Standard'), ('Eco', 'Sparsam'), ('Balanced', 'Ausgewogen'), ('Performance', 'Leistung')]
+        cur_p = opt.get('profile', '')
+        pids = [x[0] for x in profs]
+        nxt_p = pids[(pids.index(cur_p) + 1) % len(pids)] if cur_p in pids else ''
+        plbl = dict(profs).get(cur_p, 'Standard')
+        rows.append(('Leistung (dieses Spiel)', plbl, lambda np=nxt_p: self.post('api/gameopt', {'id': gid, 'profile': np})))
+        is_fav = gid in (L.get('fav') or [])
+        rows.append(('Favorit', '★ Ja' if is_fav else 'Nein', lambda: self.post('api/fav', {'id': gid})))
+        for cname, gids in sorted((L.get('collections') or {}).items()):
+            in_c = gid in gids
+            rows.append((f'Sammlung: {cname}', '✓ Enthalten' if in_c else 'Hinzufügen',
+                         lambda cn=cname: self.post('api/collection', {'a': 'toggle', 'name': cn, 'id': gid})))
+        rows.append(('+ Neue Sammlung anlegen …', '',
+                     lambda: self.ask('Name der Sammlung', False,
+                                      lambda v: v.strip() and self.post('api/collection', {'a': 'create', 'name': v.strip(), 'id': gid}))))
+        is_hid = gid in (L.get('hidden') or [])
+        rows.append(('Wieder einblenden' if is_hid else 'Spiel ausblenden', '',
+                     lambda: (setattr(self, 'GAME_MENU', None), self.post('api/collection', {'a': 'hide', 'id': gid}))))
+        rows.append(('Schließen', '', lambda: setattr(self, 'GAME_MENU', None)))
+        return rows
+
+    def game_menu_key(self, a):
+        gm = self.GAME_MENU
+        if not gm: return
+        g = next((x for x in self.L['games'] if x['id'] == gm['id']), None)
+        if not g:
+            self.GAME_MENU = None; return
+        rows = self._game_menu_rows(g)
+        if a == 'up': gm['i'] = (gm['i'] - 1) % len(rows)
+        elif a == 'down': gm['i'] = (gm['i'] + 1) % len(rows)
+        elif a in ('back', 'close', 'menu'): self.GAME_MENU = None
+        elif a == 'ok' and rows: rows[min(gm['i'], len(rows) - 1)][2]()
 
     def power_pick(self, idx):
         self.POWER_OPEN = False
@@ -977,6 +1100,7 @@ class Tandem(QRasterWindow):
                 self.update()
             return
         if self.press is None: return
+        if self.deck and hasattr(self.deck, 'move') and self.deck.move(pos): return
         if self.drag: return self.drag(pos.x())
         if self.scrolling and (self.moved or abs(pos.y() - self.press.y()) > 1.5 * self.u):
             self.moved = True
@@ -1366,14 +1490,23 @@ class Tandem(QRasterWindow):
                     [(sname, ('u', 1.5, 600), FOCUS)])
             if P: meta = [lead, fact('Emulator', RUN['emu']), fact('Läuft seit', hours(time.time() - RUN['since']))]
             elif it.get('kind') == 'sys': meta = [lead, [(str(it['n']), mv, TEXT), (' Spiele', m, MUTED)], fact('Emulator', sysinfo.get('emu') or 'fehlt')]
-            else: meta = [lead] + ([fact('Zuletzt', ago(played['last']))] if played.get('last') else []) + ([fact('Spielzeit', hours(played['secs']))] if played.get('secs') else []) + \
-                        ([fact('Emulator', sysinfo.get('emu') or 'fehlt')] if sysinfo else []) + ([[('★ Favorit', mv, FOCUS)]] if it['id'] in L['fav'] else [])
+            else:
+                extra_facts = (([fact('Jahr', it['year'])] if it.get('year') else [])
+                               + ([fact('Genre', it['genre'])] if it.get('genre') else [])
+                               + ([fact('Studio', it['dev'])] if it.get('dev') and not played.get('last') else [])
+                               + ([fact('Spielumfang', f'~{it["ttb"]:g} Std.')] if it.get('ttb') else []))
+                meta = ([lead] + extra_facts[:2]
+                        + ([fact('Zuletzt', ago(played['last']))] if played.get('last') else [])
+                        + ([fact('Spielzeit', hours(played['secs']))] if played.get('secs') else [])
+                        + ([fact('Emulator', sysinfo.get('emu') or 'fehlt')] if sysinfo else [])
+                        + ([[('★ Favorit', mv, FOCUS)]] if it['id'] in L['fav'] else []))
             miss = sysinfo.get('missing') if sysinfo and not P else None
             if P: hints = [('B', 'Beenden (unten bestätigen)')]
             else:
                 inst = it.get('inst')
+                can_opt = not it.get('kind') and it['s'] not in ('app', 'term')
                 hints = [('A', 'Öffnen' if it.get('kind') == 'sys' else 'Fortsetzen' if held else 'Installieren' if inst == 'no' else 'Lädt noch' if inst == 'load' else 'Starten')] + \
-                        ([('X', 'Beenden')] if held else []) + [('B', 'Suche beenden' if self.S.get('q') else 'Zurück')] + ([] if it.get('kind') or it['s'] in ('app', 'term') else [('Y', 'Favorit')]) + \
+                        ([('X', 'Beenden')] if held else []) + [('B', 'Suche beenden' if self.S.get('q') else 'Zurück')] + ([] if not can_opt else [('Y', 'Favorit'), ('+', 'Optionen')]) + \
                         ([] if self.S['tab'] == 3 else [('−', 'Suche')])
         sw, sh = round(26.5 * u), round(14.9 * u)
         shot = self.images.get(it['shot'], sw, sh, True) if it and not P and it.get('shot') else False
@@ -1383,8 +1516,10 @@ class Tandem(QRasterWindow):
         if not logo and len(self.wrap(name, nf, max_tw)) > 2: nf = ('u', 3.7, 700, -.02)  # long names get smaller, not taller
         rows = [] if logo else self.wrap(name, nf, max_tw, 3)
         head_h = (logo.height() + .4 * u) if logo else len(rows) * nf[1] * u * 1.08
+        desc_rows = self.wrap(it['desc'], ('u', 1.45, 400), max_tw, 2) if (it and not P and it.get('desc') and not miss) else []
+        desc_h = (1.1 * u + len(desc_rows) * 1.45 * u * 1.38) if desc_rows else 0
         cmd = self.wrap(miss, mf, max_tw, None) if miss else []
-        height = head_h + 1.5 * u + 1.8 * u + (1.6 * u + len(cmd) * 1.3 * u * 1.4 + 1.8 * u if cmd else 0) + (2.4 * u + 3.6 * u if hints else 0)
+        height = head_h + 1.5 * u + 1.8 * u + desc_h + (1.6 * u + len(cmd) * 1.3 * u * 1.4 + 1.8 * u if cmd else 0) + (2.4 * u + 3.6 * u if hints else 0)
         t = self.ease(hero['kt'], self.dur(.38))  # a new title or clear logo rises into place
         move = 0 if self.CFG.get('motion') == 'reduced' else (1 - t) * 1.2 * u
         x, y = 4.2 * u, H - 4.2 * u - height + move
@@ -1404,6 +1539,10 @@ class Tandem(QRasterWindow):
             if n: mx = self.spans(p, mx, y, [('   ·   ', m, faded(MUTED, .6))])
             mx = self.spans(p, mx, y, part)
         y += 1.8 * u
+        if desc_rows:
+            y += 1.1 * u
+            for drow in desc_rows:
+                y += self.text(p, drow, x, y, ('u', 1.45, 400), faded(TEXT, .78), max_tw, lh=1.38)
         if cmd:
             y += 1.6 * u
             box = QRectF(x, y, max(self.width_of(r, mf) for r in cmd) + 2.4 * u, len(cmd) * 1.3 * u * 1.4 + 1.8 * u)
@@ -1491,13 +1630,33 @@ class Tandem(QRasterWindow):
             if self.S['tab'] in (0, 2) or self.S['sys']:
                 sf = ('u', 1.85, 600)
                 vlabel = 'Kacheln' if self.CFG.get('view_mode') == 'stage' else 'Bühne'
-                vw = self.width_of(vlabel, sf) + 2.8 * u
-                vrect = QRectF(rx + .8 * u, y, vw, h)
+                vw = self.width_of(vlabel, sf) + 2.6 * u
+                vrect = QRectF(rx + .7 * u, y, vw, h)
                 stage_now = self.CFG.get('view_mode') == 'stage'
                 self.capsule(p, vrect, faded(FOCUS, .18) if stage_now else faded(PANEL, .94), faded(FOCUS if stage_now else TEXT, .28 if stage_now else .08))
                 self.text(p, vlabel, vrect.x(), vrect.y(), sf, FOCUS if stage_now else TEXT, vw, 1, h / (1.85 * u))
                 self.hit(vrect, self.toggle_view, name=vlabel)
                 rx = vrect.right()
+            if self.S['sys'] and self.S['sys'] != '_hidden':
+                sf = ('u', 1.75, 600)
+                slabels = {'recent': 'Zuletzt', 'az': 'A–Z', 'time': 'Spielzeit', 'year': 'Jahr'}
+                slbl = slabels.get(self.L.get('sort') or 'recent', 'Zuletzt')
+                sw2 = self.width_of(slbl, sf) + 2.4 * u
+                if rx + .7 * u + sw2 < self.width() - 3 * u:
+                    sr2 = QRectF(rx + .7 * u, y, sw2, h)
+                    self.capsule(p, sr2, faded(PANEL, .94), faded(TEXT, .08))
+                    self.text(p, slbl, sr2.x(), sr2.y(), sf, TEXT, sw2, 1, h / (1.75 * u))
+                    self.hit(sr2, self.cycle_sort, name='Sort:' + slbl)
+                    rx = sr2.right()
+            if self.S['tab'] in (0, 2) or self.S['sys']:
+                sf = ('u', 1.85, 700)
+                ow = 4.6 * u
+                if rx + .7 * u + ow < self.width() - 2.6 * u:
+                    orect = QRectF(rx + .7 * u, y, ow, h)
+                    self.capsule(p, orect, faded(PANEL, .94), faded(TEXT, .08))
+                    self.text(p, '⋯', orect.x(), orect.y() - .15 * u, ('u', 2.4, 700), TEXT, ow, 1, h / (2.4 * u))
+                    self.hit(orect, self.open_game_menu, name='Optionen')
+                    rx = orect.right()
             self.tabs_right = rx
         else:
             right = self.width() - 2.6 * u
@@ -1551,8 +1710,9 @@ class Tandem(QRasterWindow):
             self.button(p, QRectF(x0 + (n % cols) * (w + 1.2 * u), y + (n // cols) * (h + 1.2 * u), w, h), label, fn, f, fg, bg, None, 1.4)
         return y + ((len(buttons) + cols - 1) // cols) * (h + 1.2 * u) - 1.2 * u
 
-    def keyboard(self, p, y, press, skip=()):
-        u, x0, cw, bottom = self.u, 2.6 * self.u, self.width() - 5.2 * self.u, self.height() - 2.6 * self.u
+    def keyboard(self, p, y, press, skip=(), bottom_y=None):
+        u, x0, cw = self.u, 2.6 * self.u, self.width() - 5.2 * self.u
+        bottom = (self.height() - 2.6 * u) if bottom_y is None else bottom_y
         layout = (self.RUN or {}).get('layout') if not self.PROMPT else self.CFG.get('kb_layout')
         layout = layout if layout in KB else 'us' if not self.PROMPT else 'de'
         rows = [r for r in ([c for c in row if c not in skip] for row in KB_CODES) if r]
@@ -1677,6 +1837,8 @@ class Tandem(QRasterWindow):
             half = (cw - 1.4 * u) / 2
             act('Abbrechen', self.unconfirm, x0, half)
             return act(c['yes'], lambda: (self.unconfirm(), c['run']()), x0 + half + 1.4 * u, half, True)
+        if self.GAME_MENU and not P:
+            return self.draw_game_menu(p)
         if P and (RUN['s'] == 'term' or RUN.get('keys')):  # keys: YouTube browser login or Battle.net launcher
             layout = RUN.get('layout') if RUN.get('layout') in KB else 'us'
             lang_btn = (f'Tastatur: {"Deutsch" if layout == "de" else "Englisch"}', False, lambda: self.post('api/layout', {'layout': 'us' if layout == 'de' else 'de'}))
@@ -1784,6 +1946,55 @@ class Tandem(QRasterWindow):
             self.tile(p, QRectF(x0 + (n % COLS) * (size + gap), gy + edge + (n // COLS) * (size + gap), size, size), items[n], n, True, 0)
             return gy + edge + (len(items) + COLS - 1) // COLS * (size + gap) - gap + edge
         self.scroller(p, 'grid', view, grid)
+
+    def draw_game_menu(self, p):
+        """Per-game details & options sheet (Start button or '⋯' pill): description, emulator/core, profile, collections, hide."""
+        gm = self.GAME_MENU
+        g = next((x for x in self.L['games'] if x['id'] == gm['id']), None) if gm else None
+        if not g:
+            self.GAME_MENU = None
+            return
+        u, W, H = self.u, self.width(), self.height()
+        x0, cw, bottom = 2.6 * u, W - 5.2 * u, H - 2.6 * u
+        y = self.tabs(p, g['t'], [('Fertig', True, lambda: setattr(self, 'GAME_MENU', None))])
+        rows = self._game_menu_rows(g)
+        sel = max(0, min(gm['i'], len(rows) - 1))
+        area = QRectF(x0, y, cw, bottom - y)
+
+        def paint_sheet(top):
+            cy = top
+            sub_parts = [self.sys_name(g)]
+            if g.get('year'): sub_parts.append(str(g['year']))
+            if g.get('genre'): sub_parts.append(g['genre'])
+            if g.get('dev'): sub_parts.append(g['dev'])
+            if g.get('ttb'): sub_parts.append(f'~{g["ttb"]:g} Std.')
+            cy += self.text(p, '  ·  '.join(sub_parts), x0 + .4 * u, cy, ('u', 1.85, 600), FOCUS, cw - .8 * u) + .8 * u
+            if g.get('desc'):
+                dlines = self.wrap(g['desc'], ('u', 1.85, 400), cw - 3.6 * u, 5)
+                dh = len(dlines) * 1.85 * u * 1.38 + 2.4 * u
+                dbox = QRectF(x0, cy, cw, dh)
+                self.box(p, dbox, 1.6 * u, PANEL, LINE)
+                dy = cy + 1.2 * u
+                for dl in dlines:
+                    dy += self.text(p, dl, x0 + 1.8 * u, dy, ('u', 1.85, 400), MUTED, cw - 3.6 * u, lh=1.38)
+                cy += dh + 1.6 * u
+            rh = 5.8 * u
+            box = QRectF(x0, cy, cw, len(rows) * rh)
+            self.box(p, box, 1.8 * u, PANEL, LINE)
+            for idx, (lbl, val, fn) in enumerate(rows):
+                ry = cy + idx * rh
+                if idx: p.fillRect(QRectF(x0 + 2 * u, ry, cw - 4 * u, max(1.0, .08 * u)), faded(TEXT, .08))
+                rrect = QRectF(x0, ry, cw, rh)
+                if idx == sel:
+                    self.box(p, rrect.adjusted(.35 * u, .35 * u, -.35 * u, -.35 * u), 1.4 * u, faded(FOCUS, .16), FOCUS, .22 * u)
+                is_play = idx == 0
+                self.text(p, lbl, x0 + 2.2 * u, ry, ('u', 2.05, 700 if is_play else 500), FOCUS if is_play else TEXT, cw * .62, lh=rh / (2.05 * u))
+                if val:
+                    self.text(p, val, x0 + cw * .58, ry, ('u', 1.95, 600), FOCUS if idx == sel else MUTED, cw * .42 - 2.2 * u, 2, rh / (1.95 * u))
+                self.hit(rrect, lambda idx=idx, fn=fn: (gm.__setitem__('i', idx), fn()), name='gopt:' + lbl)
+            return cy + len(rows) * rh + 2 * u
+
+        self.scroller(p, 'gmenu:' + g['id'], area, paint_sheet)
 
     def draw_stage(self, p, items, y, bottom):
         """Cocoon-style showcase carousel: large centre cover with soft floor reflection, flanked by scaled neighbours."""

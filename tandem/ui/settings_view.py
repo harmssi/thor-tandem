@@ -33,7 +33,7 @@ CATS = [  # id, title, icon, icon colour, what the top screen says while the lis
     ('onoff', 'Ein / Aus', 'off', '#ff453a', 'Standby, Neustart, Ausschalten und der Desktop.'),
 ]
 AREAS = [c for c in CATS if c]
-TITLES = {c[0]: c[1] for c in AREAS} | {'controls>map': 'Tastenbelegung', 'network>wifi': 'WLAN', 'bluetooth>dev': 'Gerät'}
+TITLES = {c[0]: c[1] for c in AREAS} | {'controls>map': 'Tastenbelegung', 'network>wifi': 'WLAN', 'bluetooth>dev': 'Gerät', 'library>restore': 'Wiederherstellen', 'library>stats': 'Spielzeit & Statistik'}
 ICONS = {
     'screens': '<rect x="5" y="3" width="14" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="5" y="13" width="14" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/>',
     'light': '<circle cx="12" cy="12" r="4.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 2.5v2.6M12 18.9v2.6M2.5 12h2.6M18.9 12h2.6M5.3 5.3l1.8 1.8M16.9 16.9l1.8 1.8M5.3 18.7l1.8-1.8M16.9 7.1l1.8-1.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
@@ -158,19 +158,30 @@ def groups(win, page):
         rest = CFG.get('rest_min', 3)
         stby = [toggle('Beim Zuklappen in Standby', CFG.get('lid_sleep', True), lambda v: config_set(win, lid_sleep=v),
                        'Schließt du den Thor, geht er von selbst in den Standby und wacht beim Aufklappen wieder auf.'),
+                toggle('Musik bei geschlossenem Deckel', CFG.get('lid_music', True), lambda v: config_set(win, lid_music=v),
+                       'Spielt YouTube, Plex oder Hintergrundmusik über Kopfhörer weiter, wenn der Deckel geschlossen wird (nur Bildschirme & Lichter aus).'),
+                toggle('Am TV / Monitor abdunkeln', CFG.get('dock_dim', True), lambda v: config_set(win, dock_dim=v),
+                       'Dunkelt die beiden eingebauten OLED-Bildschirme automatisch ab, sobald ein USB-C-Monitor oder Fernseher angeschlossen ist.'),
                 choice('Am Ladegerät', [('doze', 'Erreichbar'), ('sleep', 'Tiefschlaf')], CFG.get('charger_standby', 'doze'),
                        lambda v: config_set(win, charger_standby=v),
                        'Erreichbar: Bildschirme, Ton und Lichter aus, Spiel pausiert, aber WLAN und Downloads laufen weiter. Tiefschlaf: legt das Gerät ganz schlafen.')]
         return [('Helligkeit', rows, None),
                 ('Ton', sound, None),
-                ('Standby', stby, None),
                 ('Ruheschutz (OLED)', [choice('Schwarz nach', REST, rest, lambda v: config_set(win, rest_min=v),
                                              'Rührt niemand Tandem an, werden beide Bildschirme schwarz und zeigen nur eine wandernde Uhr. Das schont die OLED-Bildschirme. Jede Taste weckt sie.')],
-                 'Während ein Spiel läuft, bleibt der Bildschirm an.')]
+                 'Während ein Spiel läuft, bleibt der Bildschirm an.'),
+                ('Im Spiel', [choice('FPS-Fenster (oben)', [(0, 'Aus'), (1, 'FPS'), (2, 'Leiste'), (3, 'Graph')], int(CFG.get('hud_level') or 0),
+                                     lambda v: config_set(win, hud_level=v),
+                                     'Blendet oben im Spiel Live-FPS, Auslastung und Frametime-Graph ein (auch jederzeit über die Thor-Taste umschaltbar).')], None),
+                ('Standby', stby, None)]
     if page == 'controls':
         C, gyro = win.CTRL or {}, (T or {}).get('gyro')
         off = len({d.get('emu') for d in C.get('off') or []})  # emulators that differ, not keys
+        cstyle = CFG.get('controls_style') if CFG.get('controls_style') in ('thor', 'xbox') else 'thor'
         rows = [{'k': 'link', 't': 'Tastenbelegung', 'v': 'Übersicht', 'fn': lambda: go_page(win, 'controls>map'), 'help': 'Welche Taste wo was tut: in Tandem, in jedem Spiel, die Kürzel mit Select.'},
+                choice('Tasten-Stil', [('thor', 'Thor-Aufdruck'), ('xbox', 'Xbox-Stil')], cstyle,
+                       lambda v: (config_set(win, controls_style=v), setattr(win, 'CTRL', None)),
+                       'Einheitlich über alle Konsolen: Thor-Aufdruck (A rechts = Bestätigen, B unten = Zurück) oder Xbox-Stil (Unten = Bestätigen, Rechts = Zurück). Gilt sofort in allen Emulatoren.'),
                 {'k': 'button', 't': 'In allen Emulatoren angleichen', 'v': (f'{off} Emulator' + ('en' if off != 1 else '') + ' weichen ab' if off != 1 else '1 Emulator weicht ab') if off else 'alles gleich',
                  'fn': lambda: apply_controls(win), 'help': 'Stellt in jedem installierten Emulator die Tandem-Belegung ein. Vorher wird jede geänderte Datei gesichert.'}]
         rows2 = [{'k': 'info', 't': 'Controller', 'v': 'Xbox 360 (fest)', 'help': 'Unter Tandem meldet sich der Thor immer als Xbox-360-Controller. Nur so liegt jede Taste in jedem Emulator gleich.'}]
@@ -223,11 +234,18 @@ def groups(win, page):
         return [(None, rows, 'Gilt sofort und bleibt bis zur nächsten Änderung.' if rows else 'Das Leistungsprofil ist hier nicht erreichbar.'), ('Zustand', info, None)]
     if page == 'network':
         own = P.get('own') or P.get('url')
+        wol_rows = [{'k': 'link', 't': 'PC-MAC-Adresse', 'v': CFG.get('wol_mac') or 'nicht gesetzt', 'fn': win.ask_wol_mac, 'bottom': True,
+                     'help': 'MAC-Adresse deines Streaming-PCs für Wake-on-LAN (z. B. für Moonlight).'}]
+        if CFG.get('wol_mac'):
+            wol_rows.append({'k': 'button', 't': 'PC jetzt aufwecken',
+                             'fn': lambda: win.post('api/wol', {}, then=lambda r: r and win.toast(r.get('text') or r.get('error', ''))),
+                             'help': 'Sendet ein Wake-on-LAN-Signal im Heimnetz an den eingetragenen PC.'})
         return [(None, [{'k': 'link', 't': 'WLAN', 'v': SYS.get('ssid') or ('nicht verbunden' if win.SYS else '…'), 'fn': lambda: go_page(win, 'network>wifi'),
                          'help': 'Netze in der Nähe zeigen und verbinden.'}], None),
                 ('Vom Handy oder PC', [{'k': 'info', 't': 'Adresse', 'v': own or '–', 'help': 'Diese Adresse im Browser öffnen: dort gibt es dieselben Einstellungen, bequem mit Tastatur.'},
                                        {'k': 'info', 't': 'PIN', 'v': str(P.get('pin') or '–'), 'help': 'Die PIN gilt einmal. Danach bleibt der Browser ein Jahr angemeldet.'}] +
-                 ([{'k': 'info', 't': 'Im Heimnetz', 'v': P['ip_url'], 'help': 'Falls der Name nicht gefunden wird: diese Adresse mit Zahlen.'}] if P.get('ip_url') else []), None)]
+                 ([{'k': 'info', 't': 'Im Heimnetz', 'v': P['ip_url'], 'help': 'Falls der Name nicht gefunden wird: diese Adresse mit Zahlen.'}] if P.get('ip_url') else []), None),
+                ('PC-Streaming (Wake-on-LAN)', wol_rows, None)]
     if page == 'network>wifi':
         nets = SYS.get('networks') or []
         rows = [{'k': 'check', 't': n['ssid'], 'on': n.get('active'), 'v': f'{n["signal"]} %' + (' · geschützt' if n.get('secure') else ''), 'fn': lambda n=n: win.wifi(n),
@@ -324,20 +342,70 @@ def groups(win, page):
                 ('Sprache', [choice('Sprache / Language', [('de', 'Deutsch'), ('en', 'English')], CFG.get('lang') or 'de', lambda v: config_set(win, lang=v),
                                     'Sprache der Oberfläche auf beiden Bildschirmen und der Einstellungsseite. Spiele bleiben, wie sie sind.')], None)]
     if page == 'library':
+        played_map = win.L.get('played') or {}
+        total_secs = sum(int(p.get('secs') or 0) for p in played_map.values() if isinstance(p, dict))
         rows = [{'k': 'info', 't': 'Spiele', 'v': str(len(win.L['games'])), 'help': 'Alle Spiele, die Tandem gefunden hat.'},
+                {'k': 'link', 't': 'Spielzeit & Statistik', 'v': ui.hours(total_secs) if total_secs else 'noch nichts gespielt',
+                 'fn': lambda: go_page(win, 'library>stats'), 'help': 'Gesamtspielzeit, letzte 7 Tage und deine meistgespielten Spiele auf dem Thor.'},
                 {'k': 'info', 't': 'Spieleordner', 'v': 'ROMs/<System>', 'help': 'Spiele gehören in einen Ordner „ROMs“ auf der Karte oder im Gerät, je System ein Unterordner (wie bei ES-DE).'},
                 {'k': 'button', 't': 'Neu einlesen und Cover laden', 'fn': lambda: win.start({'id': 'rescan', 's': 'app'}), 'help': 'Sucht neue Spiele und lädt fehlende Cover aus dem Netz.'}]
         SV = win.SAVES or {}
+        snaps = SV.get('snapshots') or []
         sv_state = f'{ui.ago(SV["last"])} ({SV.get("where") or "lokal"})' if SV.get('last') else 'noch keine Sicherung'
         sv_rows = [{'k': 'info', 't': 'Letzte Sicherung', 'v': sv_state, 'help': 'Sichert Spielstände aller Emulatoren, Ports und BananaNative auf Karte und Server.'},
                    {'k': 'button', 't': 'Spielstände jetzt sichern', 'fn': lambda: (win.toast('Sichere Spielstände …'), win.post('api/saves')),
                     'help': 'Legt ein Archiv auf der Karte an und überträgt die Spielstände per SSH.'},
+                   {'k': 'link', 't': 'Wiederherstellen', 'v': f'{len(snaps)} Archive' if snaps else 'keine Archive',
+                    'fn': lambda: go_page(win, 'library>restore'), 'help': 'Älteren Spielstand aus den lokalen Sicherungsarchiven zurückspielen (legt vorher automatisch eine Sicherung an).'},
                    toggle('Automatisch sichern', CFG.get('save_auto', True), lambda v: config_set(win, save_auto=v),
                           'Sichert Spielstände im Hintergrund nach jedem beendeten Spiel.'),
                    {'k': 'link', 't': 'Sicherungsziel', 'v': CFG.get('save_target') or 'nur Karte', 'fn': win.ask_save_target, 'bottom': True,
                     'help': 'SSH-Ziel im Heimnetz (z. B. benutzer@server:~/backups/thor-saves). Leer lassen für reine Kartensicherung.'}]
         store = [{'k': 'info', 't': s['name'], 'v': f'{round(s["free"] / 1e9)} von {round(s["total"] / 1e9)} GB frei', 'help': 'Freier Platz.'} for s in SYS.get('storage') or []]
         return [(None, rows, None), ('Spielstände', sv_rows, None), ('Speicher', store, None)]
+    if page == 'library>stats':
+        played_map = win.L.get('played') or {}
+        sessions = win.L.get('sessions') or {}
+        games_by_id = {g['id']: g for g in (win.L.get('games') or []) + (win.L.get('apps') or [])}
+        total_secs = sum(int(p.get('secs') or 0) for p in played_map.values() if isinstance(p, dict))
+        played_cnt = sum(1 for p in played_map.values() if isinstance(p, dict) and int(p.get('secs') or 0) > 0)
+        now = time.time()
+        wdays = ('Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So')
+        day_rows, week_secs = [], 0
+        for d in range(6, -1, -1):
+            tm = time.localtime(now - d * 86400)
+            key_d = time.strftime('%Y-%m-%d', tm)
+            ds = int(sessions.get(key_d) or 0)
+            week_secs += ds
+            lbl = 'Heute' if d == 0 else 'Gestern' if d == 1 else f'{wdays[tm.tm_wday]}, {tm.tm_mday:02d}.{tm.tm_mon:02d}.'
+            day_rows.append({'k': 'info', 't': lbl, 'v': ui.hours(ds) if ds > 0 else '–', 'help': f'Spielzeit am {key_d}.'})
+        summary = [{'k': 'info', 't': 'Gesamtspielzeit', 'v': ui.hours(total_secs) if total_secs else '0 Min.', 'help': 'Aufgezeichnete Spielzeit über alle Spiele auf dem Thor.'},
+                   {'k': 'info', 't': 'Letzte 7 Tage', 'v': ui.hours(week_secs) if week_secs else '0 Min.', 'help': 'Spielzeit in den letzten sieben Tagen.'},
+                   {'k': 'info', 't': 'Gespielte Titel', 'v': f'{played_cnt} von {len(win.L.get("games") or [])}', 'help': 'Wie viele Spiele deiner Bibliothek bereits gestartet wurden.'}]
+        ranked = sorted(((gid, p) for gid, p in played_map.items() if isinstance(p, dict) and int(p.get('secs') or 0) > 0),
+                        key=lambda kv: int(kv[1].get('secs') or 0), reverse=True)[:10]
+        top_rows = [{'k': 'info', 't': (games_by_id.get(gid) or {}).get('t') or gid,
+                     'sub': (win.sys_name(games_by_id[gid]) if gid in games_by_id else '') + (f' · zuletzt {ui.ago(p["last"])}' if p.get('last') else ''),
+                     'v': ui.hours(int(p.get('secs') or 0)),
+                     'help': f'Insgesamt {ui.hours(int(p.get("secs") or 0))} gespielt.'} for gid, p in ranked]
+        return [('Übersicht', summary, None),
+                ('Meistgespielt', top_rows or [{'k': 'info', 't': 'Noch keine Spiele gespielt', 'v': '', 'help': 'Starte ein Spiel – Tandem zählt die Spielzeit automatisch mit.'}], None),
+                ('Letzte 7 Tage', day_rows, None)]
+    if page == 'library>restore':
+        snaps = (win.SAVES or {}).get('snapshots') or []
+        if not snaps:
+            return [(None, [{'k': 'info', 't': 'Keine Sicherungsarchive gefunden', 'v': '', 'help': 'Erstelle zuerst unter Bibliothek eine Spielstand-Sicherung.'}], None)]
+        def do_restore(arc):
+            win.toast('Stelle Spielstände wieder her …')
+            win.post('api/saves_restore', {'file': arc['file']},
+                     then=lambda r: win.toast('Keine Antwort.' if r is None else r.get('error') or r.get('text', '')))
+        r_rows = [{'k': 'button', 't': time.strftime('%d.%m.%Y · %H:%M', time.localtime(s['at'])),
+                   'v': f'{len(s.get("items") or [])} Systeme',
+                   'sub': ', '.join((s.get('items') or [])[:5]),
+                   'fn': lambda s=s: do_restore(s),
+                   'help': 'Spielt alle Spielstände dieses Zeitpunkts zurück. Aktuelle Spielstände werden vorher automatisch gesichert.'}
+                  for s in snaps]
+        return [('Sicherungsarchive (neueste zuerst)', r_rows, 'Vor dem Zurückspielen legt Tandem automatisch eine Sicherheitskopie deiner aktuellen Stände an.')]
     if page == 'updates':
         U = win.UPD or {}
         rows = [{'k': 'info', 't': 'Tandem', 'v': 'Version ' + str(CFG.get('version', '')), 'help': 'Die installierte Version.'},

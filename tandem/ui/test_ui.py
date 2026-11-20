@@ -1240,5 +1240,99 @@ class Views(unittest.TestCase):
         bottom.open_tab(1); self.wait(lambda: top.S['tab'] == 1)
 
 
+@unittest.skipUnless(ui, 'PySide6 fehlt')
+class CompanionDecksAndGameMenuTest(unittest.TestCase):
+    def test_universal_dual_and_pcstream_decks(self):
+        QGuiApplication.instance() or QGuiApplication(['tandem-test'])
+        from decks import dualscreen, pcstream, universal
+        w = ui.Tandem('bottom')
+        w.resize(1240, 1080)
+        w.u, w.fonts = w.width() / 100, {}
+        ui.URL = 'http://127.0.0.1:1'
+        w.RUN = {'id': 'g1', 't': 'Chrono Trigger', 's': 'sfc', 'emu': 'RetroArch', 'since': int(time.time()) - 120}
+        w.SET = {'bt': 60, 'bb': 60, 'vol': 40}
+        w.BATT = {'level': 82, 'charging': False}
+        img = QImage(1240, 1080, QImage.Format.Format_RGB32)
+
+        def render(deck, shot_name=''):
+            w.hits, w.scrolls, w.kb_keys = [], [], []
+            p = ui.QPainter(img)
+            p.setRenderHints(ui.QPainter.RenderHint.Antialiasing | ui.QPainter.RenderHint.TextAntialiasing)
+            deck.paint(p); p.end()
+            if SHOTS and shot_name:
+                Path(SHOTS).mkdir(parents=True, exist_ok=True)
+                img.save(str(Path(SHOTS) / f'{shot_name}.png'))
+            return [h[3] for h in w.hits]
+
+        u_deck = universal.Deck(w)
+        # Tab 0: Steuerung keeps standard in-game buttons + adds universal tabs
+        h0 = render(u_deck, 'univ-steuerung')
+        self.assertTrue({'utab:Steuerung', 'utab:Stände', 'utab:Notizen', 'utab:Guides', 'utab:Musik', 'utab:Cockpit', 'Spiel beenden', 'Speichern', 'Laden'} <= set(h0))
+        # Tab 2: Notizen sketch strokes + undo
+        u_deck.tab = 2
+        render(u_deck)
+        u_deck.press(QPointF(300, 400))
+        u_deck.move(QPointF(420, 460))
+        u_deck.press(None)
+        u_deck.save_timer.stop()
+        h2 = render(u_deck, 'univ-sketch')
+        self.assertIn('sketch:Radierer', h2)
+        self.assertEqual(len(u_deck.undo_stack), 1)
+        # Tab 5: Cockpit renders wattage/runtime sparklines cleanly
+        u_deck.tab = 5
+        u_deck.tele = {'battery': {'level': 76, 'charging': False, 'watts': 6.4, 'mins_left': 195},
+                       'cpu': 34.0, 'ram_used': 4.8, 'ram_total': 11.6, 'temp': 51, 'fan': 1900, 'profile': 'Balanced',
+                       'hist': {'watts': [5.8, 6.2, 6.4, 6.1, 6.5], 'cpu': [28, 35, 34, 31, 36], 'temp': [49, 50, 51, 51, 52]}}
+        h5 = render(u_deck, 'univ-cockpit')
+        self.assertIn('cprof:Performance', h5)
+        u_deck.close()
+
+        # Dual-screen deck (DS / 3DS / Wii U)
+        w.RUN['dual'] = True
+        d_deck = dualscreen.Deck(w)
+        hd = render(d_deck, 'dual-screen')
+        self.assertTrue({'dtab:Touchscreen', 'dtab:Notizen', 'dtab:Guides', 'dtab:Cockpit', 'dual_swap'} <= set(hd))
+        d_deck.set_tab(1)
+        self.assertEqual(d_deck.sub.tab, 2)
+        d_deck.close()
+
+        # PC-Stream deck (Moonlight / Chiaki)
+        w.RUN = {'id': 'app3', 't': 'Moonlight', 's': 'app', 'emu': 'Moonlight', 'since': int(time.time())}
+        p_deck = pcstream.Deck(w)
+        hp = render(p_deck, 'pcstream-pad')
+        self.assertTrue({'pc_kb', 'pc_wol', 'macro:Esc', 'macro:Alt+Tab', 'mbtn:Linksklick', 'mbtn:Rechtsklick'} <= set(hp))
+        p_deck.kb_open = True
+        render(p_deck, 'pcstream-kb')
+        self.assertGreater(len(w.kb_keys), 25)
+        p_deck.close()
+
+        # Redesigned Thor Quick Menu (FPS-Fenster + Quick Game Switcher) + Library Stats page
+        w.RUN = {'id': 'g1', 't': 'Chrono Trigger', 's': 'sfc', 'emu': 'RetroArch', 'since': int(time.time()) - 120}
+        w.L = {'games': [{'id': 'g1', 't': 'Chrono Trigger', 's': 'sfc'},
+                         {'id': 'g2', 't': 'Super Metroid', 's': 'sfc'},
+                         {'id': 'g3', 't': 'Metal Gear Solid', 's': 'psx'}],
+               'apps': [],
+               'systems': {'sfc': {'name': 'Super Famicom'}, 'psx': {'name': 'PlayStation'}},
+               'played': {'g1': {'secs': 3600, 'last': int(time.time()) - 300},
+                          'g2': {'secs': 1800, 'last': int(time.time()) - 600},
+                          'g3': {'secs': 900, 'last': int(time.time()) - 900}},
+               'sessions': {time.strftime('%Y-%m-%d'): 2700}}
+        w.THOR = {'rgb': {'enabled': True, 'color': '9040FF', 'level': 60},
+                  'power': {'profile': 'Balanced', 'profiles': [('Eco', 'Sparsam'), ('Balanced', 'Ausgewogen'), ('Performance', 'Leistung')], 'temp': 47, 'fan': 1850}}
+        w.QTELE = {'battery': {'level': 84, 'charging': False, 'watts': 5.8, 'mins_left': 210}}
+        w.QUICK = time.time()
+        w.hits, w.scrolls = [], []
+        pq = ui.QPainter(img)
+        pq.setRenderHints(ui.QPainter.RenderHint.Antialiasing | ui.QPainter.RenderHint.TextAntialiasing)
+        ui.quick_view.draw(w, pq); pq.end()
+        if SHOTS:
+            img.save(str(Path(SHOTS) / 'quick-bento.png'))
+        qhits = {h[3] for h in w.hits}
+        self.assertTrue({'hud:Aus', 'hud:FPS', 'hud:Leiste', 'hud:Graph', 'qswitch:g2', 'qswitch:g3', 'Ton aus', 'Zu Tandem', 'Spiel beenden'} <= qhits)
+        stats_groups = ui.settings_view.groups(w, 'library>stats')
+        self.assertEqual([g[0] for g in stats_groups], ['Übersicht', 'Meistgespielt', 'Letzte 7 Tage'])
+        self.assertEqual(stats_groups[1][1][0]['t'], 'Chrono Trigger')
+
+
 if __name__ == '__main__':
     unittest.main()

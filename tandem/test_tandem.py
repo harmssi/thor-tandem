@@ -739,14 +739,17 @@ class English(unittest.TestCase):
     """The English interface: the setting persists, and every German text the screens can show has an English one."""
     GERMAN = __import__('re').compile(r'[äöüÄÖÜß„]|\b(der|die|das|und|nicht|ist|kein|keine|mit|für|von|auf|noch|wird|bitte|Spiel|Spiele|starten|beenden|'
                                       r'Einstellungen|Taste|Tasten|Akku|Bildschirm|fehlt|gefunden|installiert|läuft|Suche|Fehler|Passwort|Konto)\b')
-    FILES = ['tandem.py', 'thor.py', 'bluetooth.py', 'controls.py', 'saves.py', 'setup.py', 'ui/tandem_ui.py', 'ui/settings_view.py', 'ui/quick_view.py', 'ui/qr.py',
-             'ui/decks/media.py', 'ui/decks/offline.py', 'ui/decks/youtube.py', 'ui/decks/plex.py', 'ui/decks/gallery.py', 'ui/decks/pack.py', 'ui/decks/mpv.py']
+    FILES = ['tandem.py', 'thor.py', 'bluetooth.py', 'controls.py', 'saves.py', 'telemetry.py', 'companion.py', 'setup.py',
+             'ui/tandem_ui.py', 'ui/settings_view.py', 'ui/quick_view.py', 'ui/qr.py',
+             'ui/decks/media.py', 'ui/decks/offline.py', 'ui/decks/youtube.py', 'ui/decks/plex.py', 'ui/decks/gallery.py',
+             'ui/decks/pack.py', 'ui/decks/mpv.py', 'ui/decks/universal.py', 'ui/decks/dualscreen.py', 'ui/decks/pcstream.py']
     KEEP = {'Tandem/0.1 (game launcher)', '<p><b>Die PIN stimmt nicht.</b></p>', 'ist', '7: kein 200',  # not shown, or translated as a whole (rules) or by the web page
             'Emulator fehlt (unter Apps oder im Armada Store installieren) – ', ' Installieren: Einstellungsseite › Gerät.', 'Passwort für ', 'keine Spiele',
             'Läuft · ', ' · Akku 7 %7', ' (lädt)', 'Angemeldet und eingetragen in: ', 'Einstellungen · ', ' · geschützt', ' Das Passwort tippst du unten ein.', ' · lädt',
             '„7“ ', 'Neu von ', 'TLS-Zertifikat nicht nutzbar, Einstellungsseite bleibt bei HTTP: 7', 'Toravo Tandem: 7 Spiele aus 7 – http://127.0.0.1:7/',  # log lines
             '^1234567890ß´', 'qwertzuiopü+', 'asdfghjklöä#', 'QWERTZUIOPÜ*', "ASDFGHJKLÖÄ'"}  # key caps
-    KEEP |= {'Kein „Microsoft X-Box 360 pad“ gefunden (läuft Tandem?).', 'Drücke gedrucktes 7 ...', '7: 7: 7: ist 7, soll 7'}  # controls.measure: a developer's terminal tool
+    KEEP |= {'Kein „Microsoft X-Box 360 pad“ gefunden (läuft Tandem?).', 'Drücke gedrucktes 7 ...', '7: 7: 7: ist 7, soll 7',
+             '7 Spiel', '[^A-Za-z0-9ÄÖÜäöüß _\\-]'}  # controls.measure + internal search/filename regexes
 
     def test_setting(self):
         tandem.save_config({'lang': 'en'})
@@ -864,6 +867,138 @@ class YouTubeAuthAndPromptTest(unittest.TestCase):
         tandem.save_config({'yt_forget': True})
         self.assertFalse(tandem.yt_auth_signed_in())
         self.assertFalse(tandem.public_config()['yt_set'])
+
+
+class CompanionAndLibraryUpgradesTest(unittest.TestCase):
+    def test_sfc_gamelist_m3u_and_collections(self):
+        root = TMP / 'lib-upgrades/ROMs'
+        touch(root / 'sfc/Chrono Trigger (Japan).sfc', 'rom')
+        touch(root / 'psx/Final Fantasy VII (Disc 1).chd', 'd1')
+        touch(root / 'psx/Final Fantasy VII (Disc 2).chd', 'd2')
+        touch(root / 'psx/Final Fantasy VII.m3u', 'Final Fantasy VII (Disc 1).chd\nFinal Fantasy VII (Disc 2).chd\n')
+        touch(root.parent / 'Cocoon/gamelists/snes/gamelist.xml',
+              '<?xml version="1.0"?><gameList><game><path>./Chrono Trigger (Japan).sfc</path><name>Chrono Trigger</name>'
+              '<desc>Time travel RPG.</desc><genre>RPG</genre><developer>Square</developer>'
+              '<releasedate>19950311T000000</releasedate><cocoon:timetobeathastily>82800</cocoon:timetobeathastily></game></gameList>')
+        lib = tandem.Library([str(root)], TMP / 'no-steam')
+        games = lib.scan()
+        sfc_games = [g for g in games.values() if g['s'] == 'sfc']
+        self.assertEqual(len(sfc_games), 1)
+        ct = sfc_games[0]
+        self.assertEqual((ct['t'], ct['genre'], ct['dev'], ct['year'], ct['ttb'], ct['desc']),
+                         ('Chrono Trigger', 'RPG', 'Square', '1995', 23.0, 'Time travel RPG.'))
+        psx_games = [g for g in games.values() if g['s'] == 'psx']
+        self.assertEqual([g['t'] for g in psx_games], ['Final Fantasy VII'])  # Disc 1/2 hidden by .m3u
+
+        t = tandem.Tandem(lib, dry=True)
+        self.assertTrue(t.collection_act({'a': 'create', 'name': 'RPGs', 'id': ct['id']})['ok'])
+        self.assertEqual(t.saved['collections']['RPGs'], [ct['id']])
+        self.assertTrue(t.collection_act({'a': 'sort', 'sort': 'year'})['ok'])
+        self.assertEqual(t.saved['sort'], 'year')
+        self.assertTrue(t.collection_act({'a': 'hide', 'id': ct['id']})['ok'])
+        self.assertIn(ct['id'], t.saved['hidden'])
+        t.collection_act({'a': 'hide', 'id': ct['id']})
+        self.assertNotIn(ct['id'], t.saved['hidden'])
+
+    def test_saves_restore_notes_sketch_upload_and_telemetry(self):
+        import io, sys
+        import companion, saves, telemetry
+        # 1. Time-Machine savegame snapshot & restore
+        fhome = TMP / 'restore-home'
+        bdir = TMP / 'restore-backups'
+        touch(fhome / '.local/share/duckstation/memcards/card1.mcd', 'original-save')
+        b1 = saves.backup(target='', home=fhome, local_dir=bdir, run_rsync=False)
+        self.assertTrue(b1.get('ok'))
+        snaps = saves.snapshots(bdir)
+        self.assertEqual(len(snaps), 1)
+        touch(fhome / '.local/share/duckstation/memcards/card1.mcd', 'corrupted-save')
+        time.sleep(1.05)  # distinct timestamp for pre-restore safety backup
+        r1 = saves.restore(snaps[0]['file'], home=fhome, local_dir=bdir)
+        self.assertTrue(r1.get('ok'), r1)
+        self.assertEqual((fhome / '.local/share/duckstation/memcards/card1.mcd').read_text(), 'original-save')
+        self.assertGreaterEqual(len(saves.snapshots(bdir)), 2)  # safety backup created before restore
+
+        # 2. Notes, checklists & PNG sketch
+        n = companion.notes_save('game123', {'text': 'Boss weak to ice', 'add_check': 'Get key'})
+        self.assertEqual((n['text'], n['checks']), ('Boss weak to ice', [{'t': 'Get key', 'done': False}]))
+        n2 = companion.notes_save('game123', {'toggle_idx': 0})
+        self.assertTrue(n2['checks'][0]['done'])
+        sys.path.insert(0, str(Path(tandem.__file__).parent / 'ui'))
+        import qr
+        sample_png = qr.png('sketch-test')
+        self.assertTrue(companion.sketch_save('game123', sample_png)['has_sketch'])
+        self.assertEqual(companion.sketch_bytes('game123'), sample_png)
+
+        # 3. Streaming wireless upload (ROM auto-detect + Guide + unsafe path rejection)
+        uroot = TMP / 'upload-roms/ROMs'
+        uroot.mkdir(parents=True, exist_ok=True)
+        rom_bytes = b'SUPER_MARIO_WORLD_ROM_DATA'
+        up = companion.handle_upload(io.BytesIO(rom_bytes), len(rom_bytes), 'Super Mario World.sfc', 'rom', 'auto', '',
+                                     [str(uroot)], TMP / 'cfg', set(tandem.SYSTEMS))
+        self.assertTrue(up.get('ok'), up)
+        self.assertEqual((uroot / 'snes/Super Mario World.sfc').read_bytes(), rom_bytes)
+        up_g = companion.handle_upload(io.BytesIO(b'# Walkthrough\nStep 1'), 20, 'walkthrough.md', 'guide', '', 'game123',
+                                       [str(uroot)], TMP / 'cfg', set(tandem.SYSTEMS))
+        self.assertTrue(up_g.get('ok'), up_g)
+        self.assertEqual(len(companion.guides_list('game123')['items']), 1)
+
+        # 4. Telemetry (Qualcomm Full power_now quirk + Discharging watts/playtime + PipeWire parser + Dual-screen config)
+        ps_full = TMP / 'ps-full/battery'
+        for k, v in (('type', 'Battery'), ('status', 'Full'), ('capacity', '100'), ('current_now', '0'),
+                     ('voltage_now', '4400000'), ('power_now', '43635399'), ('charge_now', '6064000'), ('charge_full', '6064000')):
+            touch(ps_full / k, v)
+        bf = telemetry.battery_detail(ps_full.parent)
+        self.assertEqual((bf['level'], bf['charging'], bf['watts'], bf['mins_left']), (100, True, 0.0, None))
+
+        ps_dis = TMP / 'ps-dis/battery'
+        for k, v in (('type', 'Battery'), ('status', 'Discharging'), ('capacity', '50'), ('current_now', '-1000000'),
+                     ('voltage_now', '4000000'), ('charge_now', '3000000'), ('charge_full', '6000000')):
+            touch(ps_dis / k, v)
+        bd = telemetry.battery_detail(ps_dis.parent)
+        self.assertEqual((bd['watts'], bd['mins_left']), (4.0, 180))
+
+        streams = telemetry.audio_streams('Audio\n └─ Streams:\n        81. RetroArch                           [vol: 0.80]\n        85. tandem-bgm                          [vol: 0.45]\n')
+        self.assertEqual(streams, [{'id': 81, 'name': 'RetroArch', 'vol': 80, 'muted': False, 'bgm': False},
+                                   {'id': 85, 'name': 'tandem-bgm', 'vol': 45, 'muted': False, 'bgm': True}])
+        self.assertIn('error', telemetry.wake_on_lan('not-a-mac'))
+
+        dhome = TMP / 'dual-home'
+        touch(dhome / '.config/melonDS/melonDS.toml', '[Instance0.Window0]\nEnabled = true\nScreenSizing = 0\n[Instance0.Window1]\nEnabled = false\n')
+        touch(dhome / '.config/azahar-emu/qt-config.ini', '[Layout]\nlayout_option=0\n')
+        companion.setup_dual_emu('nds', 'melonDS', dhome)
+        companion.setup_dual_emu('n3ds', 'Azahar', dhome)
+        mtoml = (dhome / '.config/melonDS/melonDS.toml').read_text()
+        self.assertIn('ScreenSizing = 4', mtoml)
+        self.assertIn('ScreenSizing = 5', mtoml)
+        self.assertIn('layout_option=5', (dhome / '.config/azahar-emu/qt-config.ini').read_text())
+
+        # 5. MangoHud in-place update (preserves inode for mangoapp inotify), stats_payload & controls_style
+        mh = TMP / 'mangohud.test'
+        mh.write_text('no_display\n')
+        ino_before = mh.stat().st_ino
+        old_mf = telemetry.mangohud_files
+        telemetry.mangohud_files = lambda *a: [mh]
+        try:
+            self.assertEqual(tandem.save_config({'hud_level': 2})['hud_level'], 2)
+            self.assertEqual(mh.stat().st_ino, ino_before)
+            self.assertIn('horizontal', mh.read_text())
+            self.assertEqual(tandem.save_config({'hud_level': 0})['hud_level'], 0)
+            self.assertEqual(mh.read_text().strip(), 'no_display')
+        finally:
+            telemetry.mangohud_files = old_mf
+
+        self.assertEqual(tandem.save_config({'controls_style': 'xbox'})['controls_style'], 'xbox')
+        self.assertEqual(tandem.controls_info()['style'], 'xbox')
+        self.assertEqual(tandem.save_config({'controls_style': 'thor'})['controls_style'], 'thor')
+
+        t_stat = make()
+        gid_s = next(iter(t_stat.library.games))
+        today = time.strftime('%Y-%m-%d')
+        t_stat.saved['played'] = {gid_s: {'secs': 5400, 'last': int(time.time())}}
+        t_stat.saved['sessions'] = {today: 1800}
+        sp = t_stat.stats_payload()
+        self.assertEqual((sp['total_secs'], sp['week_secs'], sp['played_count'], len(sp['days'])), (5400, 1800, 1, 7))
+        self.assertEqual(sp['top_games'][0]['id'], gid_s)
 
 
 if __name__ == '__main__':

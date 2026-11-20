@@ -1,46 +1,150 @@
-<!doctype html><html lang="de"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Toravo Tandem</title>
+<!doctype html><html lang="de"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Toravo Tandem</title>
 <style>
-/* Toravo Studio look (tokens from toravo-os/brand/tokens.css): near-black with a violet tint, Inter, tracked micro labels. */
-:root{--bg:#07070d;--bg2:#0c0c14;--panel:#12111c;--panel2:#181626;--line:#24213a;--text:#f2f2f7;--text2:#a9a8bd;--text3:#9491ad;
- --violet:#8a5cf6;--coral:#d8806a;--green:#4cc38a;--grad:linear-gradient(90deg,#8a5cf6 0%,#6f9be0 55%,#5ab0d0 100%);--r:12px}
-*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:84px;color-scheme:dark;scrollbar-color:var(--line) var(--bg);background:var(--bg);color:var(--text)}
-::selection{background:rgba(138,92,246,.32);color:var(--text)}
-body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 Inter,"Inter Variable",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
-header{position:sticky;top:0;z-index:5;height:72px;display:flex;align-items:center;gap:28px;padding:0 max(16px,5vw);background:rgba(7,7,13,.92);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
-.mark{font-weight:700;letter-spacing:.32em;font-size:13px;white-space:nowrap}.mark i{font-style:normal;color:var(--violet)}
-nav{display:flex;gap:22px;overflow-x:auto;font-size:14px;scrollbar-width:none}nav a{color:var(--text2);text-decoration:none;white-space:nowrap;padding:8px 0}nav a:hover,nav a:focus-visible{color:#a47ef9}
-#live{margin-left:auto;display:flex;align-items:center;gap:8px;color:var(--text2);font-size:13px;white-space:nowrap}#live::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--text3)}#live.on::before{background:var(--green)}
-main{max-width:1120px;margin:0 auto;padding:28px max(16px,5vw) 96px;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,330px),1fr));gap:18px;align-items:start}
-section{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:22px}
-section.wide{grid-column:1/-1}
-h2{margin:0 0 14px;font-size:21px;line-height:1.25;font-weight:600;letter-spacing:-.015em}
-h3{margin:20px 0 12px;font-size:16px;font-weight:600}
+:root{
+ --bg:#07070d;--bg2:#0c0c15;--panel:#12111d;--panel2:#191728;--panel3:#211e34;--line:#26233d;--line2:#353055;
+ --text:#f3f3f8;--text2:#b5b3ca;--text3:#9693b2;--violet:#946ef8;--violet2:#7c52ec;--vink:#0b0717;
+ --coral:#e28771;--green:#4cc38a;--amber:#efb54d;--r:12px;--rs:8px
+}
+*{box-sizing:border-box}
+html{color-scheme:dark;scrollbar-color:var(--line2) var(--bg);background:var(--bg);color:var(--text)}
+::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-track{background:var(--bg)}::-webkit-scrollbar-thumb{background:var(--line2);border-radius:4px}
+::selection{background:rgba(148,110,248,.32);color:var(--text)}
+body{margin:0;min-height:100dvh;background:var(--bg);color:var(--text);font:15px/1.5 Inter,"Inter Variable",system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased}
+[hidden]{display:none!important}
+
+/* Shared forms & controls */
+h1{margin:0;font-size:24px;line-height:1.22;font-weight:650;letter-spacing:-.02em}
+h2{margin:0 0 14px;font-size:17px;line-height:1.3;font-weight:600;letter-spacing:-.01em}
+h3{margin:18px 0 10px;font-size:14px;font-weight:600;color:var(--text)}
 p{margin:0 0 12px;color:var(--text2)}p:last-child{margin-bottom:0}
-label{display:block;margin:14px 0 6px;font-size:13px;color:var(--text2)}label:first-of-type{margin-top:0}
-input,select,textarea,button{font:inherit;color:var(--text);width:100%;min-height:44px;padding:10px 12px;border-radius:8px;border:1px solid var(--line);background:var(--bg2);caret-color:var(--violet)}
+.lead{margin-top:4px;font-size:14px;color:var(--text2)}
+label{display:block;margin:14px 0 6px;font-size:13px;font-weight:500;color:var(--text2)}label:first-of-type{margin-top:0}
+input,select,textarea,button{font:inherit;color:var(--text);width:100%;min-height:42px;padding:9px 12px;border-radius:var(--rs);border:1px solid var(--line);background:var(--bg2);caret-color:var(--violet);transition:border-color .14s,background .14s}
 textarea{min-height:84px;resize:vertical;font:13px/1.45 "JetBrains Mono",ui-monospace,monospace}
-input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-visible,summary:focus-visible,a:focus-visible{outline:2px solid var(--violet);outline-offset:2px}
-input[type=range]{padding:0;min-height:32px;border:0;background:none;accent-color:var(--violet)}
-button{cursor:pointer;background:var(--panel2);font-weight:500}button:hover{border-color:var(--violet)}
-button.go{background:var(--violet);border-color:var(--violet);color:#0b0718;font-weight:600;margin-top:16px}button.warn{color:var(--coral)}
-.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-top:14px}.row:first-child{margin-top:0}.row button.go{margin-top:0}
-.slider{display:grid;grid-template-columns:1fr 3.2em;gap:12px;align-items:center}.slider output{font:13px "JetBrains Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums;color:var(--text2);text-align:right}
-.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px}.stat b{display:block;font-size:21px;font-weight:600;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.stat span{font-size:12px;color:var(--text3)}
-.bar{height:6px;border-radius:3px;background:var(--bg2);overflow:hidden;margin-top:8px}.bar i{display:block;height:100%;background:var(--grad)}
-#msg{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);max-width:min(92vw,520px);padding:12px 18px;border-radius:999px;background:var(--panel2);border:1px solid var(--violet);box-shadow:0 12px 40px #0009;opacity:0;pointer-events:none;transition:opacity .2s}
-#msg.show{opacity:1}
-.check{display:flex;align-items:center;gap:12px;margin:14px 0 0;color:var(--text);font-size:15px}.check input{width:22px;min-height:22px;accent-color:var(--violet)}
-.swatches{display:flex;flex-wrap:wrap;gap:10px;margin-top:6px}.swatches button{width:40px;min-height:40px;border-radius:50%;padding:0;border:2px solid var(--line)}.swatches button[aria-pressed=true]{border-color:var(--text);box-shadow:0 0 0 3px var(--bg),0 0 0 5px var(--text)}
-table{width:100%;border-collapse:collapse;font-size:14px}td{padding:8px 0;border-top:1px solid var(--line);vertical-align:top}td:last-child{text-align:right;white-space:nowrap;padding-left:12px;color:var(--text2);font-variant-numeric:tabular-nums}td small{display:block;color:var(--text3);font-size:12px}th{text-align:left;padding:16px 0 4px;font-size:12px;color:var(--text3);font-weight:600}
-details{margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}summary{cursor:pointer;font-size:13px;color:var(--text2);user-select:none}summary:hover{color:#a47ef9}details[open] summary{margin-bottom:10px;color:var(--text)}
+input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-visible,summary:focus-visible,a:focus-visible,.drop:focus-visible{outline:2px solid var(--violet);outline-offset:2px}
+input[type=range]{padding:0;min-height:30px;border:0;background:none;accent-color:var(--violet)}
+button{cursor:pointer;background:var(--panel2);font-weight:500;width:auto;display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:9px 15px}
+button:hover{border-color:var(--line2);background:var(--panel3)}
+button.full{width:100%}
+button.go,a.go{background:var(--violet);border:1px solid var(--violet);color:var(--vink);font-weight:600;text-decoration:none}
+button.go:hover,a.go:hover{background:#a383fa;border-color:#a383fa}
+button.warn{color:var(--coral)}button.warn:hover{border-color:rgba(226,135,113,.55)}
+.row{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}.row>*{flex:1 1 140px}
+.slider{display:grid;grid-template-columns:1fr 3.5em;gap:12px;align-items:center}
+.slider output,.num{font:13px/1 "JetBrains Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums;color:var(--text2);text-align:right}
+.check{display:flex;align-items:center;gap:11px;margin:13px 0 0;color:var(--text);font-size:14px;cursor:pointer}
+.check input{width:20px;min-height:20px;margin:0;flex:none;accent-color:var(--violet)}
+
+/* Segmented controls */
+.seg{display:grid;grid-template-columns:repeat(auto-fit,minmax(72px,1fr));gap:4px;padding:4px;border-radius:10px;background:var(--bg2);border:1px solid var(--line)}
+.seg button{min-height:36px;padding:6px 10px;border:0;border-radius:7px;background:transparent;color:var(--text2);font-size:13px;font-weight:550;width:100%}
+.seg button:hover{color:var(--text);background:rgba(255,255,255,.04)}
+.seg button[aria-pressed=true]{background:var(--violet);color:var(--vink);font-weight:650}
+
+/* PIN Login Shell */
+.pin-top{min-height:64px;display:flex;align-items:center;padding:14px 24px;border-bottom:1px solid var(--line);background:var(--bg2)}
+.mark{font-weight:700;letter-spacing:.26em;font-size:12px;white-space:nowrap;color:var(--text)}.mark i{font-style:normal;color:var(--violet);margin:0 2px}
+.login{max-width:420px;margin:10vh auto 0;padding:0 16px}
+.login .card{padding:26px}.login b{color:var(--coral)}
+.login button.go{width:100%;margin-top:16px}
+
+/* App Shell */
+.shell{display:grid;grid-template-columns:248px minmax(0,1fr);min-height:100dvh}
+.side{position:sticky;top:0;height:100dvh;display:flex;flex-direction:column;padding:20px 14px;background:var(--bg2);border-right:1px solid var(--line)}
+.brand{display:flex;align-items:center;justify-content:space-between;padding:4px 10px 18px;border-bottom:1px solid var(--line);margin-bottom:14px}
+.live{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--text2);font-variant-numeric:tabular-nums}
+.live::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--text3)}
+.live.on::before{background:var(--green);box-shadow:0 0 0 3px rgba(76,195,138,.16)}
+.snav{display:flex;flex-direction:column;gap:4px}
+.snav a{display:flex;align-items:center;gap:11px;padding:10px 12px;border-radius:9px;color:var(--text2);text-decoration:none;font-size:14px;font-weight:500;transition:background .14s,color .14s}
+.snav a svg{width:18px;height:18px;flex:none;stroke:currentColor;fill:none;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}
+.snav a:hover{color:var(--text);background:rgba(255,255,255,.04)}
+.snav a[aria-current=page]{background:var(--panel2);color:var(--text);border:1px solid var(--line2);padding:9px 11px;font-weight:600}
+.snav a[aria-current=page] svg{color:var(--violet)}
+.sfoot{margin-top:auto;padding:14px 10px 4px;border-top:1px solid var(--line);font-size:12px;color:var(--text3);display:flex;flex-direction:column;gap:4px;font-variant-numeric:tabular-nums}
+.sfoot strong{color:var(--text2);font-weight:600}
+
+.content{max-width:1080px;width:100%;margin:0 auto;padding:30px clamp(16px,3.5vw,42px) 96px}
+.head{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:14px;margin-bottom:22px;padding-bottom:18px;border-bottom:1px solid var(--line)}
+.grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:16px;align-items:start}
+.card{grid-column:span 6;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:20px}
+.card.w12{grid-column:1/-1}.card.w7{grid-column:span 7}.card.w5{grid-column:span 5}
+
+/* Session banner & KPI strip */
+.runbar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:14px;padding:16px 20px;border-radius:var(--r);background:var(--panel2);border:1px solid var(--line2);margin-bottom:16px}
+.runbar .rtitle{font-size:16px;font-weight:600;color:var(--text)}
+.runbar .rsub{font-size:13px;color:var(--text2);margin-top:2px}
+.runbar .racts{display:flex;gap:8px;flex-wrap:wrap}
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:16px}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:16px 18px}
+.kpi b{display:block;font-size:24px;line-height:1.15;font-weight:650;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.kpi span{display:block;margin-top:5px;font-size:12px;color:var(--text3)}
+.bar{height:6px;border-radius:3px;background:var(--bg2);overflow:hidden;margin-top:9px}
+.bar i{display:block;height:100%;border-radius:3px;background:var(--violet)}
+
+/* 7-day chart & Top games */
+.chart{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:10px;height:168px;align-items:end;padding-top:18px}
+.dcol{display:flex;flex-direction:column;align-items:center;gap:6px;height:100%;justify-content:flex-end}
+.dval{font-size:11px;color:var(--text3);font-variant-numeric:tabular-nums;white-space:nowrap}
+.dtrack{width:100%;max-width:38px;height:108px;border-radius:7px;background:var(--bg2);border:1px solid var(--line);display:flex;align-items:flex-end;padding:2px}
+.dfill{width:100%;border-radius:5px;background:var(--violet);min-height:3px;transition:height .2s}
+.dfill.zero{background:transparent;min-height:0}
+.dlbl{font-size:12px;color:var(--text2);font-variant-numeric:tabular-nums}
+.glist{display:flex;flex-direction:column;gap:11px}
+.grow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 12px;align-items:baseline}
+.grow b{font-size:14px;font-weight:550;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.grow em{font-style:normal;font-size:13px;color:var(--text2);font-variant-numeric:tabular-nums}
+.grow small{grid-column:1/-1;font-size:12px;color:var(--text3);margin-top:-3px}
+.grow .bar{grid-column:1/-1;margin-top:2px;height:5px}
+
+/* Swatches, Tables, Upload, QR, Controller Diagram */
+.swatches{display:flex;flex-wrap:wrap;gap:9px;margin-top:8px}
+.swatches button{width:36px;min-height:36px;height:36px;border-radius:50%;padding:0;border:2px solid var(--line)}
+.swatches button[aria-pressed=true]{border-color:var(--text);box-shadow:0 0 0 3px var(--panel),0 0 0 5px var(--violet)}
+table{width:100%;border-collapse:collapse;font-size:14px}
+td{padding:9px 0;border-top:1px solid var(--line);vertical-align:top}
+td:last-child{text-align:right;white-space:nowrap;padding-left:14px;color:var(--text2);font-variant-numeric:tabular-nums}
+td small{display:block;color:var(--text3);font-size:12px;margin-top:1px}
+th{text-align:left;padding:14px 0 5px;font-size:12px;color:var(--text3);font-weight:600}
+tr:first-child th{padding-top:2px}
+details{margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
+summary{cursor:pointer;font-size:13px;font-weight:500;color:var(--text2);user-select:none}
+summary:hover{color:var(--text)}details[open] summary{margin-bottom:10px;color:var(--text)}
+.drop{margin-top:12px;padding:24px 16px;border:1.5px dashed var(--line2);border-radius:10px;background:var(--bg2);text-align:center;color:var(--text2);cursor:pointer;transition:border-color .15s,background .15s}
+.drop:hover,.drop.over{border-color:var(--violet);background:var(--panel2);color:var(--text)}
+.drop strong{display:block;color:var(--text);font-size:14px;margin-bottom:3px}
 .qrbox{margin-top:16px;padding:16px;border-radius:10px;border:1px solid var(--line);background:var(--bg2);display:grid;grid-template-columns:136px 1fr;gap:16px;align-items:center}
-.qrbox[hidden]{display:none}.qrsvg{width:136px;height:136px;border-radius:8px;overflow:hidden;background:#fff;padding:6px}.qrsvg svg{display:block;width:100%;height:100%}
+.qrsvg{width:136px;height:136px;border-radius:8px;overflow:hidden;background:#fff;padding:6px}.qrsvg svg{display:block;width:100%;height:100%}
 .qcode{display:inline-block;margin:6px 0 10px;padding:6px 12px;border-radius:8px;background:var(--panel2);border:1px solid var(--line);font:700 18px/1.3 "JetBrains Mono",ui-monospace,monospace;letter-spacing:.06em;color:var(--text)}
-a.go{display:inline-flex;align-items:center;justify-content:center;width:100%;min-height:44px;padding:10px 14px;border-radius:8px;background:var(--violet);color:#0b0718;font-weight:600;text-decoration:none}
-@media(max-width:480px){.qrbox{grid-template-columns:1fr;justify-items:center;text-align:center}}
-.login{max-width:420px;margin:12vh auto 0;padding:0 16px}.login b{color:var(--coral)}
-@media(max-width:640px){header{gap:14px}.mark{letter-spacing:.2em}#live span{display:none}}
-@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}#msg{transition:none}}
+.padmap{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:14px 0}
+.padcell{padding:11px 13px;border-radius:9px;background:var(--bg2);border:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:8px}
+.padcell kbd{display:inline-flex;align-items:center;justify-content:center;min-width:28px;height:28px;padding:0 8px;border-radius:999px;background:var(--panel2);border:1px solid var(--line2);font:650 13px/1 Inter,sans-serif;color:var(--text)}
+.padcell.pri kbd{background:var(--violet);border-color:var(--violet);color:var(--vink)}
+.padcell span{font-size:13px;color:var(--text2);text-align:right}
+.subtabs{display:flex;gap:6px;margin-bottom:16px;border-bottom:1px solid var(--line);padding-bottom:12px;overflow-x:auto}
+.subtabs button{min-height:36px;padding:6px 14px;border-radius:999px;font-size:13px}
+.subtabs button[aria-selected=true]{background:var(--violet);border-color:var(--violet);color:var(--vink);font-weight:600}
+
+#msg{position:fixed;right:24px;bottom:24px;z-index:20;max-width:min(90vw,420px);padding:11px 16px;border-radius:10px;background:var(--panel2);border:1px solid var(--violet);box-shadow:0 12px 34px rgba(0,0,0,.55);opacity:0;pointer-events:none;transition:opacity .18s}
+#msg.show{opacity:1}
+
+/* Responsive mobile dock */
+.mtop{display:none}
+@media(max-width:860px){
+ .shell{grid-template-columns:1fr}
+ .side{position:fixed;left:0;right:0;bottom:0;top:auto;height:auto;z-index:15;flex-direction:row;padding:6px 8px calc(6px + env(safe-area-inset-bottom));border-right:0;border-top:1px solid var(--line);background:rgba(12,12,21,.96);backdrop-filter:blur(10px)}
+ .brand,.sfoot{display:none}
+ .snav{flex-direction:row;width:100%;justify-content:space-around;gap:2px}
+ .snav a{flex-direction:column;gap:3px;padding:6px 4px;font-size:11px;border-radius:8px;flex:1;justify-content:center;text-align:center}
+ .snav a[aria-current=page]{padding:5px 3px}
+ .mtop{display:flex;align-items:center;justify-content:space-between;min-height:54px;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--bg2);position:sticky;top:0;z-index:10}
+ .content{padding:20px 16px 104px}
+ .kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .card,.card.w7,.card.w5{grid-column:1/-1}
+ #msg{left:16px;right:16px;bottom:78px;max-width:none}
+}
+@media(max-width:480px){.qrbox,.padmap{grid-template-columns:1fr}.qrbox{justify-items:center;text-align:center}}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 <script>
 // English page when Tandem's language is English: the native front end's table (ui/en.json, see ui/lang.py), applied to every text the page shows
@@ -49,194 +153,414 @@ if('__LANG__'=='en'){const E=__EN__,R=E.rules.map(([p,t])=>[new RegExp('^(?:'+p+
   for(const[r,t]of R){const m=s.match(r);if(m)return t.replace(/\{(\d)\}/g,(_,n)=>tr(m[n]||''))}return s};
  const walk=n=>{if(n.nodeType==3){const t=tr(n.data);if(t!=n.data)n.data=t;return}if(n.nodeType!=1||n.tagName=='SCRIPT'||n.tagName=='STYLE')return;
   for(const a of['aria-label','title','data-ask','placeholder']){const v=n.getAttribute(a),t=v&&tr(v);if(t&&t!=v)n.setAttribute(a,t)}n.childNodes.forEach(walk)};
- document.documentElement.lang='en';addEventListener('DOMContentLoaded',()=>{walk(document.body);  // later texts (load(), say()) too; translated ones do not match again, so this settles
+ document.documentElement.lang='en';addEventListener('DOMContentLoaded',()=>{walk(document.body);
   new MutationObserver(ms=>ms.forEach(m=>m.type=='characterData'?walk(m.target):m.addedNodes.forEach(walk))).observe(document.body,{subtree:true,childList:true,characterData:true})})}
 </script>
 <!--SPLIT-->
-<header><div class="mark">TORAVO<i>/</i>TANDEM</div></header>
-<div class="login"><section><h2>Mit dem Thor verbinden</h2>
-<p>Die PIN steht auf dem Thor unter „System“. Danach bleibt dieses Gerät ein Jahr angemeldet.</p>__MSG__
-<form method="post"><label for="pin">PIN vom Thor</label><input id="pin" name="pin" inputmode="numeric" autocomplete="off" required autofocus><button class="go">Anmelden</button></form></section></div>
+<header class="pin-top"><div class="mark">TORAVO<i>/</i>TANDEM</div></header>
+<div class="login"><div class="card"><h1>Mit dem Thor verbinden</h1>
+<p class="lead">Die einmalige PIN findest du auf dem Thor unter „Einstellungen › WLAN &amp; Netzwerk“. Danach bleibt dieser Browser ein Jahr angemeldet.</p>__MSG__
+<form method="post"><label for="pin">6-stellige PIN vom Thor</label><input id="pin" name="pin" inputmode="numeric" autocomplete="off" required autofocus><button class="go">Anmelden</button></form></div></div>
 <!--SPLIT-->
-<header><div class="mark">TORAVO<i>/</i>TANDEM</div>
-<nav aria-label="Bereiche"><a href="#bild">Bildschirme &amp; Ton</a><a href="#controller">Controller</a><a href="#licht">Beleuchtung</a><a href="#leistung">Leistung</a><a href="#netz">WLAN</a><a href="#konten">Konten</a><a href="#youtube">YouTube</a><a href="#aussehen">Aussehen</a><a href="#spiele">Bibliothek</a><a href="#updates">Updates</a><a href="#geraet">Gerät</a></nav>
-<div id="live"><span>verbinde …</span></div></header>
-<main>
-<section class="wide" id="uebersicht"><h2 id="st">–</h2><div class="stats" id="stats"></div></section>
+<div class="mtop"><div class="mark">TORAVO<i>/</i>TANDEM</div><div class="live" id="mlive"><span>verbinde …</span></div></div>
+<div class="shell">
+<aside class="side">
+ <div class="brand"><div class="mark">TORAVO<i>/</i>TANDEM</div><div class="live" id="live"><span>verbinde …</span></div></div>
+ <nav class="snav" aria-label="Hauptnavigation">
+  <a href="#uebersicht" data-go="uebersicht" aria-current="page"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="2"/><rect x="13" y="3" width="8" height="5" rx="2"/><rect x="13" y="10" width="8" height="11" rx="2"/><rect x="3" y="13" width="8" height="8" rx="2"/></svg><span>Übersicht</span></a>
+  <a href="#bibliothek" data-go="bibliothek"><svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg><span>Bibliothek</span></a>
+  <a href="#anzeige" data-go="anzeige"><svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="8" rx="2"/><rect x="4" y="13" width="16" height="8" rx="2"/></svg><span>Anzeige &amp; Ton</span></a>
+  <a href="#controller" data-go="controller"><svg viewBox="0 0 24 24"><path d="M6 8h12a4 4 0 0 1 4 4v2a3 3 0 0 1-5.4 1.8L15 14H9l-1.6 1.8A3 3 0 0 1 2 14v-2a4 4 0 0 1 4-4z"/><path d="M7.5 10.5v3M6 12h3"/><circle cx="16.5" cy="11" r=".9" fill="currentColor"/><circle cx="18.2" cy="12.7" r=".9" fill="currentColor"/></svg><span>Controller</span></a>
+  <a href="#konten" data-go="konten"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4.5 20a7.5 7.5 0 0 1 15 0"/></svg><span>Konten</span></a>
+  <a href="#system" data-go="system"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3h.1a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8v.1a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span>System</span></a>
+ </nav>
+ <div class="sfoot"><strong id="sidebat">AYN Thor</strong><span id="sidever">Tandem</span></div>
+</aside>
 
-<section id="bild"><h2>Helligkeit und Lautstärke</h2>
-<label for="bt">Oberer Bildschirm</label><div class="slider"><input type="range" id="bt" max="100"><output for="bt"></output></div>
-<label for="bb">Unterer Bildschirm</label><div class="slider"><input type="range" id="bb" max="100"><output for="bb"></output></div>
-<label for="vol">Lautstärke</label><div class="slider"><input type="range" id="vol" max="100"><output for="vol"></output></div>
-<label for="night">Nachtmodus (Blaulichtfilter)</label><select id="night"><option value="off">Aus</option><option value="warm">Warm</option><option value="night">Nacht</option></select>
-<label for="rest">Ruheschutz (OLED): Bildschirme schwarz nach</label><select id="rest"><option value="0">nie</option><option value="1">1 Minute</option><option value="3">3 Minuten</option><option value="10">10 Minuten</option></select>
-<label class="check"><input type="checkbox" id="lid"> Beim Zuklappen in Standby</label>
-<label for="cstby">Am Ladegerät</label><select id="cstby"><option value="doze">Erreichbar</option><option value="sleep">Tiefschlaf</option></select></section>
+<main class="content">
+ <!-- PANE 1: ÜBERSICHT -->
+ <div class="pane" id="pane-uebersicht" data-pane="uebersicht">
+  <div class="head"><div><h1>Übersicht</h1><p class="lead">Live-Zustand, Spielzeit der letzten 7 Tage und Speicherplatz auf deinem Thor.</p></div></div>
+  <div class="runbar"><div class="rinfo"><div class="rtitle" id="st">Verbinde mit dem Thor …</div><div class="rsub" id="stsub">Bereit</div></div>
+   <div class="racts"><button id="quitbtn" data-post="quit" hidden>Spiel beenden</button><button data-post="action" data-name="suspend">Standby</button></div></div>
+  <div class="kpis" id="kpis"></div>
+  <div class="grid">
+   <section class="card w7"><h2>Letzte 7 Tage</h2><div class="chart" id="wchart"></div></section>
+   <section class="card w5"><h2>Speicher &amp; Funk</h2><div class="glist" id="stores"></div></section>
+   <section class="card"><h2>Meistgespielt</h2><div class="glist" id="topgames"></div></section>
+   <section class="card"><h2>Zuletzt gestartet</h2><div class="glist" id="recgames"></div></section>
+  </div>
+ </div>
 
-<section id="controller"><h2>Tastenbelegung</h2><p>Bestätigen ist immer A, zurück immer B – in Tandem, in jedem Emulator und in den Ports.</p>
-<table id="map"></table><p id="off" style="margin-top:14px">–</p><button id="ctrlgo">In allen Emulatoren angleichen</button>
-<label class="check" id="gyrorow" hidden><input type="checkbox" id="gyro"> Gyro (Bewegungssensor)</label>
-<label for="kb">Bildschirmtastatur</label><select id="kb"><option value="de">Deutsch</option><option value="us">Englisch (US)</option></select></section>
+ <!-- PANE 2: BIBLIOTHEK & UPLOAD -->
+ <div class="pane" id="pane-bibliothek" data-pane="bibliothek" hidden>
+  <div class="head"><div><h1>Bibliothek &amp; Spielstände</h1><p class="lead" id="lib">Spiele drahtlos übertragen, Cover aktualisieren und Spielstände sichern.</p></div>
+   <button data-post="rescan">Neu einlesen &amp; Cover laden</button></div>
+  <div class="grid">
+   <section class="card"><h2>Dateien drahtlos senden</h2>
+    <p>ROMs landen automatisch im passenden Systemordner auf der SD-Karte; Karten und Guides direkt beim gewählten Spiel.</p>
+    <label for="upkind">Was möchtest du senden?</label>
+    <select id="upkind"><option value="rom">ROM / Spiel</option><option value="guide">Karte / Guide zum Spiel</option><option value="pack">Begleiter-Paket (.zip)</option></select>
+    <div id="upsysbox"><label for="upsys">Ziel-System</label><select id="upsys"><option value="auto">Automatisch an Dateiendung erkennen</option></select></div>
+    <div id="upgamebox" hidden><label for="upgame">Zugehöriges Spiel</label><select id="upgame"></select></div>
+    <div class="drop" id="drop" tabindex="0" role="button"><strong>Dateien hierher ziehen oder antippen</strong><span>Mehrfachauswahl möglich · direkte Übertragung im Heimnetz</span><input type="file" id="upfile" hidden multiple></div>
+    <div class="bar" id="upbar" hidden><i id="upfill" style="width:0%"></i></div>
+   </section>
 
-<section id="licht"><h2>Stick-Ringe</h2><p id="rgbmsg">–</p><div id="rgbbox" hidden>
-<label class="check"><input type="checkbox" id="rgbon"> Beleuchtung an</label>
-<label>Farbe</label><div class="swatches" id="sw"></div>
-<label for="rgbl">Helligkeit</label><div class="slider"><input type="range" id="rgbl" max="100"><output for="rgbl"></output></div>
-<label class="check"><input type="checkbox" id="rgblink"> Mit dem Bildschirm heller und dunkler</label></div></section>
+   <section class="card"><h2>Spielstände sichern &amp; wiederherstellen</h2>
+    <p id="svmsg">Noch keine Sicherung.</p>
+    <label class="check"><input type="checkbox" id="svauto"> Nach jedem Spielende automatisch sichern</label>
+    <label for="svdst">Optionales SSH-Ziel (leer = nur auf Karte sichern)</label>
+    <input id="svdst" autocomplete="off" autocapitalize="off" placeholder="benutzer@server:~/backups/thor-saves">
+    <div class="row"><button id="svdstgo">Ziel speichern</button><button class="go" data-post="saves">Jetzt sichern</button></div>
+    <div id="svrestbox" hidden>
+     <h3>Zeitkapsel wiederherstellen</h3>
+     <p>Vor dem Zurückspielen sichert Tandem deine aktuellen Stände automatisch.</p>
+     <label for="svsnap">Sicherungsarchiv</label><select id="svsnap"></select>
+     <button class="full" id="svrestgo" style="margin-top:10px">Ausgewähltes Archiv zurückspielen</button>
+    </div>
+   </section>
+  </div>
+ </div>
 
-<section id="leistung"><h2>Leistungsprofil</h2><select id="prof"></select>
-<p style="margin-top:12px">Sparsam: länger spielen, leiser. Ausgewogen: für fast alles. Leistung: volle Kraft für PS2, Switch und PC-Spiele.</p><div class="stats" id="pstats"></div></section>
+ <!-- PANE 3: ANZEIGE & TON -->
+ <div class="pane" id="pane-anzeige" data-pane="anzeige" hidden>
+  <div class="head"><div><h1>Anzeige, Ton &amp; Leistung</h1><p class="lead">Beide OLED-Bildschirme, FPS-Overlay, Leistungsprofil und Stick-Beleuchtung.</p></div></div>
+  <div class="grid">
+   <section class="card"><h2>Helligkeit &amp; Ton</h2>
+    <label for="bt">Oberer Bildschirm</label><div class="slider"><input type="range" id="bt" min="5" max="100"><output for="bt">–</output></div>
+    <label for="bb">Unterer Bildschirm</label><div class="slider"><input type="range" id="bb" min="5" max="100"><output for="bb">–</output></div>
+    <label for="vol">Lautstärke</label><div class="slider"><input type="range" id="vol" min="0" max="100"><output for="vol">–</output></div>
+    <label>Nachtmodus (Blaulichtfilter)</label>
+    <div class="seg" id="nightseg"><button type="button" data-v="off">Aus</button><button type="button" data-v="warm">Warm</button><button type="button" data-v="night">Nacht</button></div>
+    <label for="rest">Ruheschutz (OLED): Bildschirme schwarz nach</label>
+    <select id="rest"><option value="0">Nie</option><option value="1">1 Minute</option><option value="3">3 Minuten</option><option value="10">10 Minuten</option></select>
+   </section>
 
-<section id="netz"><h2>WLAN</h2><p id="wl">–</p>
-<label for="ssid">Netz</label><select id="ssid"></select>
-<label for="wp">Passwort (leer lassen bei bekanntem Netz)</label><input id="wp" type="password" autocomplete="off">
-<button class="go" id="wgo">Verbinden</button>
-<label for="own">Eigene Adresse dieser Seite (z. B. https://thor.example.de, leer = keine)</label><input id="own" type="url" autocomplete="off" autocapitalize="off" placeholder="https://">
-<button id="owngo">Adresse speichern</button></section>
+   <section class="card"><h2>FPS-Fenster &amp; Leistung</h2>
+    <label>FPS-Fenster auf dem oberen Bildschirm</label>
+    <div class="seg" id="hudseg"><button type="button" data-v="0">Aus</button><button type="button" data-v="1">FPS</button><button type="button" data-v="2">Leiste</button><button type="button" data-v="3">Graph</button></div>
+    <p style="margin-top:8px;font-size:13px">Auch jederzeit im Spiel über die Thor-Taste ein- und ausschaltbar.</p>
+    <label for="prof">Leistungsprofil</label><select id="prof"></select>
+    <div class="kpis" id="pstats" style="grid-template-columns:repeat(2,1fr);margin-top:14px;margin-bottom:0"></div>
+   </section>
 
-<section id="konten"><h2>RetroAchievements</h2><p id="ra">–</p>
-<label for="u">Benutzername</label><input id="u" autocomplete="username" autocapitalize="off">
-<label for="p">Passwort (nur zur Anmeldung, wird nicht gespeichert)</label><input id="p" type="password" autocomplete="current-password">
-<label for="k">Web-API-Schlüssel (für die Anzeige der Erfolge)</label><input id="k" autocomplete="off">
-<button class="go" id="rasave">Speichern und in allen Emulatoren anmelden</button>
-<h3>Battle.net (WoW Forever)</h3><p id="bn">–</p>
-<label for="be">E-Mail</label><input id="be" type="email" autocomplete="off" autocapitalize="off">
-<label for="bp">Passwort (bleibt nur auf dem Thor, wird nie wieder angezeigt)</label><input id="bp" type="password" autocomplete="off">
-<div class="row"><button class="go" id="bnsave">Speichern</button><button id="bnforget">Anmeldung vergessen</button></div></section>
+   <section class="card"><h2>Standby &amp; Zuklappen</h2>
+    <label class="check" style="margin-top:0"><input type="checkbox" id="lid"> Beim Zuklappen automatisch in Standby</label>
+    <label class="check"><input type="checkbox" id="lidmus"> Musik bei geschlossenem Deckel über Kopfhörer weiterspielen</label>
+    <label class="check"><input type="checkbox" id="dockdim"> Am USB-C-Monitor / TV eingebaute Bildschirme abdunkeln</label>
+    <label for="cstby">Standby am Ladegerät</label>
+    <select id="cstby"><option value="doze">Erreichbar (Downloads laufen weiter)</option><option value="sleep">Tiefschlaf</option></select>
+   </section>
 
-<section id="youtube"><h2>YouTube</h2><p id="yt">–</p>
-<p>Für Abos, Playlists und „Mag ich“ bequem über dieses Gerät oder per QR-Code anmelden – ohne Tippen auf dem Thor.</p>
-<div class="row"><button class="go" id="ytqrbtn">Per QR-Code / Link anmelden</button><button id="ytforget">Abmelden</button></div>
-<div class="qrbox" id="ytqrbox" hidden><div class="qrsvg" id="ytqrsvg"></div><div>
-<div style="font-size:13px;color:var(--text2)">Code für youtube.com/activate</div>
-<div class="qcode" id="ytqrcode">–</div>
-<a class="go" id="ytqrlink" href="https://www.youtube.com/activate" target="_blank" rel="noopener">Jetzt bei Google bestätigen ↗</a></div></div>
-<details><summary>Erweitert: Browser-Cookies oder eigener OAuth-Client</summary>
-<label for="yc">Browser-Cookies einfügen (cookies.txt oder JSON)</label><textarea id="yc" rows="3" spellcheck="false" autocomplete="off" placeholder="cookies.txt oder JSON"></textarea>
-<button id="ycsave" style="margin-top:10px">Cookies speichern</button>
-<label for="yi">Client-ID</label><input id="yi" autocomplete="off" autocapitalize="off">
-<label for="ys">Client-Secret</label><input id="ys" type="password" autocomplete="off">
-<button id="ytsave" style="margin-top:12px">Client speichern</button></details></section>
+   <section class="card"><h2>Oberfläche &amp; Stick-Ringe</h2>
+    <div class="row" style="margin-top:0">
+     <div><label for="theme">Thema</label><select id="theme"></select></div>
+     <div><label for="vmode">Bibliothek</label><select id="vmode"><option value="grid">Kacheln</option><option value="stage">Bühne</option></select></div>
+    </div>
+    <div class="row">
+     <div><label for="mot">Animationen</label><select id="mot"><option value="full">Flüssig</option><option value="reduced">Reduziert</option></select></div>
+     <div><label for="lang">Sprache / Language</label><select id="lang"><option value="de">Deutsch</option><option value="en">English</option></select></div>
+    </div>
+    <label class="check"><input type="checkbox" id="ovl"> Plattform-Rahmen (Cocoon)</label>
+    <div id="rgbwrap" style="margin-top:16px;padding-top:14px;border-top:1px solid var(--line)">
+     <p id="rgbmsg" style="font-size:13px">Stick-Beleuchtung</p>
+     <div id="rgbbox" hidden>
+      <label class="check"><input type="checkbox" id="rgbon"> Leuchtringe eingeschaltet</label>
+      <div class="swatches" id="sw"></div>
+      <label for="rgbl">Leuchtstärke</label><div class="slider"><input type="range" id="rgbl" max="100"><output for="rgbl">–</output></div>
+      <label class="check"><input type="checkbox" id="rgblink"> Mit Bildschirmhelligkeit koppeln</label>
+     </div>
+    </div>
+   </section>
+  </div>
+ </div>
 
-<section id="aussehen"><h2>Aussehen</h2><label for="theme">Farben und Stil der Oberfläche</label><select id="theme"></select>
-<label for="vmode">Ansicht</label><select id="vmode"><option value="grid">Kacheln</option><option value="stage">Bühne</option></select>
-<label class="check"><input type="checkbox" id="ovl"> Plattform-Rahmen (Cocoon)</label>
-<label for="mot">Animationen</label><select id="mot"><option value="full">Flüssig</option><option value="reduced">Reduziert</option></select>
-<label for="lang">Sprache / Language</label><select id="lang"><option value="de">Deutsch</option><option value="en">English</option></select></section>
+ <!-- PANE 4: CONTROLLER -->
+ <div class="pane" id="pane-controller" data-pane="controller" hidden>
+  <div class="head"><div><h1>Einheitliche Steuerung</h1><p class="lead">Ein festes Tasten-Layout über alle Plattformen – von Super Nintendo und PlayStation bis Wii U und Switch.</p></div></div>
+  <div class="grid">
+   <section class="card"><h2>Tasten-Stil auf allen Systemen</h2>
+    <div class="seg" id="cstyleseg">
+     <button type="button" data-v="thor">Thor-Aufdruck (A rechts)</button>
+     <button type="button" data-v="xbox">Xbox-Stil (Unten)</button>
+    </div>
+    <div class="padmap" id="padmap"></div>
+    <p id="off" style="font-size:13px">Prüfe Emulatoren …</p>
+    <button class="go full" id="ctrlgo" style="margin-top:8px">In allen Emulatoren angleichen</button>
+   </section>
 
-<section id="spiele"><h2>Spiele</h2><p id="lib">–</p><p>Spiele gehören in einen Ordner „ROMs“ auf der Karte oder im Gerät, je System ein Unterordner.</p>
-<div class="row"><button data-post="rescan">Neu einlesen und Cover laden</button><button data-post="quit">Laufendes Spiel beenden</button></div>
-<h3>Spielstände sichern</h3><p id="svmsg">–</p>
-<label class="check"><input type="checkbox" id="svauto"> Automatisch sichern</label>
-<label for="svdst">Sicherungsziel (SSH, leer = nur Karte)</label><input id="svdst" autocomplete="off" autocapitalize="off">
-<div class="row"><button id="svdstgo">Ziel speichern</button><button class="go" data-post="saves">Spielstände jetzt sichern</button></div></section>
+   <section class="card"><h2>Sensor &amp; Bildschirmtastatur</h2>
+    <label class="check" id="gyrorow" style="margin-top:0" hidden><input type="checkbox" id="gyro"> Gyro-Bewegungssensor aktivieren</label>
+    <label for="kb">Sprache der Bildschirmtastatur</label>
+    <select id="kb"><option value="de">Deutsch (QWERTZ)</option><option value="us">Englisch (QWERTY)</option></select>
+    <label class="check"><input type="checkbox" id="kbhap"> Haptisches Klicken beim Tippen auf dem Touchscreen</label>
+   </section>
 
-<section id="updates"><h2>Updates</h2><p id="ver">–</p>
-<label for="src">Update-Quelle (leer = keine)</label><input id="src" type="url" autocomplete="off" autocapitalize="off" placeholder="https://">
-<div class="row"><button id="srcgo">Quelle speichern</button><button id="upcheck">Nach Update suchen</button><button id="upgo" hidden>Jetzt installieren</button></div>
-<label for="eden">Switch-Emulator (Eden)</label><select id="eden"><option value="eden">Stabile Fassung</option><option value="eden-nightly">Nightly (Tagesstand)</option></select>
-<button class="go" id="edengo">Installieren oder aktualisieren</button></section>
+   <section class="card w12"><h2>Übersicht &amp; Emulator-Kürzel</h2><table id="map"></table></section>
+  </div>
+ </div>
 
-<section id="geraet"><h2>Über den Thor</h2><div class="stats" id="about"></div>
-<h3>Ein und aus</h3>
-<div class="row"><button data-post="action" data-name="suspend">Standby</button><button data-post="action" data-name="sleep">Tiefschlaf</button><button class="warn" data-post="action" data-name="reboot" data-ask="Den Thor neu starten?">Neustart</button>
-<button class="warn" data-post="action" data-name="poweroff" data-ask="Den Thor ausschalten?">Ausschalten</button></div></section>
+ <!-- PANE 5: KONTEN -->
+ <div class="pane" id="pane-konten" data-pane="konten" hidden>
+  <div class="head"><div><h1>Konten</h1><p class="lead">Anmeldungen bequem am Handy oder PC einrichten – ohne Tippen auf dem Handheld.</p></div></div>
+  <div class="subtabs" role="tablist">
+   <button type="button" role="tab" data-acct="yt" aria-selected="true">YouTube</button>
+   <button type="button" role="tab" data-acct="ra" aria-selected="false">RetroAchievements</button>
+   <button type="button" role="tab" data-acct="bn" aria-selected="false">Battle.net</button>
+  </div>
 
-<section><h2>Dieser Browser</h2><p>Bleibt ein Jahr angemeldet, auch nach einem Neustart des Thor.</p>
-<div class="row"><button data-post="logout">Dieses Gerät abmelden</button><button class="warn" data-post="logout-all" data-ask="Wirklich alle Geräte abmelden?">Alle Geräte abmelden</button></div></section>
+  <section class="card" id="acct-yt"><h2>YouTube per QR-Code verbinden</h2>
+   <p id="yt">Noch nicht angemeldet.</p>
+   <p>Schaltet deine Abos, Playlists und „Mag ich“-Videos in der Tandem-YouTube-App frei.</p>
+   <div class="row"><button class="go" id="ytqrbtn">QR-Code &amp; Anmeldelink anzeigen</button><button id="ytforget">Abmelden</button></div>
+   <div class="qrbox" id="ytqrbox" hidden><div class="qrsvg" id="ytqrsvg"></div><div>
+    <div style="font-size:13px;color:var(--text2)">Code für youtube.com/activate</div>
+    <div class="qcode" id="ytqrcode">–</div>
+    <a class="go full" id="ytqrlink" href="https://www.youtube.com/activate" target="_blank" rel="noopener">Bei Google bestätigen ↗</a></div></div>
+   <details><summary>Erweitert: Browser-Cookies oder eigener OAuth-Client</summary>
+    <label for="yc">Browser-Cookies einfügen (cookies.txt oder JSON)</label><textarea id="yc" rows="3" spellcheck="false" autocomplete="off" placeholder="cookies.txt oder JSON"></textarea>
+    <button id="ycsave" style="margin-top:10px">Cookies speichern</button>
+    <label for="yi">Client-ID</label><input id="yi" autocomplete="off" autocapitalize="off">
+    <label for="ys">Client-Secret</label><input id="ys" type="password" autocomplete="off">
+    <button id="ytsave" style="margin-top:10px">Client speichern</button></details>
+  </section>
+
+  <section class="card" id="acct-ra" hidden><h2>RetroAchievements</h2>
+   <p id="ra">Noch nicht angemeldet.</p>
+   <label for="u">Benutzername</label><input id="u" autocomplete="username" autocapitalize="off">
+   <label for="p">Passwort (wird nur zum Abrufen des Tokens genutzt, nie gespeichert)</label><input id="p" type="password" autocomplete="current-password">
+   <label for="k">Web-API-Schlüssel (für die Live-Anzeige deiner Erfolge)</label><input id="k" autocomplete="off">
+   <button class="go full" id="rasave" style="margin-top:16px">Speichern &amp; Emulatoren anmelden</button>
+  </section>
+
+  <section class="card" id="acct-bn" hidden><h2>Battle.net (WoW Forever)</h2>
+   <p id="bn">Noch nicht hinterlegt.</p>
+   <label for="be">E-Mail</label><input id="be" type="email" autocomplete="off" autocapitalize="off">
+   <label for="bp">Passwort (bleibt verschlüsselt geschützt nur auf dem Thor)</label><input id="bp" type="password" autocomplete="off">
+   <div class="row"><button class="go" id="bnsave">Speichern</button><button id="bnforget">Anmeldung löschen</button></div>
+  </section>
+ </div>
+
+ <!-- PANE 6: SYSTEM -->
+ <div class="pane" id="pane-system" data-pane="system" hidden>
+  <div class="head"><div><h1>System &amp; Netzwerk</h1><p class="lead">WLAN, PC-Streaming (Wake-on-LAN), Updates und Energieoptionen.</p></div></div>
+  <div class="grid">
+   <section class="card"><h2>WLAN &amp; Fernzugriff</h2>
+    <p id="wl">–</p>
+    <label for="ssid">Netzwerk</label><select id="ssid"></select>
+    <label for="wp">Passwort (leer lassen bei bekanntem Netz)</label><input id="wp" type="password" autocomplete="off">
+    <button class="go full" id="wgo" style="margin-top:12px">Mit WLAN verbinden</button>
+    <label for="own">Eigene HTTPS-Adresse dieser Seite (optional)</label><input id="own" type="url" autocomplete="off" autocapitalize="off" placeholder="https://thor.example.de">
+    <button class="full" id="owngo" style="margin-top:10px">Adresse speichern</button>
+   </section>
+
+   <section class="card"><h2>PC-Streaming &amp; Updates</h2>
+    <label for="wolmac">Gaming-PC MAC-Adresse (Wake-on-LAN für Moonlight)</label>
+    <input id="wolmac" autocomplete="off" autocapitalize="off" placeholder="AA:BB:CC:DD:EE:FF">
+    <div class="row"><button id="wolsave">MAC speichern</button><button class="go" id="wolgo">PC aufwecken</button></div>
+    <h3>Updates</h3><p id="ver" style="font-size:13px">–</p>
+    <label for="src">Update-Quelle (leer = GitHub-Standard)</label><input id="src" type="url" autocomplete="off" autocapitalize="off" placeholder="https://">
+    <div class="row"><button id="srcgo">Quelle speichern</button><button id="upcheck">Update prüfen</button><button class="go" id="upgo" hidden>Jetzt installieren</button></div>
+    <label for="eden">Switch-Emulator (Eden)</label><select id="eden"><option value="eden">Stabile Fassung</option><option value="eden-nightly">Nightly (Tagesstand)</option></select>
+    <button class="full" id="edengo" style="margin-top:10px">Eden installieren / aktualisieren</button>
+   </section>
+
+   <section class="card"><h2>Gerät &amp; Ein/Aus</h2>
+    <div class="kpis" id="about" style="grid-template-columns:repeat(3,1fr);margin-bottom:14px"></div>
+    <div class="row"><button data-post="action" data-name="suspend">Standby</button><button data-post="action" data-name="sleep">Tiefschlaf</button>
+     <button class="warn" data-post="action" data-name="reboot" data-ask="Den Thor jetzt neu starten?">Neustart</button>
+     <button class="warn" data-post="action" data-name="poweroff" data-ask="Den Thor ausschalten?">Ausschalten</button></div>
+   </section>
+
+   <section class="card"><h2>Dieser Browser</h2>
+    <p>Dieser Browser bleibt ein Jahr angemeldet, auch wenn der Thor neu startet.</p>
+    <div class="row"><button data-post="logout">Dieses Gerät abmelden</button><button class="warn" data-post="logout-all" data-ask="Wirklich alle angemeldeten Browser abmelden?">Alle abmelden</button></div>
+   </section>
+  </div>
+ </div>
 </main>
+</div>
 <div id="msg" role="status"></div>
 <script>
 const $=id=>document.getElementById(id),gb=n=>Math.round(n/1e9)+' GB',esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-let hide;const say=t=>{if(!t)return;$('msg').textContent=t;$('msg').classList.add('show');clearTimeout(hide);hide=setTimeout(()=>$('msg').classList.remove('show'),3500)};
+const fmtTime=s=>{s=+s||0;if(s<=0)return'0 Min.';return s>=3600?(Math.round(s/360)/10)+' Std.':Math.max(1,Math.round(s/60))+' Min.'};
+let hide;const say=t=>{if(!t)return;$('msg').textContent=t;$('msg').classList.add('show');clearTimeout(hide);hide=setTimeout(()=>$('msg').classList.remove('show'),3400)};
 const post=(what,body)=>fetch('api/'+what,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}).then(r=>r.status==401?location.reload():r.json())
-  .then(d=>{say(d&&d.error?d.error:(d&&d.text)||'Erledigt.');return d}).catch(()=>say('Der Thor antwortet nicht.'));
-const stat=(big,small,part)=>`<div class="stat"><b>${esc(big)}</b><span>${esc(small)}</span>${part==null?'':`<div class="bar"><i style="width:${Math.round(part*100)}%"></i></div>`}</div>`;
+ .then(d=>{say(d&&d.error?d.error:(d&&d.text)||'Gespeichert.');return d}).catch(()=>say('Der Thor antwortet nicht.'));
+const kpi=(big,small,part)=>`<div class="kpi"><b>${esc(big)}</b><span>${esc(small)}</span>${part==null?'':`<div class="bar"><i style="width:${Math.max(0,Math.min(100,Math.round(part*100)))}%"></i></div>`}</div>`;
+
+// Multi-view router (only one pane visible at a time)
+const PANES=['uebersicht','bibliothek','anzeige','controller','konten','system'];
+function showPane(id){
+ if(!PANES.includes(id))id='uebersicht';
+ for(const p of document.querySelectorAll('.pane'))p.hidden=p.dataset.pane!==id;
+ for(const a of document.querySelectorAll('.snav a')){if(a.dataset.go===id)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current')}
+}
+addEventListener('hashchange',()=>showPane(location.hash.slice(1)));
+if(location.hash)showPane(location.hash.slice(1));
+
+// Accounts sub-tabs
+for(const b of document.querySelectorAll('[data-acct]'))b.onclick=()=>{
+ const k=b.dataset.acct;
+ for(const x of document.querySelectorAll('[data-acct]'))x.setAttribute('aria-selected',x===b);
+ for(const s of['yt','ra','bn'])$('acct-'+s).hidden=s!==k;
+};
+
+function setSeg(id,val){for(const b of $(id).children)b.setAttribute('aria-pressed',String(b.dataset.v)===String(val))}
+function renderPad(style){
+ const xbox=style==='xbox';
+ $('padmap').innerHTML=xbox
+  ?`<div class="padcell pri"><kbd>B unten</kbd><span>Bestätigen / Hauptaktion</span></div><div class="padcell"><kbd>A rechts</kbd><span>Zurück / Abbrechen</span></div><div class="padcell"><kbd>X oben</kbd><span>Nord-Aktion (Dreieck / X)</span></div><div class="padcell"><kbd>Y links</kbd><span>West-Aktion (Viereck / Y)</span></div>`
+  :`<div class="padcell pri"><kbd>A rechts</kbd><span>Bestätigen (auch PS-Kreuz)</span></div><div class="padcell"><kbd>B unten</kbd><span>Zurück (auch PS-Kreis)</span></div><div class="padcell"><kbd>X oben</kbd><span>Nord-Aktion (Dreieck / X)</span></div><div class="padcell"><kbd>Y links</kbd><span>West-Aktion (Viereck / Y)</span></div>`;
+}
+
 function load(){fetch('api/all').then(r=>r.status==401?location.reload():r.json()).then(d=>{
-  $('live').className='on';$('live').firstChild.textContent='verbunden';
-  for(const k of['bt','bb','vol']){const e=$(k),v=d.settings[k];e.disabled=v==null;if(v!=null&&document.activeElement!=e)e.value=v;e.nextElementSibling.textContent=v==null?'–':e.value+' %'}
-  $('st').textContent=d.run?'Läuft gerade: '+d.run:'Kein Spiel läuft';
-  $('stats').innerHTML=stat(d.games,'Spiele in der Bibliothek')+(d.battery?stat(d.battery.level+' %',d.battery.charging?'Akku, lädt':'Akku',d.battery.level/100):'')
-    +d.system.storage.map(s=>stat(gb(s.free)+' frei',s.name+' · '+gb(s.total),1-s.free/s.total)).join('')+stat(d.system.ssid||'offline','WLAN');
-  $('lib').textContent=d.games+' Spiele gefunden. Neu einlesen sucht auch fehlende Cover.';
-  $('yt').textContent=d.config.yt_set?'Angemeldet auf dem Thor.':d.config.yt_oauth?'OAuth-Client hinterlegt (noch nicht angemeldet).':'Noch nicht angemeldet.';
-  if(d.config.yt_set)$('ytqrbox').hidden=true;
-  $('bn').textContent=d.config.bnet_set?'Hinterlegt. WoW Forever meldet sich beim Start selbst an.':'Noch nicht hinterlegt.'+(secure()?'':' Eintragen geht nur über die https-Adresse.');
-  $('ra').textContent=d.config.ra_login?'Angemeldet als '+d.config.ra_user+'.':'Noch nicht angemeldet.'+(d.config.ra_key_set?' Der Web-API-Schlüssel ist hinterlegt.':'');
-  if(document.activeElement!=$('u')&&!$('u').value)$('u').value=d.config.ra_user;if(document.activeElement!=$('kb'))$('kb').value=d.layout;
-  if(document.activeElement!=$('own'))$('own').value=d.config.remote_url||'';
-  $('ver').textContent='Installiert: Version '+d.config.version;if(document.activeElement!=$('src'))$('src').value=d.config.update_url||'';
-  if(document.activeElement!=$('rest'))$('rest').value=d.config.rest_min;if(document.activeElement!=$('lang'))$('lang').value=d.config.lang||'de';
-  $('lid').checked=d.config.lid_sleep!==false;if(document.activeElement!=$('cstby'))$('cstby').value=d.config.charger_standby||'doze';
-  if(document.activeElement!=$('night'))$('night').value=d.config.night_mode||'off';
-  $('svauto').checked=d.config.save_auto!==false;if(document.activeElement!=$('svdst'))$('svdst').value=d.config.save_target||'';
-  const sv=d.saves||{};$('svmsg').textContent=sv.last?'Gesichert ('+(sv.where||'lokal')+') · '+sv.count+' Ordner.':'Noch keine Sicherung.';
-  if(document.activeElement!=$('theme')){$('theme').replaceChildren(...(d.config.themes||[]).map(t=>new Option(t.name,t.id)));$('theme').value=d.config.theme}
-  if(document.activeElement!=$('vmode'))$('vmode').value=d.config.view_mode||'grid';
-  $('ovl').checked=d.config.overlays!==false;
-  if(document.activeElement!=$('mot'))$('mot').value=d.config.motion||'full';
-  const T=d.thor||{},rgb=T.rgb,pw=T.power,C=d.controls||{};
-  $('map').innerHTML=(C.table||[]).map((r,i,a)=>(i==0||a[i-1].group!=r.group?`<tr><th colspan="2">${esc(r.group||'')}</th></tr>`:'')+`<tr><td>${esc(r.what)}<small>${esc(r.where||'')}</small></td><td>${esc(r.pad)}</td></tr>`).join('');
-  const off=[...new Set((C.off||[]).map(o=>o.emu))];$('off').textContent=off.length?'Abweichend: '+off.join(', ')+'.':'Alle Emulatoren haben die Tandem-Belegung.';
-  $('gyrorow').hidden=!T.gyro;if(T.gyro)$('gyro').checked=!!T.gyro.enabled;
-  $('rgbbox').hidden=!rgb;$('rgbmsg').textContent=rgb?'Farbe und Helligkeit der Leuchtringe um die Sticks. Gilt sofort.':'Diese Beleuchtung ist gerade nicht erreichbar.';
-  if(rgb){$('rgbon').checked=!!rgb.enabled;$('rgblink').checked=!!rgb.linkBrightness;if(document.activeElement!=$('rgbl'))$('rgbl').value=rgb.level;$('rgbl').nextElementSibling.textContent=$('rgbl').value+' %';
-    for(const b of $('sw').children)b.setAttribute('aria-pressed',b.dataset.c==String(rgb.color).toUpperCase())}
-  $('prof').disabled=!pw;if(pw&&document.activeElement!=$('prof')){$('prof').replaceChildren(...pw.profiles.map(([v,l])=>new Option(l,v)));$('prof').value=pw.profile}
-  $('pstats').innerHTML=(d.battery?stat(d.battery.level+' %',d.battery.charging?'Akku, lädt':'Akku',d.battery.level/100):'')+(pw?stat(pw.temp+' °C','Temperatur')+stat(pw.fan+' U/min','Lüfter'):'');
-  $('about').innerHTML=stat('AYN Thor','Gerät')+stat(T.os||'–','ArmadaOS')+stat(d.config.version,'Tandem');
-  $('wl').textContent=d.system.ssid?'Verbunden mit '+d.system.ssid+'.':'Nicht verbunden.';
-  if(document.activeElement!=$('ssid')){const now=$('ssid').value;$('ssid').replaceChildren(...d.system.networks.map(n=>new Option(n.ssid+' · '+n.signal+' %'+(n.known?' · bekannt':''),n.ssid)));if(now)$('ssid').value=now}
- }).catch(()=>{$('live').className='';$('live').firstChild.textContent='keine Verbindung'})}
+ for(const el of[$('live'),$('mlive')]){el.className='live on';el.firstChild.textContent='verbunden'}
+ const B=d.battery,T=d.thor||{},pw=T.power,C=d.controls||{},ST=d.stats||{};
+ $('sidebat').textContent='AYN Thor'+(B?' · '+B.level+' %'+(B.charging?' · lädt':''):'');
+ $('sidever').textContent='Tandem '+d.config.version+(d.system.ssid?' · '+d.system.ssid:'');
+
+ // Overview
+ $('st').textContent=d.run?'Läuft gerade: '+d.run:'Bereit auf dem Thor';
+ $('stsub').textContent=(d.dock&&d.dock.docked?'USB-C-Monitor verbunden · ':'')+(pw?pw.profile+' · '+pw.temp+' °C':'Kein Spiel aktiv');
+ $('quitbtn').hidden=!d.run;
+ $('kpis').innerHTML=kpi(fmtTime(ST.total_secs),'Gesamtspielzeit')+kpi(fmtTime(ST.week_secs),'Letzte 7 Tage')
+  +kpi(d.games,'Spiele ('+(ST.played_count||0)+' gespielt)')+(B?kpi(B.level+' %',B.charging?'Akku · lädt':'Akku',B.level/100):kpi('–','Akku'));
+
+ const days=ST.days||[],maxD=Math.max(1800,...days.map(x=>x.secs||0));
+ $('wchart').innerHTML=days.map((x,i)=>`<div class="dcol"><span class="dval">${x.secs?Math.max(1,Math.round(x.secs/60))+'m':''}</span><div class="dtrack"><div class="dfill${x.secs?'':' zero'}" style="height:${x.secs?Math.max(6,Math.round(100*x.secs/maxD)):0}%"></div></div><span class="dlbl">${esc(i===days.length-1?'Heute':x.label)}</span></div>`).join('');
+
+ $('stores').innerHTML=(d.system.storage||[]).map(s=>`<div class="grow"><b>${esc(s.name)}</b><em>${gb(s.free)} frei</em><small>${gb(s.total-s.free)} von ${gb(s.total)} belegt</small><div class="bar"><i style="width:${Math.round(100*(1-s.free/s.total))}%"></i></div></div>`).join('')
+  +`<div class="grow"><b>WLAN</b><em>${esc(d.system.ssid||'offline')}</em></div>`;
+
+ const tops=ST.top_games||[],maxG=Math.max(60,...tops.map(g=>g.secs||0));
+ $('topgames').innerHTML=tops.length?tops.slice(0,6).map(g=>`<div class="grow"><b>${esc(g.t)}</b><em>${fmtTime(g.secs)}</em><small>${esc(g.sys)}</small><div class="bar"><i style="width:${Math.max(4,Math.round(100*g.secs/maxG))}%"></i></div></div>`).join(''):'<p>Noch keine Spielzeit aufgezeichnet.</p>';
+ const recs=ST.recent_games||[];
+ $('recgames').innerHTML=recs.length?recs.slice(0,6).map(g=>`<div class="grow"><b>${esc(g.t)}</b><em>${fmtTime(g.secs)}</em><small>${esc(g.sys)}</small></div>`).join(''):'<p>Noch kein Spiel gestartet.</p>';
+
+ // Display, HUD, Audio & Look
+ for(const k of['bt','bb','vol']){const e=$(k),v=d.settings[k];e.disabled=v==null;if(v!=null&&document.activeElement!=e)e.value=v;e.nextElementSibling.textContent=v==null?'–':e.value+' %'}
+ setSeg('nightseg',d.config.night_mode||'off');
+ setSeg('hudseg',d.config.hud_level||0);
+ if(document.activeElement!=$('rest'))$('rest').value=d.config.rest_min;
+ $('lid').checked=d.config.lid_sleep!==false;$('lidmus').checked=d.config.lid_music!==false;$('dockdim').checked=d.config.dock_dim!==false;
+ if(document.activeElement!=$('cstby'))$('cstby').value=d.config.charger_standby||'doze';
+ $('prof').disabled=!pw;if(pw&&document.activeElement!=$('prof')){$('prof').replaceChildren(...pw.profiles.map(([v,l])=>new Option(l,v)));$('prof').value=pw.profile}
+ $('pstats').innerHTML=pw?kpi(pw.temp+' °C','Temperatur')+kpi(pw.fan+' U/min','Lüfter'):'';
+ if(document.activeElement!=$('theme')){$('theme').replaceChildren(...(d.config.themes||[]).map(t=>new Option(t.name,t.id)));$('theme').value=d.config.theme}
+ if(document.activeElement!=$('vmode'))$('vmode').value=d.config.view_mode||'grid';
+ if(document.activeElement!=$('mot'))$('mot').value=d.config.motion||'full';
+ if(document.activeElement!=$('lang'))$('lang').value=d.config.lang||'de';
+ $('ovl').checked=d.config.overlays!==false;
+
+ const rgb=T.rgb;$('rgbbox').hidden=!rgb;$('rgbmsg').textContent=rgb?'Stick-Beleuchtung (gilt sofort)':'Stick-Beleuchtung gerade nicht erreichbar.';
+ if(rgb){$('rgbon').checked=!!rgb.enabled;$('rgblink').checked=!!rgb.linkBrightness;if(document.activeElement!=$('rgbl'))$('rgbl').value=rgb.level;$('rgbl').nextElementSibling.textContent=$('rgbl').value+' %';
+  for(const b of $('sw').children)b.setAttribute('aria-pressed',b.dataset.c==String(rgb.color).toUpperCase())}
+
+ // Controller
+ const cstyle=d.config.controls_style||'thor';
+ setSeg('cstyleseg',cstyle);renderPad(cstyle);
+ $('map').innerHTML=(C.table||[]).map((r,i,a)=>(i==0||a[i-1].group!=r.group?`<tr><th colspan="2">${esc(r.group||'')}</th></tr>`:'')+`<tr><td>${esc(r.what)}<small>${esc(r.where||'')}</small></td><td>${esc(r.pad)}</td></tr>`).join('');
+ const off=[...new Set((C.off||[]).map(o=>o.emu))];$('off').textContent=off.length?'Noch abweichend: '+off.join(', ')+'.':'Alle installierten Emulatoren nutzen dieses Layout.';
+ $('gyrorow').hidden=!T.gyro;if(T.gyro)$('gyro').checked=!!T.gyro.enabled;
+ if(document.activeElement!=$('kb'))$('kb').value=d.layout;
+ $('kbhap').checked=d.config.kb_haptics!==false;
+
+ // Library & Saves
+ $('lib').textContent=d.games+' Spiele in der Bibliothek gefunden.';
+ $('svauto').checked=d.config.save_auto!==false;if(document.activeElement!=$('svdst'))$('svdst').value=d.config.save_target||'';
+ const sv=d.saves||{};$('svmsg').textContent=sv.last?'Letzte Sicherung ('+(sv.where||'lokal')+') · '+sv.count+' Systeme gesichert.':'Noch keine Sicherung angelegt.';
+ const snaps=sv.snapshots||[];$('svrestbox').hidden=!snaps.length;
+ if(snaps.length&&document.activeElement!=$('svsnap')){$('svsnap').replaceChildren(...snaps.map(s=>new Option(new Date(s.at*1000).toLocaleString('de-DE')+' · '+(s.items||[]).length+' Systeme',s.file)))}
+ if(d.systems_list&&document.activeElement!=$('upsys')&&$('upsys').options.length<=1){for(const s of d.systems_list)$('upsys').add(new Option(s.name+' ('+s.id+')',s.id))}
+ if(d.games_list&&document.activeElement!=$('upgame')){$('upgame').replaceChildren(...d.games_list.map(g=>new Option(g.t,g.id)))}
+
+ // Accounts & System
+ $('yt').textContent=d.config.yt_set?'Verbunden auf dem Thor.':d.config.yt_oauth?'OAuth-Client hinterlegt (noch nicht angemeldet).':'Noch nicht angemeldet.';
+ if(d.config.yt_set)$('ytqrbox').hidden=true;
+ $('bn').textContent=d.config.bnet_set?'Hinterlegt – WoW Forever meldet sich beim Start automatisch an.':'Noch nicht hinterlegt.'+(secure()?'':' Eintragen nur über HTTPS möglich.');
+ $('ra').textContent=d.config.ra_login?'Angemeldet als '+d.config.ra_user+'.':'Noch nicht angemeldet.'+(d.config.ra_key_set?' Web-API-Schlüssel hinterlegt.':'');
+ if(document.activeElement!=$('u')&&!$('u').value)$('u').value=d.config.ra_user;
+ if(document.activeElement!=$('own'))$('own').value=d.config.remote_url||'';
+ if(document.activeElement!=$('wolmac'))$('wolmac').value=d.config.wol_mac||'';
+ $('ver').textContent='Installiert: Tandem '+d.config.version;if(document.activeElement!=$('src'))$('src').value=d.config.update_url||'';
+ $('about').innerHTML=kpi('AYN Thor','Gerät')+kpi(T.os||'–','ArmadaOS')+kpi(d.config.version,'Tandem');
+ $('wl').textContent=d.system.ssid?'Verbunden mit „'+d.system.ssid+'“.':'Nicht mit einem WLAN verbunden.';
+ if(document.activeElement!=$('ssid')){const now=$('ssid').value;$('ssid').replaceChildren(...(d.system.networks||[]).map(n=>new Option(n.ssid+' · '+n.signal+' %'+(n.known?' · bekannt':''),n.ssid)));if(now)$('ssid').value=now}
+}).catch(()=>{for(const el of[$('live'),$('mlive')]){el.className='live';el.firstChild.textContent='offline'}})}
+
 for(const k of['bt','bb','vol']){$(k).oninput=e=>e.target.nextElementSibling.textContent=e.target.value+' %';$(k).onchange=e=>post('set',{key:k,value:+e.target.value})}
-// the password only travels encrypted: over https, or on the Thor itself
+for(const b of $('nightseg').children)b.onclick=()=>{setSeg('nightseg',b.dataset.v);post('config',{night_mode:b.dataset.v})};
+for(const b of $('hudseg').children)b.onclick=()=>{setSeg('hudseg',b.dataset.v);post('config',{hud_level:+b.dataset.v})};
+for(const b of $('cstyleseg').children)b.onclick=()=>{setSeg('cstyleseg',b.dataset.v);renderPad(b.dataset.v);post('config',{controls_style:b.dataset.v}).then(load)};
+
 const secure=()=>location.protocol=='https:'||['127.0.0.1','localhost'].includes(location.hostname);
-$('bnsave').onclick=()=>{if(!secure())return say('Nur über die https-Adresse des Thor – im WLAN ohne https könnte das Passwort mitgelesen werden.');
-  if(!$('be').value||!$('bp').value)return say('Bitte E-Mail und Passwort eintragen.');
-  post('config',{bnet_email:$('be').value,bnet_password:$('bp').value}).then(()=>{$('be').value=$('bp').value='';say('Gespeichert.');load()})};
+$('bnsave').onclick=()=>{if(!secure())return say('Nur über die HTTPS-Adresse des Thor übertragbar.');
+ if(!$('be').value||!$('bp').value)return say('Bitte E-Mail und Passwort eintragen.');
+ post('config',{bnet_email:$('be').value,bnet_password:$('bp').value}).then(()=>{$('be').value=$('bp').value='';say('Gespeichert.');load()})};
 let ytTimer=null;
 function ytStep(act,silent){fetch('api/ytlogin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({a:act})}).then(r=>r.json()).then(d=>{
-  if(d&&d.error){if(!silent)say(d.error);return}
-  if(d&&d.signed_in){clearInterval(ytTimer);ytTimer=null;$('ytqrbox').hidden=true;say('Bei YouTube angemeldet.');load();return}
-  if(d&&d.code){$('ytqrcode').textContent=d.code;$('ytqrlink').href=d.qr||'https://www.youtube.com/activate';$('ytqrsvg').innerHTML=d.svg||'';$('ytqrbox').hidden=false;
-    if(!ytTimer)ytTimer=setInterval(()=>ytStep('qr',true),5000)}
+ if(d&&d.error){if(!silent)say(d.error);return}
+ if(d&&d.signed_in){clearInterval(ytTimer);ytTimer=null;$('ytqrbox').hidden=true;say('Bei YouTube angemeldet.');load();return}
+ if(d&&d.code){$('ytqrcode').textContent=d.code;$('ytqrlink').href=d.qr||'https://www.youtube.com/activate';$('ytqrsvg').innerHTML=d.svg||'';$('ytqrbox').hidden=false;
+  if(!ytTimer)ytTimer=setInterval(()=>ytStep('qr',true),5000)}
 })}
 $('ytqrbtn').onclick=()=>ytStep('qr',false);
-$('ycsave').onclick=()=>{if(!secure())return say('Nur über die https-Adresse des Thor.');
-  if(!$('yc').value.trim())return say('Bitte Cookies einfügen.');
-  post('config',{yt_cookies:$('yc').value}).then(d=>{if(!d||!d.error)$('yc').value='';say(d&&d.error||d&&d.text||'Gespeichert.');load()})};
-$('ytsave').onclick=()=>{if(!secure())return say('Nur über die https-Adresse des Thor.');
-  if(!$('yi').value||!$('ys').value)return say('Bitte Client-ID und Client-Secret eintragen.');
-  post('config',{yt_client_id:$('yi').value,yt_client_secret:$('ys').value}).then(d=>{$('yi').value=$('ys').value='';say(d&&d.error||'Gespeichert.');load()})};
+$('ycsave').onclick=()=>{if(!secure())return say('Nur über die HTTPS-Adresse des Thor.');
+ if(!$('yc').value.trim())return say('Bitte Cookies einfügen.');
+ post('config',{yt_cookies:$('yc').value}).then(d=>{if(!d||!d.error)$('yc').value='';say(d&&d.error||d&&d.text||'Gespeichert.');load()})};
+$('ytsave').onclick=()=>{if(!secure())return say('Nur über die HTTPS-Adresse des Thor.');
+ if(!$('yi').value||!$('ys').value)return say('Bitte Client-ID und Client-Secret eintragen.');
+ post('config',{yt_client_id:$('yi').value,yt_client_secret:$('ys').value}).then(d=>{$('yi').value=$('ys').value='';say(d&&d.error||'Gespeichert.');load()})};
 $('ytforget').onclick=()=>{clearInterval(ytTimer);ytTimer=null;$('ytqrbox').hidden=true;post('config',{yt_forget:true}).then(()=>{say('YouTube-Anmeldung gelöscht.');load()})};
 $('bnforget').onclick=()=>post('config',{bnet_forget:true}).then(()=>{say('Battle.net-Anmeldung gelöscht.');load()});
 $('rasave').onclick=()=>post('config',{ra_user:$('u').value,ra_password:$('p').value,ra_key:$('k').value}).then(d=>{$('p').value=$('k').value='';if(d&&d.applied)say('Angemeldet in: '+d.applied.join(', '));load()});
 $('wgo').onclick=()=>{say('Verbinde …');post('wifi',{ssid:$('ssid').value,password:$('wp').value}).then(()=>{$('wp').value='';load()})};
 const COLORS=[['Weiß','FFFFFF'],['Rot','FF2000'],['Orange','FF7A00'],['Gelb','FFD000'],['Grün','20E040'],['Türkis','00D0C0'],['Blau','1060FF'],['Lila','9040FF'],['Pink','FF30A0']];
-$('sw').replaceChildren(...COLORS.map(([n,c])=>{const b=document.createElement('button');b.dataset.c=c;b.title=n;b.setAttribute('aria-label',n);b.style.background='#'+c;b.onclick=()=>post('thor',{key:'rgb',value:{color:c,enabled:true}}).then(load);return b}));
+$('sw').replaceChildren(...COLORS.map(([n,c])=>{const b=document.createElement('button');b.type='button';b.dataset.c=c;b.title=n;b.setAttribute('aria-label',n);b.style.background='#'+c;b.onclick=()=>post('thor',{key:'rgb',value:{color:c,enabled:true}}).then(load);return b}));
 $('rgbon').onchange=e=>post('thor',{key:'rgb',value:{enabled:e.target.checked}}).then(load);
 $('rgblink').onchange=e=>post('thor',{key:'rgb',value:{linkBrightness:e.target.checked,brightness:+$('rgbl').value}}).then(load);
 $('rgbl').oninput=e=>e.target.nextElementSibling.textContent=e.target.value+' %';$('rgbl').onchange=e=>post('thor',{key:'rgb',value:{brightness:+e.target.value,enabled:true}});
 $('gyro').onchange=e=>post('thor',{key:'gyro',value:e.target.checked});
 $('prof').onchange=e=>post('thor',{key:'profile',value:e.target.value});
-$('ctrlgo').onclick=()=>{say('Gleiche an …');post('controls',{}).then(load)};
+$('ctrlgo').onclick=()=>{say('Gleiche Emulatoren an …');post('controls',{}).then(load)};
 $('kb').onchange=e=>post('layout',{layout:e.target.value});
+$('kbhap').onchange=e=>post('config',{kb_haptics:e.target.checked});
 $('theme').onchange=e=>post('config',{theme:e.target.value});
 $('vmode').onchange=e=>post('config',{view_mode:e.target.value});
 $('ovl').onchange=e=>post('config',{overlays:e.target.checked});
 $('mot').onchange=e=>post('config',{motion:e.target.value});
 $('rest').onchange=e=>post('config',{rest_min:+e.target.value});
 $('lid').onchange=e=>post('config',{lid_sleep:e.target.checked});
+$('lidmus').onchange=e=>post('config',{lid_music:e.target.checked});
+$('dockdim').onchange=e=>post('config',{dock_dim:e.target.checked});
 $('cstby').onchange=e=>post('config',{charger_standby:e.target.value});
-$('night').onchange=e=>post('config',{night_mode:e.target.value});
 $('svauto').onchange=e=>post('config',{save_auto:e.target.checked});
 $('svdstgo').onclick=()=>post('config',{save_target:$('svdst').value}).then(load);
+$('svrestgo').onclick=()=>{if(!$('svsnap').value||!confirm('Spielstände aus diesem Archiv wiederherstellen? Aktuelle Stände werden vorher automatisch gesichert.'))return;
+ say('Stelle wieder her …');post('saves_restore',{file:$('svsnap').value}).then(load)};
+$('wolsave').onclick=()=>post('config',{wol_mac:$('wolmac').value}).then(load);
+$('wolgo').onclick=()=>post('wol',{mac:$('wolmac').value});
+$('upkind').onchange=()=>{const k=$('upkind').value;$('upsysbox').hidden=k!='rom';$('upgamebox').hidden=k!='guide'};
+async function uploadFiles(files){for(const f of files){$('upbar').hidden=false;$('upfill').style.width='0%';say('Übertrage '+f.name+' …');
+ await new Promise(res=>{const x=new XMLHttpRequest();x.open('POST','api/upload');
+  x.setRequestHeader('X-File-Name',encodeURIComponent(f.name));x.setRequestHeader('X-Kind',$('upkind').value);
+  x.setRequestHeader('X-System',$('upsys').value||'auto');x.setRequestHeader('X-Game',$('upgame').value||'');
+  x.upload.onprogress=e=>{if(e.lengthComputable)$('upfill').style.width=Math.round(100*e.loaded/e.total)+'%'};
+  x.onload=()=>{try{const d=JSON.parse(x.responseText);say(d.error||d.text||'Übertragen.')}catch{say('Fehler beim Übertragen.')}res()};
+  x.onerror=()=>{say('Übertragung fehlgeschlagen.');res()};x.send(f)});
+} $('upbar').hidden=true;load()}
+$('drop').onclick=()=>$('upfile').click();$('drop').onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();$('upfile').click()}};
+$('upfile').onchange=e=>{if(e.target.files.length)uploadFiles(e.target.files);e.target.value=''};
+$('drop').ondragover=e=>{e.preventDefault();$('drop').classList.add('over')};$('drop').ondragleave=()=>$('drop').classList.remove('over');
+$('drop').ondrop=e=>{e.preventDefault();$('drop').classList.remove('over');if(e.dataTransfer.files.length)uploadFiles(e.dataTransfer.files)};
 $('lang').onchange=e=>post('config',{lang:e.target.value}).then(()=>location.reload());
 $('srcgo').onclick=()=>post('config',{update_url:$('src').value}).then(load);
 const up=apply=>post('selfupdate',{apply}).then(d=>{say(d.error||d.text);$('upgo').hidden=apply||!d.new});
 $('upcheck').onclick=()=>up(false);$('upgo').onclick=()=>{say('Installiere …');up(true)};
 $('owngo').onclick=()=>post('config',{remote_url:$('own').value}).then(load);
-$('edengo').onclick=()=>{say('Lade … das kann eine Minute dauern.');post('update',{id:$('eden').value}).then(load)};
+$('edengo').onclick=()=>{say('Lade Eden … das kann eine Minute dauern.');post('update',{id:$('eden').value}).then(load)};
 for(const b of document.querySelectorAll('[data-post]'))b.onclick=()=>{if(b.dataset.ask&&!confirm(b.dataset.ask))return;post(b.dataset.post,{name:b.dataset.name}).then(load)};
-load();setInterval(load,8000);
+renderPad('thor');load();setInterval(load,8000);
 </script>

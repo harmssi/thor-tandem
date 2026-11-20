@@ -56,6 +56,32 @@ class Controls(unittest.TestCase):
     def test_table(self):
         self.assertTrue(all({'what', 'pad', 'where'} <= set(row) for row in controls.TABLE))
 
+    def test_unified_styles_flycast_cemu_and_wii(self):
+        sub = Path(tempfile.mkdtemp(dir=HOME))
+        old_home = os.environ['HOME']
+        os.environ['HOME'] = str(sub)
+        try:
+            for d in ('.local/share/duckstation', '.var/app/org.DolphinEmu.dolphin-emu/config/dolphin-emu',
+                      '.var/app/org.flycast.Flycast/config/flycast', '.config/Cemu'):
+                (sub / d).mkdir(parents=True, exist_ok=True)
+            changed = controls.apply('thor')
+            self.assertEqual(sorted(changed), ['Cemu', 'Dolphin', 'DuckStation', 'Flycast'])
+            self.assertEqual(controls.check('thor'), [])
+            # In unified 'thor' mode, PlayStation Cross is bound to physical Right (SDL-0/B), Circle to Bottom (SDL-0/A)
+            ds = (sub / '.local/share/duckstation/settings.ini').read_text()
+            self.assertIn('Cross = SDL-0/B', ds)
+            self.assertIn('Circle = SDL-0/A', ds)
+            # Wii Nunchuk & IR pointer configured
+            wii = (sub / '.var/app/org.DolphinEmu.dolphin-emu/config/dolphin-emu/WiimoteNew.ini').read_text()
+            self.assertIn('Extension = Nunchuk', wii)
+            # Switching to 'xbox' flips Cross/Circle and Cemu A/B cleanly across all emulators
+            self.assertTrue(controls.check('xbox'))
+            controls.apply('xbox')
+            self.assertEqual(controls.check('xbox'), [])
+            self.assertIn('Cross = SDL-0/A', (sub / '.local/share/duckstation/settings.ini').read_text())
+        finally:
+            os.environ['HOME'] = old_home
+
 
 if __name__ == '__main__':
     unittest.main()
