@@ -49,8 +49,15 @@ def battery_detail(root='/sys/class/power_supply'):
         elif watts and watts >= 0.5 and e_uwh and e_uwh > 0:
             mins_left = max(1, min(2400, round(((e_uwh / 1e6) / watts) * 60)))
     wh_full = round(ef_uwh / 1e6, 1) if ef_uwh else (round((cf_uah * 3.85) / 1e6, 1) if cf_uah else None)
+    soh = _read_int(bat / 'state_of_health')
+    if soh is None and cf_uah and (cfd := _read_int(bat / 'charge_full_design')) and cfd > 0:
+        soh = max(1, min(100, round(100 * cf_uah / cfd)))
+    cycles = _read_int(bat / 'cycle_count')
+    raw_t = _read_int(bat / 'temp')
+    bat_temp = round(raw_t / 10.0, 1) if raw_t is not None and -100 < raw_t < 900 else None
     return {'level': cap if cap is not None else 0, 'status': status, 'charging': charging,
-            'watts': watts, 'mins_left': mins_left, 'wh_full': wh_full}
+            'watts': watts, 'mins_left': mins_left, 'wh_full': wh_full,
+            'health': soh, 'cycles': cycles, 'bat_temp': bat_temp}
 
 
 def cpu_ram():
@@ -313,4 +320,106 @@ def set_hud(level, tmp_dir='/tmp'):
         except OSError:
             pass
     return {'ok': True, 'level': lvl, 'active': bool(wrote)}
+
+
+# ---- Switch-2-style synthesized UI sounds & Thor Locator (zero external audio files) ----------------------------------
+_WAV_CACHE = {}
+
+
+def synth_wav(notes, rate=24000):
+    """Synthesize a clean 16-bit mono PCM WAV in memory from [(freq_hz, dur_sec, vol_0_1), ...]."""
+    import math, struct
+    key = (tuple(notes), rate)
+    if key in _WAV_CACHE:
+        return _WAV_CACHE[key]
+    samples = bytearray()
+    for freq, dur, vol in notes:
+        n = max(1, int(rate * dur))
+        attack = max(1, min(int(rate * 0.004), n // 4))
+        for i in range(n):
+            if freq <= 0:
+                val = 0.0
+            else:
+                env = (i / attack) if i < attack else math.exp(-3.6 * (i - attack) / max(1, n - attack))
+                t = i / rate
+                val = vol * env * (0.82 * math.sin(2 * math.pi * freq * t) + 0.18 * math.sin(4 * math.pi * freq * t))
+            s = max(-32767, min(32767, int(val * 32767)))
+            samples += struct.pack('<h', s)
+    data_len = len(samples)
+    hdr = struct.pack('<4sI4s4sIHHIIHH4sI', b'RIFF', 36 + data_len, b'WAVE', b'fmt ', 16, 1, 1,
+                      rate, rate * 2, 2, 16, b'data', data_len)
+    wav = hdr + bytes(samples)
+    _WAV_CACHE[key] = wav
+    return wav
+
+
+SOUNDS = {
+    'tick': [(1180, 0.018, 0.16)],
+    'ok': [(880, 0.036, 0.22), (1320, 0.055, 0.24)],
+    'back': [(980, 0.032, 0.20), (660, 0.048, 0.18)],
+    'launch': [(587, 0.045, 0.24), (880, 0.050, 0.26), (1175, 0.095, 0.28)],
+    'alert': [(1046, 0.07, 0.30), (1318, 0.09, 0.32), (1568, 0.14, 0.32)],
+    'locator': [(1046, 0.11, 0.55), (1318, 0.11, 0.58), (1568, 0.11, 0.62), (2093, 0.22, 0.68),
+                (0, 0.10, 0.0), (1046, 0.11, 0.55), (1318, 0.11, 0.58), (1568, 0.11, 0.62), (2093, 0.26, 0.72)],
+}
+
+
+def play_sound(kind='tick'):
+    notes = SOUNDS.get(kind)
+    if not notes or os.environ.get('QT_QPA_PLATFORM') == 'offscreen':
+        return False
+    player = ['pw-play', '-'] if shutil.which('pw-play') else (['aplay', '-q', '-'] if shutil.which('aplay') else None)
+    if not player:
+        return False
+    wav = synth_wav(notes)
+    def run():
+        try:
+            subprocess.run(player, input=wav, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+        except (OSError, subprocess.SubprocessError):
+            pass
+    threading.Thread(target=run, daemon=True).start()
+    return True
+
+
+def _haptic_burst(pulses=4, hold_s=0.14, gap_s=0.12):
+    """Trigger rhythmic LRA vibration pulses on the AYN Thor's qcom-hv-haptics device."""
+    import fcntl, struct
+    try:
+        raw = Path('/proc/bus/input/devices').read_text(errors='ignore')
+    except OSError:
+        return False
+    fd = -1
+    for block in raw.split('\n\n'):
+        if 'haptic' not in block.lower():
+            continue
+        m = re.search(r'Handlers=.*?(event\d+)', block)
+        if m:
+            try:
+                fd = os.open('/dev/input/' + m.group(1), os.O_RDWR | os.O_NONBLOCK)
+                break
+            except OSError:
+                pass
+    if fd < 0:
+        return False
+    try:
+        buf = bytearray(struct.pack('HhHHHHH', 0x50, -1, 0, 0, int(hold_s * 1000), 0, 0x7000) + b'\x00' * 34)
+        fcntl.ioctl(fd, 0x40304580, buf)
+        eid = struct.unpack_from('h', buf, 2)[0]
+        for i in range(pulses):
+            os.write(fd, struct.pack('llHHi', 0, 0, 0x15, eid, 1))
+            time.sleep(hold_s + (gap_s if i + 1 < pulses else 0.02))
+    except OSError:
+        pass
+    finally:
+        try: os.close(fd)
+        except OSError: pass
+    return True
+
+
+def locator_ping():
+    """Switch-2-style 'Find My Thor / Controller': plays an ascending chime and vibrates the Thor rhythmically."""
+    play_sound('locator')
+    threading.Thread(target=_haptic_burst, kwargs={'pulses': 4}, daemon=True).start()
+    return {'ok': True, 'text': 'Der Thor klingelt und vibriert jetzt.'}
+
 

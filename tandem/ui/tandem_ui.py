@@ -20,13 +20,16 @@ os.environ.pop('QT_QPA_PLATFORMTHEME', None)  # the KDE theme plug-in would pull
 os.environ['XDG_CURRENT_DESKTOP'] = ''
 from PySide6.QtCore import QBuffer, QByteArray, QPointF, QRectF, QSize, Qt, QTimer, Signal  # noqa: E402
 from PySide6.QtGui import (QBrush, QColor, QFont, QFontDatabase, QFontMetricsF, QGuiApplication, QImage, QImageReader,  # noqa: E402
-                           QLinearGradient, QPainter, QPainterPath, QPen, QRadialGradient, QRasterWindow)
+                           QLinearGradient, QPainter, QPainterPath, QPen, QPolygonF, QRadialGradient, QRasterWindow)
 try: from PySide6.QtSvg import QSvgRenderer  # icons only; without it tiles show initials
 except ImportError: QSvgRenderer = None
 import settings_view  # noqa: E402  the Einstellungen tab (its own module: big, and changed on its own)
+sys.modules.setdefault('tandem_ui', sys.modules[__name__])  # decks importing tandem_ui see the live __main__ module
 settings_view.ui = sys.modules[__name__]
 import quick_view  # noqa: E402  the Thor key's quick menu on the bottom screen
 quick_view.ui = sys.modules[__name__]
+import screensaver  # noqa: E402  dual-screen OLED screensaver showcase
+screensaver.ui = sys.modules[__name__]
 import lang  # noqa: E402  English texts (config lang 'en')
 
 INK, PANEL, RAISED, LINE, TEXT, MUTED, FOCUS, LIVE, WARN = (QColor(c) for c in ('#07080b', '#15161b', '#202128', '#2c2d35', '#f5f5f7', '#9a9ba4', '#ffb23e', '#34d399', '#ff6b5e'))
@@ -81,6 +84,7 @@ POWER_MENU = [('suspend', 'Standby', False), ('sleep', 'Tiefschlaf', False), ('r
               ('poweroff', 'Ausschalten', True), ('desktop', 'Zum Desktop', True)]
 
 ADDR = ('127.0.0.1', 8377)
+URL = 'http://127.0.0.1:8377'
 
 
 class Haptics:
@@ -486,13 +490,18 @@ class Tandem(QRasterWindow):
             self.button(p, QRectF(x0 + n * (w + 1.4 * u), H - 2.6 * u - 6.3 * u, w, 6.3 * u), label, lambda a=a: self.setup_go(a), ('u', 2.2, 600), INK if last else TEXT, FOCUS if last else PANEL, None, 1.4)
 
     def resting(self):
-        """OLED care: black screen with a wandering clock once nobody has touched Tandem for the configured minutes."""
-        # shortcut: never rests while a game runs (the pad then talks to the game, not to us), add when the bottom deck burns in
+        """OLED care / Showcase screensaver: manually triggered (SAVER_NOW) or after configured idle minutes."""
+        if getattr(self, 'SAVER_NOW', False) and not self.RUN:
+            return True
         minutes = self.CFG.get('rest_min', 3)
         return bool(minutes) and not self.RUN and time.time() - self.active > minutes * 60
 
     def wake(self):  # True: this input only woke the screen up
-        was, self.active = self.resting(), time.time()
+        was = self.resting()
+        self.active = time.time()
+        if getattr(self, 'SAVER_NOW', False):
+            self.SAVER_NOW = False
+            self.post('api/saver', {'open': False})
         return was
 
     def on_event(self, m):
@@ -560,6 +569,10 @@ class Tandem(QRasterWindow):
             self.follow_theme()
             return self.pulse()
         if kind == 'thor': self.THOR = m.get('thor'); return self.update()
+        if kind == 'saver':
+            self.SAVER_NOW = bool(m.get('open'))
+            if not self.SAVER_NOW: self.active = time.time()
+            return self.update()
         if kind == 'settings':
             if m.get('from') != self.me and not self.drag: self.SET = m['settings']
             if m.get('osd'):
@@ -690,8 +703,12 @@ class Tandem(QRasterWindow):
         if S['tab'] == 0:
             last = lambda g: (L['played'].get(g['id']) or {}).get('last') or 0
             held = next((g for g in games if g['id'] == RUN['id']), None) if RUN and RUN.get('paused') else None  # like the Switch: the suspended game stands in front
-            rest = sorted((g for g in games if g['id'] not in hidden and (last(g) or g['id'] in L['fav']) and g is not held), key=lambda g: (-last(g), g['t']))[:30]
-            return ([held] if held else []) + rest
+            pin_ids = [pid for pid in (L.get('pinned') or []) if pid not in hidden]
+            by_id = {g['id']: g for g in games}
+            pinned_games = [by_id[pid] for pid in pin_ids if pid in by_id and by_id[pid] is not held]
+            pin_set = {g['id'] for g in pinned_games}
+            rest = sorted((g for g in games if g['id'] not in hidden and g['id'] not in pin_set and (last(g) or g['id'] in L['fav']) and g is not held), key=lambda g: (-last(g), g['t']))[:30]
+            return ([held] if held else []) + pinned_games + rest
         if S['tab'] == 1:
             sys_items = [{'id': 'sys:' + s, 't': v['name'], 's': s, 'kind': 'sys', 'n': v['n'], 'cover': v.get('cover'), 'hero': v.get('hero'), 'logo': v.get('logo')}
                          for s, v in L['systems'].items()]
@@ -771,6 +788,7 @@ class Tandem(QRasterWindow):
             return self.post('api/update', {'id': gid[4:]})
         if gid == 'act:steam': return self.post('api/action', {'name': 'steam'})
         if gid == 'rescan': return self.post('api/rescan', then=lambda r: r and self.toast(f'{r["games"]} Spiele gefunden' + (f', {r["covers"]} Cover geladen.' if r.get('covers') else '.')))
+        if self.CFG.get('ui_sounds') == 'subtle': self.post('api/sound', {'kind': 'launch'})
         self.post('api/launch', {'id': gid}, then=lambda r: r is None and self.toast('Tandem-Dienst antwortet nicht.'))
 
     def go(self, a):
@@ -811,6 +829,8 @@ class Tandem(QRasterWindow):
         elif a == 'back' and S.get('q'):
             S.pop('q', None); S['i'] = 0
         elif a == 'back' and S['sys']: S.update(i=list(self.L['systems']).index(S['sys']) if S['sys'] in self.L['systems'] else 0, sys=None, tab=1)
+        if self.CFG.get('ui_sounds') == 'subtle' and a in ('left', 'right', 'up', 'down', 'prev', 'next', 'back', 'ok'):
+            self.post('api/sound', {'kind': 'back' if a == 'back' else 'ok' if a == 'ok' else 'tick'})
         self.push()
 
     def ask(self, title, secret, done, initial=''):  # text entry without a real keyboard: the key grid fills a field on this screen
@@ -894,7 +914,7 @@ class Tandem(QRasterWindow):
         opt = (L.get('gameopt') or {}).get(gid) or {}
         emus = (L.get('emulators') or {}).get(s) or []
         rows = [('▶ Spiel starten', '', lambda: (setattr(self, 'GAME_MENU', None), self.start(g)))]
-        if len(emus) > 1:
+        if len(emus) > 1 and not g.get('native_engine'):
             cur_e = opt.get('emu', '')
             cur_lbl = next((e['label'] for e in emus if e['id'] == cur_e), 'Standard')
             ids = [''] + [e['id'] for e in emus]
@@ -906,8 +926,16 @@ class Tandem(QRasterWindow):
         nxt_p = pids[(pids.index(cur_p) + 1) % len(pids)] if cur_p in pids else ''
         plbl = dict(profs).get(cur_p, 'Standard')
         rows.append(('Leistung (dieses Spiel)', plbl, lambda np=nxt_p: self.post('api/gameopt', {'id': gid, 'profile': np})))
+        is_pin = gid in (L.get('pinned') or [])
+        rows.append(('An Start anpinnen', '✓ Angepinnt' if is_pin else 'Nein',
+                     lambda: self.post('api/collection', {'a': 'pin', 'id': gid})))
         is_fav = gid in (L.get('fav') or [])
         rows.append(('Favorit', '★ Ja' if is_fav else 'Nein', lambda: self.post('api/fav', {'id': gid})))
+        if s == 'switch' and not gid.startswith('native-'):
+            rows.append(('Nativ umwandeln (Peanuts)', 'Starten',
+                         lambda: (setattr(self, 'GAME_MENU', None),
+                                  self.post('api/switch_native', {'id': gid},
+                                            then=lambda r: r and self.toast(r.get('error') or r.get('text', ''))))))
         for cname, gids in sorted((L.get('collections') or {}).items()):
             in_c = gid in gids
             rows.append((f'Sammlung: {cname}', '✓ Enthalten' if in_c else 'Hinzufügen',
@@ -1325,10 +1353,8 @@ class Tandem(QRasterWindow):
         if self.DOZE:  # panels asleep on a charger: pure black, zero touch targets
             p.fillRect(0, 0, self.width(), self.height(), QColor(0, 0, 0))
             return p.end()
-        if self.resting():  # black pixels are off on an OLED; the clock moves every minute
-            p.fillRect(0, 0, self.width(), self.height(), QColor(0, 0, 0))
-            spot = random.Random(int(time.time() // 60) + (self.side == 'top')).random
-            self.text(p, clock(), (8 + 70 * spot()) * self.u, (5 + 80 * spot()) * self.height() / 100, ('u', 3, 400), QColor(70, 70, 80))
+        if self.resting():  # dual-screen OLED showcase screensaver
+            screensaver.draw(self, p)
             return p.end()
         items = self.items()
         if not settings_view.open_now(self): self.S['i'] = max(0, min(self.S['i'], len(items) - 1))
@@ -1498,9 +1524,9 @@ class Tandem(QRasterWindow):
                 meta = ([lead] + extra_facts[:2]
                         + ([fact('Zuletzt', ago(played['last']))] if played.get('last') else [])
                         + ([fact('Spielzeit', hours(played['secs']))] if played.get('secs') else [])
-                        + ([fact('Emulator', sysinfo.get('emu') or 'fehlt')] if sysinfo else [])
+                        + ([fact('Laufzeit', it['native_engine'])] if it.get('native_engine') else [fact('Emulator', sysinfo.get('emu') or 'fehlt')] if sysinfo else [])
                         + ([[('★ Favorit', mv, FOCUS)]] if it['id'] in L['fav'] else []))
-            miss = sysinfo.get('missing') if sysinfo and not P else None
+            miss = sysinfo.get('missing') if sysinfo and not P and not it.get('native_engine') else None
             if P: hints = [('B', 'Beenden (unten bestätigen)')]
             else:
                 inst = it.get('inst')
@@ -2207,6 +2233,12 @@ class Tandem(QRasterWindow):
                     star.lineTo(pt) if k else star.moveTo(pt)
                 star.closeSubpath()
                 p.drawPath(star)
+        if x['id'] in (self.L.get('pinned') or ()) and self.S['tab'] == 0 and not self.S['sys']:
+            pf = ('u', 1.12, 700, .06)
+            pw = self.width_of('PIN', pf) + 1.4 * u
+            pr = QRectF(rect.right() - .8 * u - pw, rect.y() + .8 * u, pw, 2.0 * u)
+            self.capsule(p, pr, faded(FOCUS, .92))
+            self.text(p, 'PIN', pr.x(), pr.y(), pf, INK, pw, 1, 2.0 / 1.12)
         if on:
             ring = rect.adjusted(-.45 * u, -.45 * u, .45 * u, .45 * u)
             self.box(p, ring, (r * .68 if framed else r) + .45 * u, None, faded(FOCUS, .38 + .62 * t), .3 * u)
@@ -2218,7 +2250,7 @@ class Tandem(QRasterWindow):
 
 
 def main():
-    global ADDR
+    global ADDR, URL
     parser = argparse.ArgumentParser(description='Toravo Tandem, native front end')
     parser.add_argument('--screen', choices=('top', 'bottom'), required=True)
     parser.add_argument('--url', default='http://127.0.0.1:8377')
@@ -2226,6 +2258,7 @@ def main():
     args = parser.parse_args()
     url = urlparse(args.url)
     ADDR = (url.hostname or '127.0.0.1', url.port or 8377)
+    URL = f'http://{ADDR[0]}:{ADDR[1]}'
     signal.signal(signal.SIGINT, signal.SIG_DFL); signal.signal(signal.SIGTERM, signal.SIG_DFL)  # Qt's loop would hold Python's handlers back
     app = QGuiApplication(sys.argv[:1])
     for file in sorted((Path(__file__).resolve().parent / 'fonts').glob('*.ttf')): QFontDatabase.addApplicationFont(str(file))

@@ -33,7 +33,7 @@ CATS = [  # id, title, icon, icon colour, what the top screen says while the lis
     ('onoff', 'Ein / Aus', 'off', '#ff453a', 'Standby, Neustart, Ausschalten und der Desktop.'),
 ]
 AREAS = [c for c in CATS if c]
-TITLES = {c[0]: c[1] for c in AREAS} | {'controls>map': 'Tastenbelegung', 'network>wifi': 'WLAN', 'bluetooth>dev': 'Gerät', 'library>restore': 'Wiederherstellen', 'library>stats': 'Spielzeit & Statistik'}
+TITLES = {c[0]: c[1] for c in AREAS} | {'controls>map': 'Tastenbelegung', 'network>wifi': 'WLAN', 'bluetooth>dev': 'Gerät', 'library>restore': 'Wiederherstellen', 'library>stats': 'Spielzeit & Statistik', 'updates>native': 'Switch-Spiele nativ'}
 ICONS = {
     'screens': '<rect x="5" y="3" width="14" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="5" y="13" width="14" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/>',
     'light': '<circle cx="12" cy="12" r="4.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 2.5v2.6M12 18.9v2.6M2.5 12h2.6M18.9 12h2.6M5.3 5.3l1.8 1.8M16.9 16.9l1.8 1.8M5.3 18.7l1.8-1.8M16.9 7.1l1.8-1.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
@@ -88,6 +88,12 @@ def need(win):
     if win.SAVES is None and page_of(win) == 'library':
         win.SAVES = {}
         win.call('api/saves', then=lambda s: setattr(win, 'SAVES', s or {}))
+    if page_of(win) == 'perf' and time.time() - getattr(win, 'ptele_at', 0) > 15:
+        win.ptele_at = time.time()
+        win.call('api/telemetry', then=lambda r: r and setattr(win, 'QTELE', r))
+    if page_of(win).startswith('updates') and time.time() - getattr(win, 'swnat_at', 0) > 5:
+        win.swnat_at = time.time()
+        win.call('api/switch_native', then=lambda r: r and setattr(win, 'SWNAT', r))
     if page_of(win) == 'accounts' and win.__dict__.get('YT_QR'):
         if win.CFG.get('yt_set'):
             win.YT_QR = None
@@ -167,12 +173,24 @@ def groups(win, page):
                        'Erreichbar: Bildschirme, Ton und Lichter aus, Spiel pausiert, aber WLAN und Downloads laufen weiter. Tiefschlaf: legt das Gerät ganz schlafen.')]
         return [('Helligkeit', rows, None),
                 ('Ton', sound, None),
-                ('Ruheschutz (OLED)', [choice('Schwarz nach', REST, rest, lambda v: config_set(win, rest_min=v),
-                                             'Rührt niemand Tandem an, werden beide Bildschirme schwarz und zeigen nur eine wandernde Uhr. Das schont die OLED-Bildschirme. Jede Taste weckt sie.')],
-                 'Während ein Spiel läuft, bleibt der Bildschirm an.'),
-                ('Im Spiel', [choice('FPS-Fenster (oben)', [(0, 'Aus'), (1, 'FPS'), (2, 'Leiste'), (3, 'Graph')], int(CFG.get('hud_level') or 0),
-                                     lambda v: config_set(win, hud_level=v),
-                                     'Blendet oben im Spiel Live-FPS, Auslastung und Frametime-Graph ein (auch jederzeit über die Thor-Taste umschaltbar).')], None),
+                ('Ruheschutz (OLED)', [
+                    choice('Schwarz nach', REST, rest, lambda v: config_set(win, rest_min=v),
+                           'Rührt niemand Tandem an, startet nach dieser Zeit der Dual-Screen-OLED-Bildschirmschoner. Jede Taste weckt ihn.'),
+                    choice('Bildschirmschoner-Stil', list(ui.screensaver.STYLES), CFG.get('saver_style') or 'kosmos',
+                           lambda v: config_set(win, saver_style=v),
+                           'Thor Kosmos lässt deine Spiele-Cover schwebend über beide OLED-Bildschirme gleiten; Arcade zeigt wechselnde Spiel-Porträts; Dual-Aurora fließendes Nordlicht.'),
+                    {'k': 'button', 't': 'Bildschirmschoner jetzt starten',
+                     'fn': lambda: win.post('api/saver', {'open': True}),
+                     'help': 'Startet den Dual-Screen-Bildschirmschoner sofort auf beiden Bildschirmen.'},
+                ], 'Während ein Spiel läuft, bleibt der Bildschirm an.'),
+                ('Im Spiel', [
+                    choice('FPS-Fenster (oben)', [(0, 'Aus'), (1, 'FPS'), (2, 'Leiste'), (3, 'Graph')], int(CFG.get('hud_level') or 0),
+                           lambda v: config_set(win, hud_level=v),
+                           'Blendet oben im Spiel Live-FPS, Auslastung und Frametime-Graph ein (auch jederzeit über die Thor-Taste umschaltbar).'),
+                    choice('Konsolen-Klänge', [('off', 'Aus'), ('subtle', 'Dezent')], CFG.get('ui_sounds') or 'off',
+                           lambda v: config_set(win, ui_sounds=v),
+                           'Dezente akustische Rückmeldung beim Navigieren und Spielstart wie auf der Switch 2.'),
+                ], None),
                 ('Standby', stby, None)]
     if page == 'controls':
         C, gyro = win.CTRL or {}, (T or {}).get('gyro')
@@ -191,6 +209,9 @@ def groups(win, page):
                             'Belegung der Tasten auf dem unteren Bildschirm, wenn etwas eingetippt wird.'))
         rows2.append(toggle('Tastatur-Vibration', CFG.get('kb_haptics', True), lambda v: config_set(win, kb_haptics=v),
                             'Kurzes haptisches Klicken beim Tippen auf der Bildschirmtastatur.'))
+        rows2.append({'k': 'button', 't': 'Thor klingeln & vibrieren',
+                      'fn': lambda: win.post('api/locate', {}),
+                      'help': 'Spielt einen Suchton ab und lässt den Thor rhythmisch vibrieren (auch vom Handy über die Einstellungsseite auslösbar).'})
         return [(None, rows, 'Bestätigen ist immer A, zurück immer B – in Tandem, in jedem Emulator und in den Ports.'), ('Controller', rows2, None)]
     if page == 'controls>map':
         table = (win.CTRL or {}).get('table')
@@ -223,12 +244,17 @@ def groups(win, page):
     if page == 'perf':
         if T is None: return loading
         pw, B = T.get('power'), win.BATT
+        bd = ((getattr(win, 'QTELE', None) or {}).get('battery')) or {}
         rows = []
         if pw:
             labels = dict(pw.get('profiles') or [])
             rows.append(choice('Leistungsprofil', list(labels.items()), pw.get('profile'), lambda v: thor_set(win, 'profile', v),
                                'Sparsam: länger spielen, leiser. Ausgewogen: für fast alles. Leistung: volle Kraft für PS2, Switch und PC-Spiele – wärmer und lauter.'))
+        rows.append(choice('Akku-Schutz (Lade-Hinweis)', [(0, 'Aus'), (80, 'Bei 80 %'), (90, 'Bei 90 %')],
+                           int(CFG.get('charge_alert') or 0), lambda v: config_set(win, charge_alert=v),
+                           'Meldet sich wie auf der Switch 2 mit Hinweis und Ton, sobald der Akku beim Laden 80 % bzw. 90 % erreicht – schont die Akkuzellen auf Dauer.'))
         info = ([{'k': 'info', 't': 'Akku', 'v': f'{B["level"]} %' + (' · lädt' if B.get('charging') else ''), 'help': 'Ladestand des Akkus.'}] if B else []) + \
+               ([{'k': 'info', 't': 'Akku-Zustand', 'v': f'{bd["health"]} %' + (f' · {bd["cycles"]} Zyklen' if bd.get('cycles') is not None else ''), 'help': 'Gesundheitszustand und bisherige Ladezyklen des Akkus.'}] if bd.get('health') is not None else []) + \
                ([{'k': 'info', 't': 'Temperatur', 'v': f'{pw["temp"]} °C', 'help': 'Temperatur im Gerät. Bis etwa 80 °C ist alles in Ordnung.'},
                  {'k': 'info', 't': 'Lüfter', 'v': f'{pw["fan"]} U/min', 'help': 'Der Lüfter regelt sich selbst nach der Temperatur und dem Profil.'}] if pw else [])
         return [(None, rows, 'Gilt sofort und bleibt bis zur nächsten Änderung.' if rows else 'Das Leistungsprofil ist hier nicht erreichbar.'), ('Zustand', info, None)]
@@ -408,12 +434,46 @@ def groups(win, page):
         return [('Sicherungsarchive (neueste zuerst)', r_rows, 'Vor dem Zurückspielen legt Tandem automatisch eine Sicherheitskopie deiner aktuellen Stände an.')]
     if page == 'updates':
         U = win.UPD or {}
+        SN = getattr(win, 'SWNAT', None) or {}
         rows = [{'k': 'info', 't': 'Tandem', 'v': 'Version ' + str(CFG.get('version', '')), 'help': 'Die installierte Version.'},
                 {'k': 'button', 't': 'Nach Update suchen', 'fn': lambda: self_update(win, False), 'v': U.get('text', ''), 'help': 'Fragt die Update-Quelle nach einer neuen Version. Installiert wird erst auf Wunsch.'}]
         if U.get('new'): rows.append({'k': 'button', 't': f'Version {U["new"]} installieren', 'fn': lambda: self_update(win, True), 'help': 'Installiert die neue Version; sie gilt ab dem nächsten Start von Tandem. Geht etwas schief, bleibt die bisherige.'})
         extras = [{'k': 'button', 't': e['name'] + (' aktualisieren' if e.get('installed') else ' installieren'), 'fn': lambda e=e: win.start({'id': 'upd:' + e['id'], 's': 'app'}),
                    'help': 'Lädt die neueste Fassung aus dem Netz. Das kann eine Minute dauern.'} for e in win.L.get('extras') or []]
-        return [(None, rows, 'Quelle: ' + (CFG.get('update_url') or 'keine') if CFG.get('update_url') is not None else None), ('Emulatoren', extras, None)]
+        nat_rows = [
+            {'k': 'info', 't': 'BananaNative (Switch 2)', 'v': SN.get('banana_version') or 'nicht installiert',
+             'help': 'Führt unterstützte Switch-2-Titel nativ auf ARM64 + Vulkan aus.'},
+            {'k': 'info', 't': 'Peanuts Native (Switch 1)', 'v': SN.get('peanuts_version') or 'nicht installiert',
+             'help': 'Wandelt unterstützte Switch-1-Spiele in native ARM64-Pakete mit Vulkan-Shadern um.'},
+            {'k': 'link', 't': 'Switch-Spiele nativ umwandeln',
+             'v': (SN.get('job') or {}).get('step') if (SN.get('job') or {}).get('running') else f'{sum(1 for g in (SN.get("games") or []) if g.get("supported"))} kompatibel',
+             'fn': lambda: go_page(win, 'updates>native'),
+             'help': 'Zeigt deine kompatiblen Switch-Spiele auf der Karte und wandelt sie direkt auf dem Thor in native Pakete um.'},
+        ]
+        return [(None, rows, 'Quelle: ' + (CFG.get('update_url') or 'keine') if CFG.get('update_url') is not None else None),
+                ('Switch Nativ', nat_rows, None),
+                ('Emulatoren', extras, None)]
+    if page == 'updates>native':
+        SN = getattr(win, 'SWNAT', None) or {}
+        job = SN.get('job') or {}
+        j_rows = []
+        if job.get('running'):
+            j_rows.append({'k': 'info', 't': job.get('title', ''), 'v': job.get('step', 'läuft …'), 'help': 'Umwandlung läuft im Hintergrund weiter.'})
+        elif job.get('error'):
+            j_rows.append({'k': 'info', 't': 'Letzter Lauf', 'v': 'Fehler', 'sub': job['error'][:80], 'help': job['error']})
+        cand = [g for g in (SN.get('games') or []) if g.get('supported')]
+        c_rows = [{
+            'k': 'button',
+            't': g['t'],
+            'v': '✓ Nativ bereit' if g.get('converted') else ('Umwandeln' if g.get('host_ready') else 'Profil bereit'),
+            'sub': ('Mit Begleiter · ' if g.get('companion') else '') + ('Update erkannt' if g.get('has_update') else 'Basis-Dump'),
+            'fn': lambda gid=g['id']: win.post('api/switch_native', {'id': gid},
+                                               then=lambda r: (setattr(win, 'swnat_at', 0), r and win.toast(r.get('error') or r.get('text', '')))),
+            'help': 'Startet die native ARM64- & Vulkan-Shader-Umwandlung im Hintergrund (dauert je nach Spiel ca. 5–25 Min.).',
+        } for g in cand]
+        return ([('Aktiver Auftrag', j_rows, None)] if j_rows else []) + [
+            ('Kompatible Switch-Spiele auf deinem Thor', c_rows or [{'k': 'info', 't': 'Keine passenden Switch-Spiele gefunden', 'v': '', 'help': 'Lege .nsp- oder .xci-Dateien in ROMs/switch ab.'}],
+             'Updates (.nsp) kannst du optional im Web-Dashboard unter Bibliothek › Switch-Update hochladen.')]
     if page == 'about':
         B = win.BATT
         return [(None, [{'k': 'info', 't': 'Gerät', 'v': 'AYN Thor', 'help': 'Zwei Bildschirme, oben das Spiel, unten die Bedienung.'},

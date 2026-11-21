@@ -44,10 +44,10 @@ def all_candidates(home=None):
         ('port-kknd2', ports / 'kknd2/data/support'),
         ('port-ra2', ports / 'ra2/data/ra2engine'),
     ]
-    bn_root = h / '.local/share/banananative'
-    if bn_root.is_dir():
-        for sub in sorted(bn_root.iterdir()):
-            if (sub / 'save').is_dir(): candidates.append((f'banananative-{sub.name}', sub / 'save'))
+    for nroot, prefix in ((h / '.local/share/banananative', 'banananative'), (h / '.local/share/peanuts', 'peanuts')):
+        if nroot.is_dir():
+            for sub in sorted(nroot.iterdir()):
+                if (sub / 'save').is_dir(): candidates.append((f'{prefix}-{sub.name}', sub / 'save'))
     return candidates
 
 
@@ -218,6 +218,8 @@ def restore(archive_name, only_key=None, home=None, local_dir=None):
                 dst = targets.get(key)
                 if dst is None and key.startswith('banananative-'):
                     dst = h / '.local/share/banananative' / key.split('banananative-', 1)[1] / 'save'
+                elif dst is None and key.startswith('peanuts-'):
+                    dst = h / '.local/share/peanuts' / key.split('peanuts-', 1)[1] / 'save'
                 if dst is None: continue
                 dst.mkdir(parents=True, exist_ok=True)
                 copy_clean(sub, dst)

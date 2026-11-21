@@ -199,7 +199,8 @@ def shortcut_direct(vdf, appid):
     exe_m = re.search(rb'\x01(?i:exe)\x00([^\x00]*)\x00', chunk)
     opt_m = re.search(rb'\x01(?i:launchoptions)\x00([^\x00]*)\x00', chunk)
     exe = exe_m[1].decode(errors='replace').strip().strip('"') if exe_m else ''
-    if 'bananative' not in exe.lower() or not os.access(exe, os.X_OK): return None
+    low = exe.lower()
+    if ('bananative' not in low and 'peanuts' not in low) or not os.access(exe, os.X_OK): return None
     opts = opt_m[1].decode(errors='replace') if opt_m else ''
     tail = opts.split('%command%', 1)[1] if '%command%' in opts else ''
     try: return [exe, *shlex.split(tail)]
@@ -412,28 +413,157 @@ SYS_ALIASES = {'sfc': ['snes'], 'snes': ['sfc'], 'famicom': ['nes'], 'nes': ['fa
                'cps': ['arcade', 'fbneo'], 'cps1': ['arcade', 'fbneo'], 'cps2': ['arcade', 'fbneo'], 'cps3': ['arcade', 'fbneo']}
 
 
+def _box_candidates(stem):
+    """Candidate No-Intro / Redump names on libretro-thumbnails (exact stem first, then German/European/US retail boxes)."""
+    clean_n = lambda s: re.sub(r'[&*/:`<>?\\|"]', '_', s)
+    out = [clean_n(stem)]
+    s2 = re.sub(r'\s*(\((?:Rev\s*[\w.]+|v[\d.]+|Uncensored|Enhanced|Beta|Proto)\)|\[[^\]]*\])+\s*$', '', stem, flags=re.I).strip()
+    if s2 and clean_n(s2) not in out: out.append(clean_n(s2))
+    s3 = re.sub(r'\s*\([A-Z][a-z](?:,[A-Z][a-z])+\)', '', s2).strip()
+    if s3 and clean_n(s3) not in out: out.append(clean_n(s3))
+    base = re.sub(r'\s*\([^)]*\)', '', s3).strip()
+    if base:
+        for reg in ('(Germany)', '(Europe)', '(USA, Europe)', '(USA)', '(World)'):
+            cand = clean_n(f'{base} {reg}')
+            if cand not in out: out.append(cand)
+    return out[:6]
+
+
+def _norm_box_title(t):
+    s = re.sub(r'\s*\((?:PeanutsNative|BananaNative)\)\s*$', '', str(t or ''), flags=re.I)
+    s = s.replace('Evoli', 'Eevee').replace('’', "'")
+    return re.sub(r'[^a-z0-9]+', ' ', s.lower()).strip()
+
+
+def _switch_box_index(fetch_url):
+    """Download GameTDB's Switch XML once and return {normalized_title: 5-letter-code}, preferring ALL/EUR/DEU editions."""
+    import io
+    raw = fetch_url('https://www.gametdb.com/switchtdb.zip', timeout=12)
+    if not raw or raw[:2] != b'PK': return {}
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+            xml = zf.read(zf.namelist()[0]).decode('utf-8', errors='ignore')
+    except (OSError, zipfile.BadZipFile, IndexError): return {}
+    best = {}
+    for blk in re.findall(r'<game name="[^"]+">.*?</game>', xml, re.S):
+        cid = re.search(r'<id>([A-Z0-9]{4,6})</id>', blk)
+        if not cid: continue
+        code = cid.group(1)
+        reg = (re.search(r'<region>([^<]+)</region>', blk) or [None, ''])[1].upper()
+        gname = (re.search(r'<game name="([^"]+)"', blk) or [None, ''])[1]
+        score = (3 if any(r in reg for r in ('ALL', 'EUR', 'DEU', 'GER')) else 2 if 'USA' in reg else 1)
+        if '[' in gname or 'Edition' in gname or 'Double Pack' in gname: score -= 1
+        for title in re.findall(r'<title>([^<]+)</title>', blk):
+            nt = _norm_box_title(title)
+            if nt and score > best.get(nt, (-9, ''))[0]:
+                best[nt] = (score, code)
+    return {k: v[1] for k, v in best.items()}
+
+
 def scrape(games):
-    """Fetch missing covers (and a screenshot as background) from the libretro thumbnail server. Returns how many arrived."""
-    import urllib.parse, urllib.request
-    found = 0
-    for game in games:
+    """Fetch missing original retail boxart (and fallback covers/snaps) from libretro-thumbnails and GameTDB."""
+    import concurrent.futures, urllib.parse, urllib.request
+    miss_file = STATE / 'boxart-miss.json'
+    now = int(time.time())
+    try: miss = {k: int(v) for k, v in json.loads(miss_file.read_text()).items() if now - int(v) < 7 * 86400}
+    except (OSError, ValueError, TypeError, AttributeError): miss = {}
+    miss_lock = threading.Lock()
+
+    def fetch_url(url, timeout=10):
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': 'Tandem/0.5 (game launcher)'})
+            with urllib.request.urlopen(req, timeout=timeout) as reply:
+                return reply.read()
+        except OSError:
+            return None
+
+    def fetch_libretro(playlist, kind, cand):
+        repo = urllib.parse.quote(playlist.replace(' ', '_'))
+        enc = urllib.parse.quote(cand)
+        for base_u in (f'https://raw.githubusercontent.com/libretro-thumbnails/{repo}/master/{kind}/{enc}.png',
+                       f'https://thumbnails.libretro.com/{urllib.parse.quote(playlist)}/{kind}/{enc}.png'):
+            data = fetch_url(base_u, timeout=8)
+            if data and data[:4] == b'\x89PNG': return data
+        return None
+
+    def retro_job(game):
         playlist = LIBRETRO.get(game['s'])
-        if game.get('cover') or not playlist or 'path' not in game: continue
+        if not playlist or 'path' not in game: return 0
         stem = Path(game['path']).stem
-        name = re.sub(r'[&*/:`<>?\\|"]', '_', stem)  # the server's file naming rule
-        for kind, folder in (('Named_Boxarts', 'covers'), ('Named_Snaps', 'snaps')):
-            target = MEDIA / game['s'] / folder / f'{stem}.png'
-            if target.is_file(): continue
-            url = f'https://thumbnails.libretro.com/{urllib.parse.quote(playlist)}/{kind}/{urllib.parse.quote(name)}.png'
-            try:
-                with urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent': 'Tandem/0.1 (game launcher)'}), timeout=15) as reply:
-                    data = reply.read()
-            except OSError: continue
-            if data[:4] != b'\x89PNG': continue
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(data)
-            found += kind == 'Named_Boxarts'
+        got = 0
+        box_target = MEDIA / game['s'] / 'boxes' / f'{stem}.png'
+        mkey = f'{game["s"]}:{stem}'
+        if not game.get('box') and not box_target.is_file() and mkey not in miss:
+            data = None
+            for cand in _box_candidates(stem):
+                data = fetch_libretro(playlist, 'Named_Boxarts', cand)
+                if data: break
+            if data:
+                box_target.parent.mkdir(parents=True, exist_ok=True)
+                box_target.write_bytes(data)
+                got += 1
+            else:
+                with miss_lock: miss[mkey] = now
+        if not game.get('cover'):
+            cov_target = MEDIA / game['s'] / 'covers' / f'{stem}.png'
+            if box_target.is_file() and not cov_target.is_file():
+                cov_target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(box_target, cov_target)
+            snap_target = MEDIA / game['s'] / 'snaps' / f'{stem}.png'
+            if not snap_target.is_file():
+                sdata = fetch_libretro(playlist, 'Named_Snaps', _box_candidates(stem)[0])
+                if sdata:
+                    snap_target.parent.mkdir(parents=True, exist_ok=True)
+                    snap_target.write_bytes(sdata)
+        return got
+
+    found = 0
+    retro_todo = [g for g in games if LIBRETRO.get(g.get('s')) and 'path' in g and (not g.get('box') or not g.get('cover'))]
+    if retro_todo:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+            found += sum(pool.map(retro_job, retro_todo))
+
+    sw_todo = [g for g in games if (g.get('s') == 'switch' or g.get('native_engine')) and not g.get('box')]
+    if sw_todo:
+        sw_idx = None
+        for g in sw_todo:
+            bkey = g.get('tid') or (Path(g['path']).stem if g.get('path') else g['id'])
+            mkey = f'switch:{bkey}'
+            if mkey in miss or any((MEDIA / 'switch/boxes' / f'{bkey}{ext}').is_file() for ext in ('.png', '.jpg')):
+                continue
+            if sw_idx is None: sw_idx = _switch_box_index(fetch_url)
+            nt = _norm_box_title(g.get('t'))
+            code = sw_idx.get(nt)
+            if not code and len(nt) >= 12:
+                code = next((c for k, c in sw_idx.items() if k.startswith(nt + ' ')), None)
+            saved = False
+            if code:
+                for kind, ext, sig in (('box', '.png', b'\x89PNG'), ('coverM', '.jpg', b'\xff\xd8\xff')):
+                    for lang in ('DE', 'EN', 'US', 'JA'):
+                        data = fetch_url(f'https://art.gametdb.com/switch/{kind}/{lang}/{code}{ext}', timeout=8)
+                        if data and data.startswith(sig):
+                            out = MEDIA / 'switch/boxes' / f'{bkey}{ext}'
+                            out.parent.mkdir(parents=True, exist_ok=True)
+                            out.write_bytes(data)
+                            found += 1; saved = True; break
+                    if saved: break
+            if not saved:
+                miss[mkey] = now
+
+    try:
+        STATE.mkdir(parents=True, exist_ok=True)
+        miss_file.write_text(json.dumps(miss))
+    except OSError: pass
     return found
+
+
+def _find_switch_box(keys):
+    for key in keys:
+        if not key: continue
+        for ext in ('.png', '.jpg', '.jpeg', '.webp'):
+            p = MEDIA / 'switch/boxes' / f'{key}{ext}'
+            if p.is_file(): return str(p)
+    return None
 
 
 class Library:
@@ -452,20 +582,20 @@ class Library:
 
     def _art(self, root, system):
         base = Path(root).parent
-        cover, hero, logo, shot, vid = {}, {}, {}, {}, {}
+        cover, box, hero, logo, shot, vid = {}, {}, {}, {}, {}, {}
         sys_names = list(reversed([system] + SYS_ALIASES.get(system, [])))  # primary system name wins over alias
         for sname in sys_names:
-            for media, covers, heroes, logos, shots, vids in (
-                    (base / 'ES-DE/downloaded_media', ('covers', 'miximages', 'screenshots'), ('fanart', 'screenshots'), ('marquees', 'wheel'), ('screenshots',), ('videos',)),
-                    (HOME / 'ES-DE/downloaded_media', ('covers', 'miximages', 'screenshots'), ('fanart', 'screenshots'), ('marquees', 'wheel'), ('screenshots',), ('videos',)),
-                    (base / 'Cocoon/downloaded_media', ('icon', 'screenshot_title'), ('hero', 'screenshot_gameplay'), ('logo',), ('screenshot_gameplay', 'screenshot_title'), ('videos', 'video')),
-                    (MEDIA, ('covers',), ('snaps',), (), ('snaps',), ())):
-                for kinds, target in ((covers, cover), (heroes, hero), (logos, logo), (shots, shot)):
+            for media, covers, boxes, heroes, logos, shots, vids in (
+                    (base / 'ES-DE/downloaded_media', ('covers', 'miximages', 'screenshots'), ('3dboxes', 'covers'), ('fanart', 'screenshots'), ('marquees', 'wheel'), ('screenshots',), ('videos',)),
+                    (HOME / 'ES-DE/downloaded_media', ('covers', 'miximages', 'screenshots'), ('3dboxes', 'covers'), ('fanart', 'screenshots'), ('marquees', 'wheel'), ('screenshots',), ('videos',)),
+                    (base / 'Cocoon/downloaded_media', ('icon', 'screenshot_title'), (), ('hero', 'screenshot_gameplay'), ('logo',), ('screenshot_gameplay', 'screenshot_title'), ('videos', 'video')),
+                    (MEDIA, ('covers', 'boxes'), ('boxes', 'covers'), ('snaps',), (), ('snaps',), ())):
+                for kinds, target in ((covers, cover), (boxes, box), (heroes, hero), (logos, logo), (shots, shot)):
                     for kind in reversed(kinds):  # earlier names win
                         target.update(self._media_index(media / sname / kind))
                 for vkind in reversed(vids):
                     vid.update(self._media_index(media / sname / vkind, VIDEOS))
-        return cover, hero, logo, shot, vid
+        return cover, box, hero, logo, shot, vid
 
     def _gamelist(self, root, system):
         """stem -> {'name', 'desc', 'genre', 'dev', 'year', 'ttb'} from Cocoon or ES-DE gamelist.xml."""
@@ -537,7 +667,7 @@ class Library:
             for system, (name, hue, exts, _) in SYSTEMS.items():
                 folder = Path(root) / system
                 if not folder.is_dir(): continue
-                cover, hero, logo, shot, vid = self._art(root, system)
+                cover, box, hero, logo, shot, vid = self._art(root, system)
                 gmeta = self._gamelist(root, system)
                 wanted = {'.' + e for e in exts.split()}
                 entries = sorted((e for e in os.scandir(folder) if not e.name.startswith('.') and e.is_file()), key=lambda e: e.name.lower())
@@ -555,12 +685,18 @@ class Library:
                     path = Path(entry.path)
                     if path.suffix.lower() not in wanted or entry.name.lower() in m3u_discs: continue
                     gid = ident(system, entry.name)
-                    c_img, h_img = self._image(cover.get(path.stem)), self._image(hero.get(path.stem) or cover.get(path.stem))
+                    b_raw = box.get(path.stem)
+                    if not b_raw and system == 'switch':
+                        sw_tid = re.search(r'\[([0-9A-Fa-f]{16})\]', entry.name)
+                        b_raw = _find_switch_box([sw_tid.group(1).upper() if sw_tid else '', path.stem])
+                    c_img, h_img = self._image(cover.get(path.stem) or b_raw), self._image(hero.get(path.stem) or cover.get(path.stem) or b_raw)
+                    b_img = self._image(b_raw)
                     l_img, s_img = self._image(logo.get(path.stem)), self._image(shot.get(path.stem))
                     v_file = self._image(vid.get(path.stem))
                     gm = gmeta.get(path.stem) or {}
                     title = clean(gm['name']) if gm.get('name') else clean(path.stem)
                     game = {'id': gid, 't': title, 's': system, 'path': entry.path, 'cover': c_img, 'hero': h_img}
+                    if b_img: game['box'] = b_img
                     if l_img: game['logo'] = l_img
                     if s_img and s_img not in (h_img, c_img): game['shot'] = s_img
                     if v_file: game['video'] = v_file
@@ -579,6 +715,7 @@ class Library:
             games[gid] = {'id': gid, 't': name[1], 's': 'steam', 'appid': appid[1], 'cover': self._image(steam_art(self.steam, appid[1], 'library_600x900.jpg')),
                           'hero': self._image(steam_art(self.steam, appid[1], 'library_hero.jpg')), **({'logo': s_logo} if s_logo else {})}
             if loading: games[gid].update(inst='load', pct=round(100 * done / total) if total else None)
+        seen_native_dirs, seen_native_tids = set(), set()
         for appid, name, grid in steam_shortcuts(self.steam):  # Battle.net and other launchers: they want a login, keys go along
             art = lambda n: self._image(str(grid / n)) if (grid / n).is_file() else None
             direct = shortcut_direct(grid.parent / 'shortcuts.vdf', appid)
@@ -586,9 +723,36 @@ class Library:
             entry = {'id': 'steam' + appid, 't': name, 's': 'steam',
                      'cover': art(f'{appid}p.png') or art(f'{appid}p.jpg'), 'hero': art(f'{appid}_hero.png') or art(f'{appid}_hero.jpg'),
                      **({'logo': sc_logo} if sc_logo else {})}
-            if direct: entry['direct'] = direct
+            if direct:
+                entry['direct'] = direct
+                entry['native_engine'] = 'PeanutsNative' if 'peanuts' in direct[0].lower() else 'BananaNative'
+                sc_tid = ''
+                for arg in direct[1:]:
+                    try: seen_native_dirs.add(str(Path(arg).resolve()))
+                    except OSError: pass
+                    for m in re.finditer(r'([0-9A-Fa-f]{16})-work', str(arg)):
+                        sc_tid = m.group(1).upper()
+                        seen_native_tids.add(sc_tid)
+                if sc_tid:
+                    entry['tid'] = sc_tid
+                    sc_box = self._image(_find_switch_box([sc_tid, 'steam' + appid]))
+                    if sc_box: entry['box'] = sc_box
             else: entry.update(appid=appid, gameid=str(int(appid) << 32 | 0x02000000), keys=True)
             games['steam' + appid] = entry
+        for np in companion.discover_native_packs(self.roots, HOME):
+            try: rdir = str(Path(np['dir']).resolve())
+            except OSError: rdir = np['dir']
+            try: pdir = str(Path(np.get('pack_dir') or np['dir']).resolve())
+            except OSError: pdir = np.get('pack_dir') or np['dir']
+            if rdir in seen_native_dirs or pdir in seen_native_dirs or np['tid'].upper() in seen_native_tids: continue
+            seen_native_dirs.update((rdir, pdir))
+            seen_native_tids.add(np['tid'].upper())
+            nid = 'native-' + np['tid'].lower()
+            np_cov = self._image(np['cover'])
+            np_box = self._image(np.get('box') or _find_switch_box([np['tid'].upper(), nid]))
+            games[nid] = {'id': nid, 't': np['title'], 's': 'switch', 'tid': np['tid'].upper(), 'direct': np['direct'],
+                          'native_engine': np['engine'], 'cover': np_cov or np_box, 'hero': np_cov or np_box,
+                          **({'box': np_box} if np_box else {})}
         for port, (title, folder, _, deck) in PORTS.items():
             if not (PORTS_DIR / folder / 'run').is_file(): continue
             own = PORTS_DIR / folder / 'dist/art/cover.png'  # art the port brings itself (no Steam release to borrow from)
@@ -629,9 +793,10 @@ class Library:
         emus = {s: [{'id': e['id'], 'label': e['label']} for e in emulators_for(s)] for s in systems}
         public = [{k: v for k, v in g.items() if k not in ('path', 'direct')} for g in self.games.values()]
         return {'systems': info, 'overlays': overlays, 'emulators': emus, 'games': public, 'apps': apps,
-                'fav': saved.get('fav', []), 'played': saved.get('played', {}), 'sessions': saved.get('sessions', {}),
-                'collections': saved.get('collections', {}), 'hidden': saved.get('hidden', []),
-                'sort': saved.get('sort', 'recent'), 'gameopt': saved.get('gameopt', {}), 'extras': extras_state()}
+                'fav': saved.get('fav', []), 'pinned': saved.get('pinned', []), 'played': saved.get('played', {}),
+                'sessions': saved.get('sessions', {}), 'collections': saved.get('collections', {}),
+                'hidden': saved.get('hidden', []), 'sort': saved.get('sort', 'recent'),
+                'gameopt': saved.get('gameopt', {}), 'extras': extras_state()}
 
 
 def focused_window():
@@ -736,7 +901,7 @@ class Tandem:
             except queue.Full: pass
 
     def command(self, game):
-        if game.get('direct'): return 'BananaNative', game['direct']
+        if game.get('direct'): return game.get('native_engine') or 'BananaNative', game['direct']
         if game['s'] == 'steam': return 'Steam', ['steam', '-silent', f'steam://rungameid/{game.get("gameid") or game["appid"]}']  # no Steam window, only the game
         if game['s'] == 'port': return 'Port', [str(PORTS_DIR / PORTS[game['port']][1] / 'run'), PORTS[game['port']][2]]
         prefer = (self.saved.get('gameopt', {}).get(game['id']) or {}).get('emu')
@@ -772,7 +937,7 @@ class Tandem:
             if pack: cmd, wide = wide_core(cmd, pack, self.saved.get('wide', {}).get(gid, False))
             if not self.dry: self.home_window = focused_window()
             opt = self.saved.get('gameopt', {}).get(gid) or {}
-            prof = opt.get('profile') or ('Performance' if label == 'BananaNative' else '')
+            prof = opt.get('profile') or ('Performance' if label in ('BananaNative', 'PeanutsNative') else '')
             fps = opt.get('fps') if opt.get('fps') in FPS_LIMITS else 0
             scale = opt.get('scale') if opt.get('scale') in SCALING_FILTERS else 'linear'
             is_dual = bool((game['s'] == 'wiiu') or (game['s'] == 'nds' and label == 'melonDS') or (game['s'] == 'n3ds' and label == 'Azahar'))
@@ -786,7 +951,7 @@ class Tandem:
                         if game['s'] == 'wiiu': cemu_pad_window()
                         else: companion.setup_dual_emu(game['s'], label)
                     if game['s'] == 'port': env = {**os.environ, 'TANDEM_DECK_SOCKET': str(DECK_SOCKET)}
-                    if label == 'BananaNative':
+                    if label in ('BananaNative', 'PeanutsNative'):
                         env = {**os.environ, 'DISPLAY': os.environ.get('DISPLAY') or ':0',
                                'WAYLAND_DISPLAY': os.environ.get('WAYLAND_DISPLAY') or 'gamescope-0',
                                'XDG_RUNTIME_DIR': os.environ.get('XDG_RUNTIME_DIR') or f'/run/user/{os.getuid()}'}
@@ -842,7 +1007,7 @@ class Tandem:
                 if prof: opt['profile'] = prof
                 else: opt.pop('profile', None)
                 if run and run['id'] == gid:
-                    run['profile'] = opt.get('profile') or ('Performance' if run.get('emu') == 'BananaNative' else '')
+                    run['profile'] = opt.get('profile') or ('Performance' if run.get('emu') in ('BananaNative', 'PeanutsNative') else '')
             if fps is not None:
                 if fps not in FPS_LIMITS: return {'error': 'unbekannte Einstellung'}
                 if fps: opt['fps'] = int(fps)
@@ -880,10 +1045,14 @@ class Tandem:
         with self.lock:
             cols = self.saved.setdefault('collections', {})
             hidden = self.saved.setdefault('hidden', [])
+            pinned = self.saved.setdefault('pinned', [])
             if act == 'sort':
                 s = str(data.get('sort') or 'recent')
                 if s not in ('recent', 'az', 'time', 'year'): return {'error': 'unbekannte Sortierung'}
                 self.saved['sort'] = s
+            elif act == 'pin' and gid:
+                if gid in pinned: pinned.remove(gid)
+                else: pinned.insert(0, gid)
             elif act == 'hide' and gid:
                 if gid in hidden: hidden.remove(gid)
                 else: hidden.append(gid)
@@ -901,7 +1070,7 @@ class Tandem:
                 return {'error': 'unbekannte Aktion'}
             self.save()
         self.publish('library')
-        return {'ok': True, 'collections': self.saved.get('collections', {}),
+        return {'ok': True, 'collections': self.saved.get('collections', {}), 'pinned': self.saved.get('pinned', []),
                 'hidden': self.saved.get('hidden', []), 'sort': self.saved.get('sort', 'recent')}
 
     def wide(self, on):
@@ -1985,7 +2154,10 @@ def save_config(data):
     if data.get('view_mode') in ('grid', 'stage'): config['view_mode'] = data['view_mode']
     if isinstance(data.get('overlays'), bool): config['overlays'] = data['overlays']
     if data.get('motion') in ('full', 'reduced'): config['motion'] = data['motion']
-    if data.get('rest_min') in (0, 1, 3, 10): config['rest_min'] = data['rest_min']
+    if data.get('rest_min') in (0, 1, 3, 5, 10): config['rest_min'] = data['rest_min']
+    if data.get('saver_style') in ('kosmos', 'arcade', 'aurora', 'minimal'): config['saver_style'] = data['saver_style']
+    if data.get('charge_alert') in (0, 80, 90): config['charge_alert'] = int(data['charge_alert'])
+    if data.get('ui_sounds') in ('off', 'subtle'): config['ui_sounds'] = data['ui_sounds']
     if isinstance(data.get('lid_sleep'), bool): config['lid_sleep'] = data['lid_sleep']
     if isinstance(data.get('lid_music'), bool): config['lid_music'] = data['lid_music']
     if isinstance(data.get('dock_dim'), bool): config['dock_dim'] = data['dock_dim']
@@ -2171,6 +2343,9 @@ def public_config():
             'kb_layout': config.get('kb_layout', ''), 'kb_haptics': config.get('kb_haptics', True),
             'controls_style': config.get('controls_style') if config.get('controls_style') in ('thor', 'xbox') else 'thor',
             'hud_level': int(config['hud_level']) if config.get('hud_level') in (0, 1, 2, 3) else 0,
+            'saver_style': config.get('saver_style') if config.get('saver_style') in ('kosmos', 'arcade', 'aurora', 'minimal') else 'kosmos',
+            'charge_alert': int(config['charge_alert']) if config.get('charge_alert') in (0, 80, 90) else 0,
+            'ui_sounds': config.get('ui_sounds') if config.get('ui_sounds') in ('off', 'subtle') else 'off',
             'lang': 'en' if config.get('lang') == 'en' else 'de', 'remote_url': config.get('remote_url', ''), 'rest_min': config.get('rest_min', 3), 'version': VERSION, 'update_url': config.get('update_url', UPDATE_URL), 'theme': config.get('theme') if config.get('theme') in [t['id'] for t in looks] else 'toravo', 'themes': looks}
 
 
@@ -2674,6 +2849,8 @@ def handler(tandem):
             if path == '/api/stats': return self.send(200, tandem.stats_payload())
             if path == '/api/hud': return self.send(200, {'level': public_config()['hud_level']})
             if path == '/api/telemetry': return self.send(200, telemetry.snapshot())
+            if path == '/api/switch_native':
+                return self.send(200, companion.switch_native_info(tandem.library.games, tandem.library.roots, HOME))
             if path == '/api/bgm': return self.send(200, telemetry.bgm_status())
             if path == '/api/dualwin':
                 sys_id = (tandem.run or {}).get('s', '')
@@ -2869,6 +3046,28 @@ def handler(tandem):
             if path == '/api/wol':
                 mac = str(data.get('mac') or load_config().get('wol_mac') or '')
                 return self.send(200, telemetry.wake_on_lan(mac))
+            if path == '/api/locate':
+                res = telemetry.locator_ping()
+                tandem.publish('toast', {'text': res['text']})
+                return self.send(200, res)
+            if path == '/api/saver':
+                tandem.publish('saver', {'open': bool(data.get('open', True))})
+                return self.send(200, {'ok': True, 'open': bool(data.get('open', True))})
+            if path == '/api/sound':
+                if public_config().get('ui_sounds') == 'subtle':
+                    telemetry.play_sound(str(data.get('kind', 'tick')))
+                return self.send(200, {'ok': True})
+            if path == '/api/switch_native':
+                gm = tandem.library.games.get(str(data.get('id', '')))
+                def _on_conv(ok, msg):
+                    if ok:
+                        tandem.library.scan()
+                        tandem.publish('library')
+                    tandem.publish('toast', {'text': msg})
+                res = companion.switch_native_convert(gm, tandem.library.roots, HOME, _on_conv)
+                if res.get('text'):
+                    tandem.publish('toast', {'text': res['text']})
+                return self.send(200, res)
             if path == '/api/selfupdate': return self.send(200, self_update(bool(data.get('apply'))))
             if path == '/api/wide': return self.send(200, tandem.wide(str(data.get('on', ''))))
             if path == '/api/retroarch': return self.send(200, retroarch(str(data.get('name', ''))))
@@ -2961,9 +3160,11 @@ def pair_handler(tandem):
                 run = tandem.run and tandem.library.games.get(tandem.run['id'])
                 sys_opts = [{'id': s, 'name': SYSTEMS[s][0]} for s in sorted(SYSTEMS, key=lambda k: SYSTEMS[k][0].lower()) if s != 'port']
                 game_opts = [{'id': g['id'], 't': f"{g['t']} ({SYSTEMS.get(g['s'], ('Steam',))[0]})"} for g in sorted(tandem.library.games.values(), key=lambda x: x['t'].lower())[:500]]
-                return self.reply(200, {'settings': settings(), 'config': public_config(), 'layout': region_layout(), 'battery': battery(), 'thor': thor.state(), 'controls': controls_info(),
+                return self.reply(200, {'settings': settings(), 'config': public_config(), 'layout': region_layout(), 'battery': battery(),
+                                        'battery_detail': telemetry.battery_detail(), 'thor': thor.state(), 'controls': controls_info(),
                                         'system': system_info(tandem.library.roots), 'games': len(tandem.library.games), 'saves': saves.status(),
                                         'stats': tandem.stats_payload(), 'systems_list': sys_opts, 'games_list': game_opts, 'dock': telemetry.dock_state(),
+                                        'switch_native': companion.switch_native_info(tandem.library.games, tandem.library.roots, HOME),
                                         'run': (tandem.run or {}).get('t') or (run or {}).get('t') or (tandem.run or {}).get('id')}, 'application/json')
             self.reply(200, (REMOTE_PAGE if self.allowed() else PAIR_PAGE.replace('__MSG__', '')).replace('__LANG__', public_config()['lang']))
 
@@ -3033,6 +3234,22 @@ def pair_handler(tandem):
             elif what == 'wol':
                 mac = str(data.get('mac') or load_config().get('wol_mac') or '')
                 result = telemetry.wake_on_lan(mac)
+            elif what == 'locate':
+                result = telemetry.locator_ping()
+                tandem.publish('toast', {'text': result['text']})
+            elif what == 'saver':
+                tandem.publish('saver', {'open': bool(data.get('open', True))})
+                result = {'ok': True, 'text': 'Bildschirmschoner gestartet.'}
+            elif what == 'switch_native':
+                gm = tandem.library.games.get(str(data.get('id', '')))
+                def _on_conv(ok, msg):
+                    if ok:
+                        tandem.library.scan()
+                        tandem.publish('library')
+                    tandem.publish('toast', {'text': msg})
+                result = companion.switch_native_convert(gm, tandem.library.roots, HOME, _on_conv)
+                if result.get('text'):
+                    tandem.publish('toast', {'text': result['text']})
             elif what == 'selfupdate': result = self_update(bool(data.get('apply')))
             elif what in ('logout', 'logout-all'):
                 mine = token_hash(re.search(r'tandem=([0-9a-f]{32})', self.headers.get('Cookie') or '')[1])
@@ -3263,6 +3480,14 @@ def rom_roots(extra):
     return found
 
 
+class QuietHTTPServer(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        if isinstance(sys.exc_info()[1], (ConnectionResetError, BrokenPipeError, TimeoutError)): return
+        super().handle_error(request, client_address)
+
+
 def main():
     parser = argparse.ArgumentParser(description='Tandem dual-screen launcher')
     parser.add_argument('--port', type=int, default=8377)
@@ -3274,13 +3499,13 @@ def main():
     library.scan()
     tandem = Tandem(library, args.dry_run)
     if DOZE and not args.dry_run: doze(False, tandem)  # restarted during a doze: bring the panels back right away
-    server = ThreadingHTTPServer(('127.0.0.1', args.port), handler(tandem))
-    server.daemon_threads = True
+    server = QuietHTTPServer(('127.0.0.1', args.port), handler(tandem))
     threading.Thread(target=watch_buttons, args=(tandem,), daemon=True).start()
     def watch_dock():
-        prev, dimmed = False, {}
+        prev, dimmed, charge_notified, tick = False, {}, False, 0
         while True:
             time.sleep(4)
+            tick += 1
             st = telemetry.dock_state()
             now_dock = bool(st.get('connected'))
             if now_dock != prev:
@@ -3297,6 +3522,17 @@ def main():
                     elif dimmed:
                         for k, v in dimmed.items(): set_raw(k, lit(k, v))
                         dimmed.clear()
+            if tick % 5 == 0:
+                limit = int(load_config().get('charge_alert') or 0)
+                if limit in (80, 90):
+                    b = battery()
+                    if b and b.get('charging') and b.get('level', 0) >= limit:
+                        if not charge_notified:
+                            charge_notified = True
+                            telemetry.play_sound('alert')
+                            tandem.publish('toast', {'text': f'Akku-Schutz: {b["level"]} % erreicht – Ladegerät kann getrennt werden.'})
+                    elif not b or not b.get('charging') or b.get('level', 0) < limit - 3:
+                        charge_notified = False
     if not args.dry_run: threading.Thread(target=watch_dock, daemon=True).start()
     def look_for_update():  # once a day, and only where the owner entered a source: says so, installs nothing by itself
         while True:
@@ -3316,8 +3552,7 @@ def main():
     if not args.dry_run: kill_stale()
     if any(g.get('inst') == 'load' for g in library.games.values()): (tandem.steam_watch(), threading.Thread(target=steam_background, daemon=True).start())  # a download from before goes on
     try:
-        pair = ThreadingHTTPServer(('0.0.0.0', args.port + 1), pair_handler(tandem))
-        pair.daemon_threads = True
+        pair = QuietHTTPServer(('0.0.0.0', args.port + 1), pair_handler(tandem))
         PAIR['port'] = args.port + 1
         if all(f.is_file() for f in TLS_FILES):  # the owner put a certificate there: HTTPS instead of plain HTTP
             import ssl

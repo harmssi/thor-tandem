@@ -19,7 +19,7 @@ python3 -c 'import PySide6.QtGui' 2>/dev/null || command -v "${TANDEM_BROWSER:-f
 mkdir -p "$DEST" "$(dirname "$DESKTOP")"
 install -m 644 "$SRC/tandem.py" "$SRC/thor.py" "$SRC/bluetooth.py" "$SRC/controls.py" "$SRC/saves.py" "$SRC/telemetry.py" "$SRC/companion.py" "$SRC/battlenet.py" "$SRC/index.html" "$SRC/remote.html" "$SRC/test_tandem.py" "$SRC/addshortcut.py" "$SRC/wowpick.py" "$SRC/buttons-profile.yaml" "$SRC/VERSION" "$DEST/"
 install -m 755 "$SRC/tandem-launch" "$SRC/gamescope-own" "$SRC/thor-record" "$DEST/"
-mkdir -p "$DEST/ui/fonts"; install -m 644 "$SRC/ui/tandem_ui.py" "$SRC/ui/settings_view.py" "$SRC/ui/quick_view.py" "$SRC/ui/qr.py" "$SRC/ui/lang.py" "$SRC/ui/en.json" "$DEST/ui/"; install -m 644 "$SRC"/ui/fonts/* "$DEST/ui/fonts/"  # native front end
+mkdir -p "$DEST/ui/fonts"; install -m 644 "$SRC/ui/tandem_ui.py" "$SRC/ui/settings_view.py" "$SRC/ui/quick_view.py" "$SRC/ui/screensaver.py" "$SRC/ui/qr.py" "$SRC/ui/lang.py" "$SRC/ui/en.json" "$DEST/ui/"; install -m 644 "$SRC"/ui/fonts/* "$DEST/ui/fonts/"  # native front end
 mkdir -p "$DEST/ui/themes"; install -m 644 "$SRC"/ui/themes/*.json "$DEST/ui/themes/"  # looks to choose from
 mkdir -p "$DEST/ui/decks"; install -m 644 "$SRC"/ui/decks/*.py "$DEST/ui/decks/"  # its per-game bottom screens
 # The way back from the desktop: an icon on it that returns to the game session, which is Tandem.

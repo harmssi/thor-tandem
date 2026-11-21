@@ -6,7 +6,7 @@ from urllib.parse import quote
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QPointF, QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen, QPolygonF
 
-TABS = ('Steuerung', 'Stände', 'Notizen', 'Guides', 'Musik', 'Cockpit')
+TABS = ('Steuerung', 'Stände', 'Notizen', 'Guides', 'Musik', 'Cockpit', 'Maus')
 PENS = (('#f5f5f7', 'Weiß'), ('#ffb23e', 'Gold'), ('#2dd4bf', 'Türkis'), ('#ff6b5e', 'Rot'))
 
 
@@ -30,7 +30,10 @@ class Deck:
         self.w, self.embed = w, embed
         self.gid = (w.RUN or {}).get('id') or 'game'
         self.tab = 0
-        self.server = self._ui().URL.rstrip('/') + '/'
+        ui = self._ui()
+        base_url = getattr(ui, 'URL', None) or f'http://{ui.ADDR[0]}:{ui.ADDR[1]}'
+        self.origin = base_url.rstrip('/')
+        self.server = self.origin + '/'
         # Savestates
         self.slots, self.slots_at = [], 0.0
         # Notes & Sketch
@@ -59,11 +62,21 @@ class Deck:
         self.tele = None
         self.tele_timer = QTimer(w)
         self.tele_timer.timeout.connect(self._poll_cockpit)
+        # Switch-2 Mouse mode (precision trackpad in any game)
+        self.pad_rect = QRectF()
+        self.scroll_rect = QRectF()
+        self.m_mode = None
+        self.m_last = None
+        self.m_down_at = 0.0
+        self.m_moved = 0.0
+        self.m_drag = False
         if os.environ.get('QT_QPA_PLATFORM') != 'offscreen':
             self._fetch_notes()
 
     def close(self):
         self.tele_timer.stop()
+        if self.m_drag:
+            self.w.post('api/mouse', {'btn': 'left', 'action': 'up'})
         if self.save_timer.isActive():
             self.save_timer.stop()
             self._upload_sketch()
@@ -90,7 +103,7 @@ class Deck:
                 import urllib.request
                 payload = body if isinstance(body, bytes) else json.dumps(body).encode()
                 req = urllib.request.Request(self.server + path.lstrip('/'), data=payload,
-                                             headers={'Content-Type': content_type, 'Origin': self._ui().URL}, method='POST')
+                                             headers={'Content-Type': content_type, 'Origin': self.origin}, method='POST')
                 with urllib.request.urlopen(req, timeout=12) as r:
                     res = json.loads(r.read())
             except Exception:
@@ -175,7 +188,17 @@ class Deck:
                 self.drawing = False
                 self.last_pt = None
                 self.save_timer.start(550)
+            if self.m_mode == 'move' and self.m_moved < 8.0 and time.time() - self.m_down_at < 0.28:
+                self.w.haptic()
+                self.w.post('api/mouse', {'btn': 'left', 'action': 'click'})
+            self.m_mode = self.m_last = None
             self.pan_start = None
+            return
+        if self.tab == 6:
+            if self.scroll_rect.contains(pos):
+                self.m_mode, self.m_last, self.m_moved = 'scroll', pos, 0.0
+            elif self.pad_rect.contains(pos):
+                self.m_mode, self.m_last, self.m_down_at, self.m_moved = 'move', pos, time.time(), 0.0
             return
         if self.tab == 2 and self.note_mode == 'sketch' and self.canvas_rect.contains(pos):
             if len(self.undo_stack) >= 8: self.undo_stack.pop(0)
@@ -188,6 +211,20 @@ class Deck:
             self.pan_start = (pos, self.open_guide['px'], self.open_guide['py'])
 
     def move(self, pos):
+        if self.tab == 6 and self.m_mode and self.m_last is not None:
+            dx, dy = pos.x() - self.m_last.x(), pos.y() - self.m_last.y()
+            self.m_moved += abs(dx) + abs(dy)
+            if self.m_mode == 'scroll':
+                steps = int(-dy / max(8.0, 2.2 * self.w.u))
+                if steps:
+                    self.m_last = pos
+                    self.w.post('api/mouse', {'wheel': steps})
+                return True
+            if abs(dx) >= 0.8 or abs(dy) >= 0.8:
+                self.m_last = pos
+                spd = min(2.4, 1.15 + (abs(dx) + abs(dy)) * 0.025)
+                self.w.post('api/mouse', {'dx': round(dx * spd), 'dy': round(dy * spd)})
+            return True
         if self.drawing and self.last_pt is not None:
             pt = self._to_canvas(pos)
             self._stroke_to(pt)
@@ -245,12 +282,15 @@ class Deck:
     def paint_body(self, p, y):
         self.canvas_rect = QRectF()
         self.map_rect = QRectF()
+        self.pad_rect = QRectF()
+        self.scroll_rect = QRectF()
         if self.tab == 0: self.w.ingame(p, top=y)
         elif self.tab == 1: self._paint_states(p, y)
         elif self.tab == 2: self._paint_notes(p, y)
         elif self.tab == 3: self._paint_guides(p, y)
         elif self.tab == 4: self._paint_music(p, y)
         elif self.tab == 5: self._paint_cockpit(p, y)
+        elif self.tab == 6: self._paint_mouse(p, y)
 
     def _quit_footer(self, p):
         ui = self._ui()
@@ -683,3 +723,38 @@ class Deck:
                 w.text(p, plbl, pr.x(), pr.y(), ('u', 1.8, 700 if on else 500), ui.FOCUS if on else ui.TEXT, pw, 1, 4.8 / 1.8)
                 w.hit(pr, lambda pid=pid: w.post('api/gameopt', {'profile': pid}, then=lambda *_: self._poll_cockpit()), name='cprof:' + pid)
                 px += pw + u
+
+    # -- Tab 6: Switch-2-style Precision Mouse / Trackpad in any game --
+    def _paint_mouse(self, p, y):
+        ui = self._ui()
+        w, u = self.w, self.w.u
+        x0, cw = 2.6 * u, w.width() - 5.2 * u
+        bot = self._quit_footer(p)
+        pad_h = max(18 * u, bot - 6.6 * u - y)
+        sc_w = 7.5 * u
+        self.pad_rect = QRectF(x0, y, cw - sc_w - .8 * u, pad_h)
+        self.scroll_rect = QRectF(x0 + cw - sc_w, y, sc_w, pad_h)
+        w.box(p, self.pad_rect, 2.0 * u, QColor('#101218'), ui.LINE)
+        w.text(p, 'TOUCHPAD · TIPPEN = KLICK', self.pad_rect.x(), self.pad_rect.center().y() - 1.2 * u,
+               ('u', 1.5, 700, .14), QColor(255, 255, 255, 42), self.pad_rect.width(), 1)
+        w.box(p, self.scroll_rect, 1.8 * u, ui.PANEL, ui.LINE)
+        p.setPen(QPen(QColor(255, 255, 255, 48), .22 * u))
+        ty = self.scroll_rect.y() + 4 * u
+        while ty < self.scroll_rect.bottom() - 3 * u:
+            p.drawLine(QPointF(self.scroll_rect.x() + 2.2 * u, ty), QPointF(self.scroll_rect.right() - 2.2 * u, ty))
+            ty += 2.6 * u
+        by = y + pad_h + 1.2 * u
+        bw = (cw - 2 * 1.2 * u) / 3
+        def toggle_drag():
+            self.m_drag = not self.m_drag
+            w.haptic()
+            w.post('api/mouse', {'btn': 'left', 'action': 'down' if self.m_drag else 'up'})
+        for bi, (lbl, fn, hi) in enumerate((
+            ('Linksklick', lambda: (w.haptic(), w.post('api/mouse', {'btn': 'left', 'action': 'click'})), False),
+            ('Halten / Ziehen', toggle_drag, self.m_drag),
+            ('Rechtsklick', lambda: (w.haptic(), w.post('api/mouse', {'btn': 'right', 'action': 'click'})), False),
+        )):
+            br = QRectF(x0 + bi * (bw + 1.2 * u), by, bw, 5.2 * u)
+            w.capsule(p, br, ui.FOCUS if hi else ui.RAISED, None if hi else ui.LINE)
+            w.text(p, lbl, br.x(), br.y(), ('u', 1.85, 700 if hi else 600), ui.INK if hi else ui.TEXT, bw, 1, 5.2 / 1.85)
+            w.hit(br, fn, name='umouse:' + lbl)

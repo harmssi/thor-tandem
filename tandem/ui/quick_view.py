@@ -281,6 +281,8 @@ def draw(win, p):
     f_acts = []
     if win.RUN:
         f_acts.append(('Zu Tandem', lambda: (close(win), win.post('api/pause')), RAISED, TEXT))
+    else:
+        f_acts.append(('Bildschirmschoner', lambda: (close(win), win.post('api/saver', {'open': True})), ui.faded(FOCUS, .18), FOCUS))
     f_acts.append(('Standby', lambda: (close(win), win.post('api/action', {'name': 'suspend'})), RAISED, TEXT))
     if win.RUN:
         f_acts.append(('Spiel beenden', lambda: (close(win), win.confirm_quit()), ui.faded(WARN, .18), WARN))

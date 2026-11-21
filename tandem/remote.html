@@ -51,8 +51,8 @@ button.warn{color:var(--coral)}button.warn:hover{border-color:rgba(226,135,113,.
 /* App Shell */
 .shell{display:grid;grid-template-columns:248px minmax(0,1fr);min-height:100dvh}
 .side{position:sticky;top:0;height:100dvh;display:flex;flex-direction:column;padding:20px 14px;background:var(--bg2);border-right:1px solid var(--line)}
-.brand{display:flex;align-items:center;justify-content:space-between;padding:4px 10px 18px;border-bottom:1px solid var(--line);margin-bottom:14px}
-.live{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--text2);font-variant-numeric:tabular-nums}
+.brand{display:flex;flex-direction:column;align-items:flex-start;gap:8px;padding:4px 10px 18px;border-bottom:1px solid var(--line);margin-bottom:14px}
+.live{margin:0;display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--text2);font-variant-numeric:tabular-nums}
 .live::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--text3)}
 .live.on::before{background:var(--green);box-shadow:0 0 0 3px rgba(76,195,138,.16)}
 .snav{display:flex;flex-direction:column;gap:4px}
@@ -137,7 +137,7 @@ summary:hover{color:var(--text)}details[open] summary{margin-bottom:10px;color:v
  .snav{flex-direction:row;width:100%;justify-content:space-around;gap:2px}
  .snav a{flex-direction:column;gap:3px;padding:6px 4px;font-size:11px;border-radius:8px;flex:1;justify-content:center;text-align:center}
  .snav a[aria-current=page]{padding:5px 3px}
- .mtop{display:flex;align-items:center;justify-content:space-between;min-height:54px;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--bg2);position:sticky;top:0;z-index:10}
+ .mtop{display:flex;flex-direction:column;align-items:flex-start;gap:6px;min-height:58px;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--bg2);position:sticky;top:0;z-index:10}
  .content{padding:20px 16px 104px}
  .kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
  .card,.card.w7,.card.w5{grid-column:1/-1}
@@ -162,10 +162,10 @@ if('__LANG__'=='en'){const E=__EN__,R=E.rules.map(([p,t])=>[new RegExp('^(?:'+p+
 <p class="lead">Die einmalige PIN findest du auf dem Thor unter „Einstellungen › WLAN &amp; Netzwerk“. Danach bleibt dieser Browser ein Jahr angemeldet.</p>__MSG__
 <form method="post"><label for="pin">6-stellige PIN vom Thor</label><input id="pin" name="pin" inputmode="numeric" autocomplete="off" required autofocus><button class="go">Anmelden</button></form></div></div>
 <!--SPLIT-->
-<div class="mtop"><div class="mark">TORAVO<i>/</i>TANDEM</div><div class="live" id="mlive"><span>verbinde …</span></div></div>
+<div class="mtop"><div class="mark">TORAVO<i>/</i>TANDEM</div><p class="live" id="mlive"><span>verbinde …</span></p></div>
 <div class="shell">
 <aside class="side">
- <div class="brand"><div class="mark">TORAVO<i>/</i>TANDEM</div><div class="live" id="live"><span>verbinde …</span></div></div>
+ <div class="brand"><div class="mark">TORAVO<i>/</i>TANDEM</div><p class="live" id="live"><span>verbinde …</span></p></div>
  <nav class="snav" aria-label="Hauptnavigation">
   <a href="#uebersicht" data-go="uebersicht" aria-current="page"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="2"/><rect x="13" y="3" width="8" height="5" rx="2"/><rect x="13" y="10" width="8" height="11" rx="2"/><rect x="3" y="13" width="8" height="8" rx="2"/></svg><span>Übersicht</span></a>
   <a href="#bibliothek" data-go="bibliothek"><svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg><span>Bibliothek</span></a>
@@ -182,7 +182,7 @@ if('__LANG__'=='en'){const E=__EN__,R=E.rules.map(([p,t])=>[new RegExp('^(?:'+p+
  <div class="pane" id="pane-uebersicht" data-pane="uebersicht">
   <div class="head"><div><h1>Übersicht</h1><p class="lead">Live-Zustand, Spielzeit der letzten 7 Tage und Speicherplatz auf deinem Thor.</p></div></div>
   <div class="runbar"><div class="rinfo"><div class="rtitle" id="st">Verbinde mit dem Thor …</div><div class="rsub" id="stsub">Bereit</div></div>
-   <div class="racts"><button id="quitbtn" data-post="quit" hidden>Spiel beenden</button><button data-post="action" data-name="suspend">Standby</button></div></div>
+   <div class="racts"><button id="quitbtn" data-post="quit" hidden>Spiel beenden</button><button id="saverbtn">Bildschirmschoner</button><button data-post="locate">Thor finden</button><button data-post="action" data-name="suspend">Standby</button></div></div>
   <div class="kpis" id="kpis"></div>
   <div class="grid">
    <section class="card w7"><h2>Letzte 7 Tage</h2><div class="chart" id="wchart"></div></section>
@@ -200,7 +200,7 @@ if('__LANG__'=='en'){const E=__EN__,R=E.rules.map(([p,t])=>[new RegExp('^(?:'+p+
    <section class="card"><h2>Dateien drahtlos senden</h2>
     <p>ROMs landen automatisch im passenden Systemordner auf der SD-Karte; Karten und Guides direkt beim gewählten Spiel.</p>
     <label for="upkind">Was möchtest du senden?</label>
-    <select id="upkind"><option value="rom">ROM / Spiel</option><option value="guide">Karte / Guide zum Spiel</option><option value="pack">Begleiter-Paket (.zip)</option></select>
+    <select id="upkind"><option value="rom">ROM / Spiel</option><option value="switch_update">Switch-Update / DLC (.nsp)</option><option value="guide">Karte / Guide zum Spiel</option><option value="pack">Begleiter-Paket (.zip)</option></select>
     <div id="upsysbox"><label for="upsys">Ziel-System</label><select id="upsys"><option value="auto">Automatisch an Dateiendung erkennen</option></select></div>
     <div id="upgamebox" hidden><label for="upgame">Zugehöriges Spiel</label><select id="upgame"></select></div>
     <div class="drop" id="drop" tabindex="0" role="button"><strong>Dateien hierher ziehen oder antippen</strong><span>Mehrfachauswahl möglich · direkte Übertragung im Heimnetz</span><input type="file" id="upfile" hidden multiple></div>
@@ -220,6 +220,12 @@ if('__LANG__'=='en'){const E=__EN__,R=E.rules.map(([p,t])=>[new RegExp('^(?:'+p+
      <button class="full" id="svrestgo" style="margin-top:10px">Ausgewähltes Archiv zurückspielen</button>
     </div>
    </section>
+
+   <section class="card w12"><h2>Switch-Spiele nativ umwandeln (Peanuts Native &amp; BananaNative)</h2>
+    <p id="swnatmeta">Prüfe installierte Native-Runtimes …</p>
+    <div id="swnatjob" style="margin:10px 0;padding:12px 14px;border-radius:8px;background:var(--bg2);border:1px solid var(--violet)" hidden></div>
+    <table id="swnattbl"></table>
+   </section>
   </div>
  </div>
 
@@ -233,15 +239,20 @@ if('__LANG__'=='en'){const E=__EN__,R=E.rules.map(([p,t])=>[new RegExp('^(?:'+p+
     <label for="vol">Lautstärke</label><div class="slider"><input type="range" id="vol" min="0" max="100"><output for="vol">–</output></div>
     <label>Nachtmodus (Blaulichtfilter)</label>
     <div class="seg" id="nightseg"><button type="button" data-v="off">Aus</button><button type="button" data-v="warm">Warm</button><button type="button" data-v="night">Nacht</button></div>
-    <label for="rest">Ruheschutz (OLED): Bildschirme schwarz nach</label>
+    <label for="sstyle">Dual-Screen-Bildschirmschoner (OLED)</label>
+    <select id="sstyle"><option value="kosmos">Thor Kosmos (Original-Packungen)</option><option value="arcade">Arcade-Schaufenster</option><option value="aurora">Dual-Aurora</option><option value="minimal">OLED-Uhr pur</option></select>
+    <label for="rest">Automatisch starten nach</label>
     <select id="rest"><option value="0">Nie</option><option value="1">1 Minute</option><option value="3">3 Minuten</option><option value="10">10 Minuten</option></select>
+    <div class="row"><button id="savergo">Jetzt starten</button><button id="uisndbtn">Konsolen-Klänge: Aus</button></div>
    </section>
 
-   <section class="card"><h2>FPS-Fenster &amp; Leistung</h2>
+   <section class="card"><h2>FPS-Fenster, Leistung &amp; Akku-Schutz</h2>
     <label>FPS-Fenster auf dem oberen Bildschirm</label>
     <div class="seg" id="hudseg"><button type="button" data-v="0">Aus</button><button type="button" data-v="1">FPS</button><button type="button" data-v="2">Leiste</button><button type="button" data-v="3">Graph</button></div>
     <p style="margin-top:8px;font-size:13px">Auch jederzeit im Spiel über die Thor-Taste ein- und ausschaltbar.</p>
     <label for="prof">Leistungsprofil</label><select id="prof"></select>
+    <label>Akku-Schutz (Lade-Hinweis wie Switch 2)</label>
+    <div class="seg" id="chgseg"><button type="button" data-v="0">Aus</button><button type="button" data-v="80">Bei 80 %</button><button type="button" data-v="90">Bei 90 %</button></div>
     <div class="kpis" id="pstats" style="grid-template-columns:repeat(2,1fr);margin-top:14px;margin-bottom:0"></div>
    </section>
 
@@ -295,6 +306,7 @@ if('__LANG__'=='en'){const E=__EN__,R=E.rules.map(([p,t])=>[new RegExp('^(?:'+p+
     <label for="kb">Sprache der Bildschirmtastatur</label>
     <select id="kb"><option value="de">Deutsch (QWERTZ)</option><option value="us">Englisch (QWERTY)</option></select>
     <label class="check"><input type="checkbox" id="kbhap"> Haptisches Klicken beim Tippen auf dem Touchscreen</label>
+    <button class="full" data-post="locate" style="margin-top:14px">Thor klingeln &amp; vibrieren lassen</button>
    </section>
 
    <section class="card w12"><h2>Übersicht &amp; Emulator-Kürzel</h2><table id="map"></table></section>
@@ -424,9 +436,11 @@ function load(){fetch('api/all').then(r=>r.status==401?location.reload():r.json(
  // Overview
  $('st').textContent=d.run?'Läuft gerade: '+d.run:'Bereit auf dem Thor';
  $('stsub').textContent=(d.dock&&d.dock.docked?'USB-C-Monitor verbunden · ':'')+(pw?pw.profile+' · '+pw.temp+' °C':'Kein Spiel aktiv');
- $('quitbtn').hidden=!d.run;
+ $('quitbtn').hidden=!d.run;$('saverbtn').hidden=!!d.run;
+ const BD=d.battery_detail||{};
+ const batSub=B?(B.charging?'Akku · lädt':'Akku')+(BD.health!=null?' · Zustand '+BD.health+' %':''):'Akku';
  $('kpis').innerHTML=kpi(fmtTime(ST.total_secs),'Gesamtspielzeit')+kpi(fmtTime(ST.week_secs),'Letzte 7 Tage')
-  +kpi(d.games,'Spiele ('+(ST.played_count||0)+' gespielt)')+(B?kpi(B.level+' %',B.charging?'Akku · lädt':'Akku',B.level/100):kpi('–','Akku'));
+  +kpi(d.games,'Spiele ('+(ST.played_count||0)+' gespielt)')+(B?kpi(B.level+' %',batSub,B.level/100):kpi('–','Akku'));
 
  const days=ST.days||[],maxD=Math.max(1800,...days.map(x=>x.secs||0));
  $('wchart').innerHTML=days.map((x,i)=>`<div class="dcol"><span class="dval">${x.secs?Math.max(1,Math.round(x.secs/60))+'m':''}</span><div class="dtrack"><div class="dfill${x.secs?'':' zero'}" style="height:${x.secs?Math.max(6,Math.round(100*x.secs/maxD)):0}%"></div></div><span class="dlbl">${esc(i===days.length-1?'Heute':x.label)}</span></div>`).join('');
@@ -443,7 +457,12 @@ function load(){fetch('api/all').then(r=>r.status==401?location.reload():r.json(
  for(const k of['bt','bb','vol']){const e=$(k),v=d.settings[k];e.disabled=v==null;if(v!=null&&document.activeElement!=e)e.value=v;e.nextElementSibling.textContent=v==null?'–':e.value+' %'}
  setSeg('nightseg',d.config.night_mode||'off');
  setSeg('hudseg',d.config.hud_level||0);
+ setSeg('chgseg',d.config.charge_alert||0);
+ if(document.activeElement!=$('sstyle'))$('sstyle').value=d.config.saver_style||'kosmos';
  if(document.activeElement!=$('rest'))$('rest').value=d.config.rest_min;
+ const sndOn=d.config.ui_sounds==='subtle';
+ $('uisndbtn').textContent='Konsolen-Klänge: '+(sndOn?'Dezent':'Aus');
+ $('uisndbtn').dataset.on=sndOn?'1':'0';
  $('lid').checked=d.config.lid_sleep!==false;$('lidmus').checked=d.config.lid_music!==false;$('dockdim').checked=d.config.dock_dim!==false;
  if(document.activeElement!=$('cstby'))$('cstby').value=d.config.charger_standby||'doze';
  $('prof').disabled=!pw;if(pw&&document.activeElement!=$('prof')){$('prof').replaceChildren(...pw.profiles.map(([v,l])=>new Option(l,v)));$('prof').value=pw.profile}
@@ -475,6 +494,14 @@ function load(){fetch('api/all').then(r=>r.status==401?location.reload():r.json(
  if(snaps.length&&document.activeElement!=$('svsnap')){$('svsnap').replaceChildren(...snaps.map(s=>new Option(new Date(s.at*1000).toLocaleString('de-DE')+' · '+(s.items||[]).length+' Systeme',s.file)))}
  if(d.systems_list&&document.activeElement!=$('upsys')&&$('upsys').options.length<=1){for(const s of d.systems_list)$('upsys').add(new Option(s.name+' ('+s.id+')',s.id))}
  if(d.games_list&&document.activeElement!=$('upgame')){$('upgame').replaceChildren(...d.games_list.map(g=>new Option(g.t,g.id)))}
+ const SN=d.switch_native||{},sjob=SN.job||{};
+ $('swnatmeta').textContent='BananaNative (Switch 2): '+(SN.banana_version||'nicht installiert')+' · Peanuts Native (Switch 1): '+(SN.peanuts_version||'nicht installiert')+' ('+(SN.catalog_count||0)+' unterstützte Spiele).';
+ $('swnatjob').hidden=!sjob.running&&!sjob.error;
+ if(sjob.running)$('swnatjob').textContent='Umwandlung aktiv: '+sjob.title+' – '+(sjob.step||'läuft …');
+ else if(sjob.error)$('swnatjob').textContent='Letzter Lauf: '+sjob.error;
+ const swg=(SN.games||[]).filter(g=>g.supported);
+ $('swnattbl').innerHTML=swg.length?swg.map(g=>`<tr><td>${esc(g.t)}<small>${esc((g.companion?'Mit Dual-Screen-Begleiter · ':'')+(g.has_update?'Update erkannt':'Basis-Spiel'))}</small></td><td>${g.converted?'Nativ bereit':`<button type="button" data-swconv="${esc(g.id)}">Nativ umwandeln</button>`}</td></tr>`).join(''):'<tr><td colspan="2">Keine kompatiblen Switch-1-Spiele in ROMs/switch gefunden.</td></tr>';
+ for(const b of $('swnattbl').querySelectorAll('[data-swconv]'))b.onclick=()=>post('switch_native',{id:b.dataset.swconv}).then(load);
 
  // Accounts & System
  $('yt').textContent=d.config.yt_set?'Verbunden auf dem Thor.':d.config.yt_oauth?'OAuth-Client hinterlegt (noch nicht angemeldet).':'Noch nicht angemeldet.';
@@ -493,7 +520,11 @@ function load(){fetch('api/all').then(r=>r.status==401?location.reload():r.json(
 for(const k of['bt','bb','vol']){$(k).oninput=e=>e.target.nextElementSibling.textContent=e.target.value+' %';$(k).onchange=e=>post('set',{key:k,value:+e.target.value})}
 for(const b of $('nightseg').children)b.onclick=()=>{setSeg('nightseg',b.dataset.v);post('config',{night_mode:b.dataset.v})};
 for(const b of $('hudseg').children)b.onclick=()=>{setSeg('hudseg',b.dataset.v);post('config',{hud_level:+b.dataset.v})};
+for(const b of $('chgseg').children)b.onclick=()=>{setSeg('chgseg',b.dataset.v);post('config',{charge_alert:+b.dataset.v})};
 for(const b of $('cstyleseg').children)b.onclick=()=>{setSeg('cstyleseg',b.dataset.v);renderPad(b.dataset.v);post('config',{controls_style:b.dataset.v}).then(load)};
+$('sstyle').onchange=e=>post('config',{saver_style:e.target.value});
+$('saverbtn').onclick=$('savergo').onclick=()=>post('saver',{open:true});
+$('uisndbtn').onclick=()=>{const nxt=$('uisndbtn').dataset.on==='1'?'off':'subtle';post('config',{ui_sounds:nxt}).then(load)};
 
 const secure=()=>location.protocol=='https:'||['127.0.0.1','localhost'].includes(location.hostname);
 $('bnsave').onclick=()=>{if(!secure())return say('Nur über die HTTPS-Adresse des Thor übertragbar.');

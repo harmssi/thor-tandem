@@ -1333,6 +1333,75 @@ class CompanionDecksAndGameMenuTest(unittest.TestCase):
         self.assertEqual([g[0] for g in stats_groups], ['Übersicht', 'Meistgespielt', 'Letzte 7 Tage'])
         self.assertEqual(stats_groups[1][1][0]['t'], 'Chrono Trigger')
 
+        # Universal Deck Tab 6: Switch-2 Precision Mouse Mode
+        u_mouse = universal.Deck(w)
+        u_mouse.tab = 6
+        hm = render(u_mouse, 'univ-mouse')
+        self.assertTrue({'utab:Maus', 'umouse:Linksklick', 'umouse:Halten / Ziehen', 'umouse:Rechtsklick'} <= set(hm))
+        u_mouse.close()
+
+        # Dual-Screen OLED Screensaver showcase (Thor Kosmos, Arcade, Dual-Aurora)
+        w.RUN = None
+        w_top = ui.Tandem('top')
+        w_top.resize(1920, 1080)
+        w_top.u, w_top.fonts = w_top.width() / 100, {}
+        w_top.L = w.L = {
+            'games': [
+                {'id': 'g1', 't': 'Chrono Trigger', 's': 'sfc', 'year': '1995', 'dev': 'Square',
+                 'desc': 'Eine Reise durch die Epochen zur Rettung der Welt.', 'cover': 'c1', 'box': 'b1'},
+                {'id': 'g2', 't': 'Super Mario Odyssey', 's': 'switch', 'year': '2017', 'dev': 'Nintendo',
+                 'desc': 'Entdecke riesige Königreiche an Bord der Odyssee.', 'cover': 'c2', 'box': 'b2'},
+                {'id': 'g3', 't': 'Golden Sun', 's': 'gba', 'year': '2001', 'dev': 'Camelot',
+                 'desc': 'Magische Alchemie in Weyard.', 'cover': 'c3', 'box': 'b3'},
+                {'id': 'g4', 't': 'Metal Gear Solid', 's': 'psx', 'year': '1998', 'dev': 'Konami', 'cover': 'c4'},
+            ],
+            'systems': {'sfc': {'name': 'Super Famicom'}, 'switch': {'name': 'Switch'}, 'gba': {'name': 'Game Boy Advance'}, 'psx': {'name': 'PlayStation'}},
+            'played': {'g1': {'secs': 12600, 'last': int(time.time()) - 300}},
+        }
+        # Inject synthetic retail boxes (SNES horizontal, Switch transparent case, GBA square) + fallback covers
+        for cid, col_a, col_b in (('c1', '#ffb23e', '#946ef8'), ('c2', '#ef4444', '#f59e0b'),
+                                  ('c3', '#10b981', '#0ea5e9'), ('c4', '#38bdf8', '#6366f1')):
+            cov = QImage(244, 340, QImage.Format.Format_RGB32)
+            cp = ui.QPainter(cov)
+            cg = ui.QLinearGradient(0, 0, 244, 340)
+            cg.setColorAt(0, ui.QColor(col_a)); cg.setColorAt(1, ui.QColor(col_b))
+            cp.fillRect(0, 0, 244, 340, ui.QBrush(cg)); cp.end()
+            for tw in (w_top, w):
+                for sz in ((244, 340), (345, 480)):
+                    tw.thumbs.cache[(cid, sz[0], sz[1], True)] = cov
+            ui.ACCENTS[cid] = col_a
+        for bid, bw, bh, alpha, col_a in (('b1', 340, 242, False, '#ffb23e'), ('b2', 220, 356, True, '#ef4444'), ('b3', 340, 340, False, '#10b981')):
+            bimg = QImage(bw, bh, QImage.Format.Format_ARGB32 if alpha else QImage.Format.Format_RGB32)
+            bimg.fill(ui.QColor(0, 0, 0, 0) if alpha else ui.QColor(col_a))
+            if alpha:
+                bp = ui.QPainter(bimg); bp.setBrush(ui.QColor(col_a)); bp.setPen(ui.Qt.PenStyle.NoPen)
+                bp.drawRoundedRect(8, 8, bw - 16, bh - 16, 18, 18); bp.end()
+            for tw in (w_top, w):
+                for mx in (340, 480):
+                    tw.thumbs.cache[(bid, mx, mx, False)] = bimg
+
+        img_top = QImage(1920, 1080, QImage.Format.Format_RGB32)
+        for st_name in ('kosmos', 'arcade', 'aurora', 'minimal'):
+            w_top.CFG['saver_style'] = w.CFG['saver_style'] = st_name
+            for target_w, target_img, suffix in ((w_top, img_top, 'top'), (w, img, 'bottom')):
+                ps = ui.QPainter(target_img)
+                ps.setRenderHints(ui.QPainter.RenderHint.Antialiasing | ui.QPainter.RenderHint.TextAntialiasing)
+                ui.screensaver.draw(target_w, ps)
+                ps.end()
+                if SHOTS:
+                    target_img.save(str(Path(SHOTS) / f'saver-{st_name}-{suffix}.png'))
+
+        # Regression check: universal deck initializes cleanly via ADDR fallback even if URL is unset
+        from decks import universal as udeck
+        saved_url = getattr(ui, 'URL', None)
+        try:
+            ui.URL = ''
+            d_chk = udeck.Deck(w)
+            self.assertTrue(d_chk.server.startswith('http://'))
+            d_chk.close()
+        finally:
+            if saved_url is not None: ui.URL = saved_url
+
 
 if __name__ == '__main__':
     unittest.main()

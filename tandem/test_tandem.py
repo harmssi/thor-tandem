@@ -740,7 +740,7 @@ class English(unittest.TestCase):
     GERMAN = __import__('re').compile(r'[äöüÄÖÜß„]|\b(der|die|das|und|nicht|ist|kein|keine|mit|für|von|auf|noch|wird|bitte|Spiel|Spiele|starten|beenden|'
                                       r'Einstellungen|Taste|Tasten|Akku|Bildschirm|fehlt|gefunden|installiert|läuft|Suche|Fehler|Passwort|Konto)\b')
     FILES = ['tandem.py', 'thor.py', 'bluetooth.py', 'controls.py', 'saves.py', 'telemetry.py', 'companion.py', 'setup.py',
-             'ui/tandem_ui.py', 'ui/settings_view.py', 'ui/quick_view.py', 'ui/qr.py',
+             'ui/tandem_ui.py', 'ui/settings_view.py', 'ui/quick_view.py', 'ui/screensaver.py', 'ui/qr.py',
              'ui/decks/media.py', 'ui/decks/offline.py', 'ui/decks/youtube.py', 'ui/decks/plex.py', 'ui/decks/gallery.py',
              'ui/decks/pack.py', 'ui/decks/mpv.py', 'ui/decks/universal.py', 'ui/decks/dualscreen.py', 'ui/decks/pcstream.py']
     KEEP = {'Tandem/0.1 (game launcher)', '<p><b>Die PIN stimmt nicht.</b></p>', 'ist', '7: kein 200',  # not shown, or translated as a whole (rules) or by the web page
@@ -999,6 +999,48 @@ class CompanionAndLibraryUpgradesTest(unittest.TestCase):
         sp = t_stat.stats_payload()
         self.assertEqual((sp['total_secs'], sp['week_secs'], sp['played_count'], len(sp['days'])), (5400, 1800, 1, 7))
         self.assertEqual(sp['top_games'][0]['id'], gid_s)
+
+        # 6. Switch-2 features: Virtual Game Card pinning, synthesized WAVs, battery health, saver_style, Peanuts Native discovery
+        self.assertTrue(t_stat.collection_act({'a': 'pin', 'id': gid_s})['ok'])
+        self.assertEqual(t_stat.saved['pinned'], [gid_s])
+        t_stat.collection_act({'a': 'pin', 'id': gid_s})
+        self.assertEqual(t_stat.saved['pinned'], [])
+
+        c5 = tandem.save_config({'saver_style': 'arcade', 'charge_alert': 90, 'ui_sounds': 'subtle'})
+        self.assertEqual((c5['saver_style'], c5['charge_alert'], c5['ui_sounds']), ('arcade', 90, 'subtle'))
+        tandem.save_config({'saver_style': 'kosmos', 'charge_alert': 0, 'ui_sounds': 'off'})
+
+        wav = telemetry.synth_wav(telemetry.SOUNDS['locator'])
+        self.assertTrue(wav.startswith(b'RIFF') and b'WAVEfmt ' in wav)
+
+        touch(ps_dis / 'state_of_health', '99')
+        touch(ps_dis / 'cycle_count', '14')
+        touch(ps_dis / 'temp', '315')
+        bd2 = telemetry.battery_detail(ps_dis.parent)
+        self.assertEqual((bd2['health'], bd2['cycles'], bd2['bat_temp']), (99, 14, 31.5))
+
+        nhome = TMP / 'native-home'
+        apprun = nhome / '.local/opt/peanuts/AppDir/AppRun'
+        touch(apprun, '#!/bin/sh\n')
+        os.chmod(apprun, 0o755)
+        touch(nhome / '.local/opt/peanuts/AppDir/usr/share/banananative/source', 'version 0.1.6-1\n')
+        touch(nhome / '.local/opt/peanuts/builder/peanuts/games.tsv', '01001B300B9BE000\tDiablo III: Eternal Collection\t\tyes\n')
+        touch(nhome / 'Games/PeanutsNative/DiabloIII/01001B300B9BE000-work/android-pack/game.tsv',
+              'title_id\t01001B300B9BE000\nname\tDiablo III: Eternal Collection\n')
+        touch(nhome / 'Games/PeanutsNative/DiabloIII/icon.png', 'png')
+        touch(nhome / 'Games/PeanutsNative/DiabloIII/box.png', 'box')
+        npacks = companion.discover_native_packs([], nhome)
+        self.assertEqual(len(npacks), 1)
+        self.assertEqual((npacks[0]['tid'], npacks[0]['engine']), ('01001B300B9BE000', 'PeanutsNative'))
+        self.assertTrue(npacks[0]['cover'].endswith('icon.png') and npacks[0]['box'].endswith('box.png'))
+        sinfo = companion.switch_native_info({'s1': {'id': 's1', 't': 'Diablo III', 's': 'switch', 'path': '/tmp/Diablo [01001B300B9BE000].nsp'}}, [], nhome)
+        self.assertEqual((sinfo['peanuts_version'], sinfo['catalog_count'], sinfo['games'][0]['converted']), ('0.1.6-1', 1, True))
+
+        cands = tandem._box_candidates('Chrono Trigger (Uncensored)')
+        self.assertIn('Chrono Trigger (Germany)', cands)
+        self.assertIn('Chrono Trigger (USA)', cands)
+        self.assertEqual(tandem._norm_box_title("Pokémon: Let’s Go, Evoli! (PeanutsNative)"),
+                         tandem._norm_box_title("Pokémon: Let's Go, Eevee!"))
 
 
 if __name__ == '__main__':
