@@ -3,13 +3,28 @@
 Dual-screen game launcher for ArmadaOS on the AYN Thor: the game on the top screen, controls and per-game companion
 screens on the bottom one. A lean native program (Python + Qt), no browser, Steam stays out of sight.
 
-Install on the device (desktop mode › console, or over SSH):
+## Installation (2 easy ways)
 
-    curl -L https://github.com/harmssi/thor-tandem/releases/latest/download/get.sh | bash
+### Option 1 — Ready-to-Flash OS Image (No Terminal Needed · Based on ArmadaOS)
+Download the complete, bootable **Toravo Tandem OS** image (based on ArmadaOS / Fedora 44 `bootc` with Toravo Tandem pre-installed):
+
+- **Direct download (`.img.xz`, 5.2 GB):** [toravo-tandem-os-0.6.0-arm64.img.xz](https://toravo.de/_downloads/toravo-tandem-os-0.6.0-arm64.img.xz) ([SHA-256](https://toravo.de/_downloads/toravo-tandem-os-0.6.0-arm64.img.xz.sha256))
+- **Why `.img.xz` instead of `.iso`?** The AYN Thor boots via **OpenABL (ARM64 UEFI)** directly from GPT disk images on microSD or USB drives rather than legacy x86 CD ISOs. Standard flashers (**Balena Etcher**, **Raspberry Pi Imager**, **Rufus**) write `.img.xz` directly without unpacking.
+- **3 steps:**
+  1. Flash `toravo-tandem-os-0.6.0-arm64.img.xz` onto a microSD card or USB drive (≥ 16 GB) using Balena Etcher, Raspberry Pi Imager, Rufus, or `sudo ./os/flash-thor.sh`.
+  2. Insert into your AYN Thor and boot via OpenABL — it launches straight into **Toravo Tandem** and the first-run wizard (Wi-Fi, keyboard, game folders).
+  3. Full upstream **ArmadaOS updates (`bootc upgrade`)** and **Toravo Tandem auto-updates** keep working normally. You can also build the image yourself with [`os/`](os/README.md).
+
+### Option 2 — One-Line Install on Existing ArmadaOS
+On the device (desktop mode › console, or over SSH):
+
+    curl -L toravo.de/tandem | bash
+
+(or `curl -L https://github.com/harmssi/thor-tandem/releases/latest/download/get.sh | bash`).
 
 The interface speaks English or German (Settings › Look › Language; the installer follows your system language).
 
-![Dual-Screen Steam & PC Library](docs/screenshots/steam-library-dual.png)
+![Dual-Screen PC & Retro Library on AYN Thor](docs/screenshots/steam-library-dual.png)
 
 ## New in 0.6.0
 
@@ -32,17 +47,17 @@ The interface speaks English or German (Settings › Look › Language; the inst
 - **Native AI Coding Agents on the Thor (`tandem.py`, `ui/tandem_ui.py`):**
   - Direct top-screen launchers for **Claude Code** and **Google Antigravity (`agy`)** in autonomous `--dangerously-skip-permissions` mode, paired with a dedicated bottom-screen AI quick-action bar (`Claude ⚡`, `agy ⚡`, `⇧Tab`, `/compact`, `Ctrl+C`, `Esc`, `Send ↵`) above the haptic keyboard.
 
-### Steam & PC Classics Companions
+### Real AYN Thor Dual-Screen UI, Quick Menu & Companions
 
-![Steam Companions – Fallout 4 Pip-Boy & Final Fantasy IX Memoria](docs/screenshots/steam-companions.png)
+![19 Systems OLED Overview & Thor Bento Quick Menu](docs/screenshots/steam-companions.png)
 
-![Native PC Port Companions – Half-Life HEV & Red Alert 2](docs/screenshots/pc-ports-companions.png)
+![Per-Game Interactive Companions – WoW Forever & Super Mario Sunshine](docs/screenshots/pc-ports-companions.png)
 
-### Integrated Update Center, OLED Screensaver & Live Storage Split
+### Integrated Update Center, 60-FPS OLED Screensaver & Live Storage Split
 
 ![Integrated Update Service & Automatic Companion Hub](docs/screenshots/update-and-companions-center.png)
 
-![28-Cover OLED Screensaver & Live UFS Storage Split](docs/screenshots/screensaver-and-storage.png)
+![60-FPS OLED Screensaver & Live UFS Storage Split](docs/screenshots/screensaver-and-storage.png)
 
 Earlier in 0.5.0:
 - **Dual-Screen OLED Screensaver with Original Box Art (`ui/screensaver.py`, `tandem.py`):** Seamless wall-clock-synchronized showcase across both OLED screens on pure `#000000` black with zero stationary pixels – **Thor Cosmos** floats authentic original retail game boxes (SNES/N64 horizontal cardboard boxes, GB/GBA/PS1/DS square cases, GameCube/PS2/Wii/Switch keep-cases fetched automatically from `libretro-thumbnails` & `GameTDB`) across the hinge from top to bottom screen, alongside **Arcade Showcase**, **Dual Aurora** and **Minimal OLED Clock**.
