@@ -716,7 +716,7 @@ class Deck:
             w.text(p, 'Profil (dieses Spiel):', x0, py, ('u', 1.85, 600), ui.MUTED, 28 * u, 0, 4.8 / 1.85)
             px = x0 + 26 * u
             pw = (cw - 26 * u - 2 * u) / 3
-            for pid, plbl in (('Eco', 'Sparsam'), ('Balanced', 'Ausgewogen'), ('Performance', 'Leistung')):
+            for pid, plbl in (('Eco', 'Sparsam'), ('Balanced', 'Ausgewogen'), ('Performance', 'Leistung'), ('Turbo', 'Turbo')):
                 pr = QRectF(px, py, pw, 4.8 * u)
                 on = (cur_p == pid)
                 w.capsule(p, pr, ui.RAISED if on else ui.PANEL, ui.FOCUS if on else ui.LINE)

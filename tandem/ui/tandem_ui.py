@@ -1132,12 +1132,16 @@ class Tandem(QRasterWindow):
             ids = [''] + [e['id'] for e in emus]
             nxt_e = ids[(ids.index(cur_e) + 1) % len(ids)] if cur_e in ids else emus[0]['id']
             rows.append(('Emulator / Core', cur_lbl, lambda ne=nxt_e: self.post('api/gameopt', {'id': gid, 'emu': ne})))
-        profs = [('', 'Standard'), ('Eco', 'Sparsam'), ('Balanced', 'Ausgewogen'), ('Performance', 'Leistung')]
+        profs = [('', 'Standard'), ('Eco', 'Sparsam'), ('Balanced', 'Ausgewogen'), ('Performance', 'Leistung'), ('Turbo', 'Turbo')]
         cur_p = opt.get('profile', '')
         pids = [x[0] for x in profs]
         nxt_p = pids[(pids.index(cur_p) + 1) % len(pids)] if cur_p in pids else ''
         plbl = dict(profs).get(cur_p, 'Standard')
         rows.append(('Leistung (dieses Spiel)', plbl, lambda np=nxt_p: self.post('api/gameopt', {'id': gid, 'profile': np})))
+        if s in ('steam', 'port'):
+            for fkey, flbl in (('tu_deck_emu', 'Turnip Deck-Modus'), ('tu_sysmem', 'Turnip Sysmem-Fix'), ('fex_fast', 'FEX-Turbo (Fast-Math)')):
+                fv = bool(opt.get(fkey))
+                rows.append((flbl, 'An' if fv else 'Aus', lambda fk=fkey, nv=not fv: self.post('api/gameopt', {'id': gid, fk: nv})))
         is_pin = gid in (L.get('pinned') or [])
         rows.append(('An Start anpinnen', '✓ Angepinnt' if is_pin else 'Nein',
                      lambda: self.post('api/collection', {'a': 'pin', 'id': gid})))

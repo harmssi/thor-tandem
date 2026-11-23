@@ -8,13 +8,15 @@
 Everything answers None / an error text where a device lacks it; nothing here needs Steam to run.
 """
 import base64, json, os, socket, struct, subprocess, threading
+import thor_perf
 
 DECKY = ('127.0.0.1', 1337)
 PLUGIN = 'Armada Control'
 POWER = ['busctl', '--system', '--json=short']
 POWER_OBJ = ['org.armada.Power', '/org/armada/Power', 'org.armada.Power1']
 LOCK = threading.Lock()  # one call at a time: both screens ask together, and parallel calls lost answers on the Thor
-PROFILES = {'Eco': 'Sparsam', 'Balanced': 'Ausgewogen', 'Performance': 'Leistung'}
+PROFILES = {'Eco': 'Sparsam', 'Balanced': 'Ausgewogen', 'Performance': 'Leistung', 'Turbo': 'Turbo'}
+_ACTIVE_PROFILE = ''
 # Stick colours to choose from: name and RRGGBB as armada-rgb takes it
 COLORS = [('Weiß', 'FFFFFF'), ('Rot', 'FF2000'), ('Orange', 'FF7A00'), ('Gelb', 'FFD000'), ('Grün', '20E040'), ('Türkis', '00D0C0'),
           ('Blau', '1060FF'), ('Lila', '9040FF'), ('Pink', 'FF30A0')]
@@ -76,11 +78,13 @@ def _power(*args):
 
 
 def power():
-    """{'profile', 'profiles' [(id, label)], 'temp' (°C), 'fan' (rpm)} or None without armada-powerd."""
+    """{'profile', 'profiles' [(id, label)], 'temp' (°C), 'fan' (rpm), 'perf'} or None without armada-powerd."""
     done = _power('call', *POWER_OBJ, 'GetStatus')
     try: data = {k: v['data'] for k, v in json.loads(done.stdout)['data'][0].items()}
     except (AttributeError, ValueError, KeyError, IndexError, TypeError): return None
-    return {'profile': data.get('profile'), 'profiles': [[k, v] for k, v in PROFILES.items()], 'temp': data.get('temperature'), 'fan': data.get('fan_rpm')}
+    prof = _ACTIVE_PROFILE if (_ACTIVE_PROFILE == 'Turbo' and data.get('profile') == 'Performance') else data.get('profile')
+    return {'profile': prof, 'profiles': [[k, v] for k, v in PROFILES.items()], 'temp': data.get('temperature'),
+            'fan': data.get('fan_rpm'), 'perf': thor_perf.telemetry()}
 
 
 def state():
@@ -102,13 +106,26 @@ def state():
 
 
 def change(key, value):
-    """One setting: 'profile' (Eco|Balanced|Performance), 'gyro' (bool), 'sleep_mode' (s2idle|fake),
-    'bottom_screen' (bool) or 'rgb' (dict). Returns the new state() or {'error': text}."""
+    """One setting: 'profile' (Eco|Balanced|Performance|Turbo), 'gpu_clock' (0|401|550|680), 'charge_limit' (80|85|100),
+    'gyro' (bool), 'sleep_mode' (s2idle|fake), 'bottom_screen' (bool) or 'rgb' (dict). Returns the new state() or {'error': text}."""
+    global _ACTIVE_PROFILE
     try:
         if key == 'profile':
             if value not in PROFILES: return {'error': 'Unbekanntes Leistungsprofil.'}
-            done = _power('set-property', *POWER_OBJ, 'Profile', 's', value)
+            armada_prof = thor_perf.PROFILE_TUNING[value]['armada']
+            done = _power('set-property', *POWER_OBJ, 'Profile', 's', armada_prof)
             if not done or done.returncode: return {'error': 'Das Leistungsprofil lässt sich gerade nicht ändern.'}
+            _ACTIVE_PROFILE = value
+            thor_perf.apply_profile(value)
+        elif key == 'gpu_clock':
+            res = thor_perf.set_gpu_clock(value)
+            if 'error' in res: return res
+        elif key == 'charge_limit':
+            res = thor_perf.set_charge_limit(value)
+            if 'error' in res: return res
+        elif key == 'fan_mode':
+            res = thor_perf.set_fan_mode(value)
+            if 'error' in res: return res
         elif key == 'gyro':
             decky('set_gyro_enabled', bool(value))
         elif key == 'sleep_mode':

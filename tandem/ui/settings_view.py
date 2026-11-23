@@ -263,7 +263,15 @@ def groups(win, page):
         if pw:
             labels = dict(pw.get('profiles') or [])
             rows.append(choice('Leistungsprofil', list(labels.items()), pw.get('profile'), lambda v: thor_set(win, 'profile', v),
-                               'Sparsam: länger spielen, leiser. Ausgewogen: für fast alles. Leistung: volle Kraft für PS2, Switch und PC-Spiele – wärmer und lauter.'))
+                               'Sparsam: länger spielen, leiser. Ausgewogen: schedutil für fast alles. Leistung: volle Taktraten. Turbo: alle Kerne auf Maximum + Adreno 740 auf 680 MHz.'))
+            pf = pw.get('perf') or {}
+            cur_gpu = (pf.get('gpu_mhz') if pf.get('gpu_gov') == 'performance' and pf.get('gpu_mhz') in (401, 550, 680) else 0)
+            rows.append(choice('Adreno GPU-Takt', [(0, 'Auto'), (401, '401 MHz'), (550, '550 MHz'), (680, '680 MHz')],
+                               cur_gpu, lambda v: thor_set(win, 'gpu_clock', v),
+                               'Fixiert den Adreno-740-Takt gegen Shader-Ruckler in schweren Spielen oder überlässt ihn der Automatik.'))
+            rows.append(choice('Lüfter-Modus', [('auto', 'Auto'), ('quiet', 'Leise'), ('cool', 'Kühl'), ('max', 'Max')],
+                               pf.get('fan_mode') or 'auto', lambda v: thor_set(win, 'fan_mode', v),
+                               'Kühl hält den Snapdragon 8 Gen 2 bei langen Sessions deutlich unter 65 °C und verhindert Throttling.'))
         rows.append(toggle('Unterwegs-Modus (Akku-Sparpaket)', CFG.get('travel_mode', False),
                            lambda v: config_set(win, travel_mode=v),
                            'Schaltet mit einem Tipp auf Profil Sparsam, senkt das obere OLED-Panel auf 60 Hz, schaltet die Stick-LEDs aus und beendet Hintergrund-Steam – bringt unterwegs spürbar längere Laufzeit.'))
@@ -297,13 +305,22 @@ def groups(win, page):
             if chg.get('mins_to_full'):
                 chg_rows.append({'k': 'info', 't': 'Restladezeit', 'v': f'~{chg["mins_to_full"]} Min.',
                                  'help': 'Geschätzte Zeit bis zur Vollladung.'})
+        pf_c = (pw or {}).get('perf') or {}
+        cur_lim = pf_c.get('charge_limit') if pf_c.get('charge_limit') in (80, 85, 100) else 100
+        chg_rows.append(choice('Bypass-Ladelimit (Hardware)', [(100, 'Aus (100 %)'), (80, '80 % Bypass'), (85, '85 % Bypass')],
+                               cur_lim, lambda v: thor_set(win, 'charge_limit', v),
+                               'Stoppt das Laden bei 80 % bzw. 85 % und versorgt den Thor am Netzteil direkt – weniger Hitze und maximale Akku-Lebensdauer.'))
         chg_rows.append(choice('Akku-Schutz (Lade-Hinweis)', [(0, 'Aus'), (80, 'Bei 80 %'), (90, 'Bei 90 %')],
                                int(CFG.get('charge_alert') or 0), lambda v: config_set(win, charge_alert=v),
                                'Meldet sich mit Hinweis und Ton, sobald der Akku beim Laden 80 % bzw. 90 % erreicht – schont die Akkuzellen auf Dauer.'))
 
+        pf_i = (pw or {}).get('perf') or {}
+        cmhz = pf_i.get('cpu_mhz') or {}
+        cpu_str = f'{cmhz.get("prime", "–")} MHz ({pf_i.get("cpu_gov") or "–"}) · GPU {pf_i.get("gpu_mhz") or "–"} MHz' if cmhz else ''
         w_live = f' · {bd["watts"]:g} W' if (bd.get('watts') and not (B or {}).get('charging')) else ''
         info = ([{'k': 'info', 't': 'Akku', 'v': f'{B["level"]} %' + (' · lädt' if B.get('charging') else w_live), 'help': 'Aktueller Ladestand und Entladeleistung des Akkus.'}] if B else []) + \
                ([{'k': 'info', 't': 'Akku-Zustand', 'v': f'{bd["health"]} %' + (f' · {bd["cycles"]} Zyklen' if bd.get('cycles') is not None else ''), 'help': 'Gesundheitszustand und bisherige Ladezyklen des Akkus.'}] if bd.get('health') is not None else []) + \
+               ([{'k': 'info', 't': 'CPU / GPU Live', 'v': cpu_str, 'help': 'Aktueller Prime-Core-Takt, CPU-Governor und Adreno-740-GPU-Takt.'}] if cpu_str else []) + \
                ([{'k': 'info', 't': 'Temperatur', 'v': f'{pw["temp"]} °C', 'help': 'Temperatur im Gerät. Bis etwa 80 °C ist alles in Ordnung.'},
                  {'k': 'info', 't': 'Lüfter', 'v': f'{pw["fan"]} U/min', 'help': 'Der Lüfter regelt sich selbst nach der Temperatur und dem Profil.'}] if pw else [])
         return [('Leistung & Unterwegs', rows, 'Gilt sofort und bleibt bis zur nächsten Änderung.' if rows else 'Das Leistungsprofil ist hier nicht erreichbar.'),

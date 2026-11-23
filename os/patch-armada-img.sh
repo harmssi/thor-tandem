@@ -110,6 +110,16 @@ EOF
 chmod 755 "$HOME_DIR/Desktop/tandem-zurueck.desktop"
 chown -R 1000:1000 "$HOME_DIR/.local" "$HOME_DIR/.config" "$HOME_DIR/Desktop"
 
+# Install kernel sysctl gaming tuning & wheel udev hardware permissions into the image's /etc
+ETC_DIR="$(find "$MNT" -maxdepth 5 -type d -name sysctl.d 2>/dev/null | grep '/etc/sysctl.d$' | head -n 1 || true)"
+if [ -n "$ETC_DIR" ]; then
+    ETC_ROOT="$(dirname "$ETC_DIR")"
+    mkdir -p "$ETC_ROOT/sysctl.d" "$ETC_ROOT/udev/rules.d"
+    install -m 644 "$ROOT/os/99-toravo-perf.conf" "$ETC_ROOT/sysctl.d/99-toravo-perf.conf"
+    install -m 644 "$ROOT/os/99-toravo-hw.rules" "$ETC_ROOT/udev/rules.d/99-toravo-hw.rules"
+    echo "Performance sysctl + udev rules installed into $ETC_ROOT"
+fi
+
 sync
 umount -R "$MNT"
 losetup -d "$LOOP"

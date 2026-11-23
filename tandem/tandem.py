@@ -15,6 +15,7 @@ import companion  # per-game notes/sketches, guides, visual save states, dual-sc
 import saves  # rolling local + SSH savegame backups (SD card + optional SSH host)
 import telemetry  # battery wattage/playtime, CPU/RAM, PipeWire mixer, dock state & Wake-on-LAN
 import thor  # the Thor's own hardware: stick lights, gyro, performance profile
+import thor_perf  # Snapdragon 8 Gen 2 / Adreno 740 performance engine (schedutil/Turbo, GPU lock, bypass charge, Vulkan/FEX env)
 import thor_storage  # integrated Linux/Tandem system backups & live retroactive Android partition shrinker
 import thor_updater  # Obtainium-class integrated emulator/core updater & automatic game companion provisioner
 
@@ -1129,6 +1130,8 @@ class Tandem:
                         env = {**os.environ, 'DISPLAY': os.environ.get('DISPLAY') or ':0',
                                'WAYLAND_DISPLAY': os.environ.get('WAYLAND_DISPLAY') or 'gamescope-0',
                                'XDG_RUNTIME_DIR': os.environ.get('XDG_RUNTIME_DIR') or f'/run/user/{os.getuid()}'}
+                    if game.get('s') not in ('term', 'app'):
+                        env = thor_perf.game_env(env if env is not None else os.environ, opt, game.get('s', ''))
                     if prof: thor.change('profile', prof)
                     if fps: apply_fps_limit(fps)
                     if scale != 'linear': apply_scaling_filter(scale)
@@ -1197,6 +1200,10 @@ class Tandem:
                 if scale != 'linear': opt['scale'] = scale
                 else: opt.pop('scale', None)
                 if run and run['id'] == gid: run['scale'] = scale
+            for flag in ('tu_deck_emu', 'tu_sysmem', 'fex_fast'):
+                if flag in data:
+                    if data[flag]: opt[flag] = True
+                    else: opt.pop(flag, None)
             if not opt: self.saved.get('gameopt', {}).pop(gid, None)
             self.save()
             active = bool(run and run['id'] == gid)
@@ -3518,6 +3525,7 @@ def handler(tandem):
             if path == '/api/setup': return self.send(200, {**tandem.setup, **setup_info(tandem)})
             if path == '/api/system': return self.send(200, system_info(tandem.library.roots, 'scan' in self.path))
             if path == '/api/thor': return self.send(200, thor.state())
+            if path == '/api/perf': return self.send(200, thor_perf.telemetry())
             if path == '/api/record': return self.send(200, record(tandem, 'status'))
             if path == '/api/framegen': return self.send(200, frame_gen())
             if path == '/api/controls': return self.send(200, controls_info())

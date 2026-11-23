@@ -7,11 +7,13 @@ LABEL org.opencontainers.image.title="Toravo Tandem OS" \
       org.opencontainers.image.description="Dual-screen OLED gaming OS for AYN Thor based on ArmadaOS + Toravo Tandem" \
       org.opencontainers.image.source="https://github.com/harmssi/thor-tandem"
 
-# Bundle Toravo Tandem (backend, PySide6 dual-screen UI, decks, themes, updater, storage tools)
+# Bundle Toravo Tandem (backend, PySide6 dual-screen UI, decks, themes, updater, storage & performance engine)
 COPY tandem/ /usr/share/toravo-tandem/
 COPY os/gamescope-steam-hook /usr/share/toravo-tandem/gamescope-steam-hook
 COPY os/toravo-tandem-firstboot /usr/libexec/toravo-tandem-firstboot
 COPY os/toravo-tandem-firstboot.service /usr/lib/systemd/system/toravo-tandem-firstboot.service
+COPY os/99-toravo-perf.conf /usr/lib/sysctl.d/99-toravo-perf.conf
+COPY os/99-toravo-hw.rules /usr/lib/udev/rules.d/99-toravo-hw.rules
 
 RUN chmod 755 /usr/libexec/toravo-tandem-firstboot \
               /usr/share/toravo-tandem/tandem-launch \
