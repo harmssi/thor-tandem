@@ -62,10 +62,13 @@ def draw(win, p):
     pw = T.get('power') or {}
     qt = getattr(win, 'QTELE', None) or {}
     bat = qt.get('battery') or win.BATT or {}
+    chg = qt.get('charger') or {}
     parts = [ui.clock()]
     if bat.get('level') is not None:
         btxt = f'{bat["level"]} %' + (' lädt' if bat.get('charging') else '')
-        if not bat.get('charging') and bat.get('watts'):
+        if bat.get('charging') and chg.get('fast_charging'):
+            btxt += ' · PD Schnellladen'
+        elif not bat.get('charging') and bat.get('watts'):
             btxt += f' · {bat["watts"]:.1f} W'.replace('.', ',')
         if not bat.get('charging') and bat.get('mins_left'):
             btxt += f' ({_fmt_rem(bat["mins_left"])})'
@@ -115,6 +118,25 @@ def draw(win, p):
         seg_row(night_card.x() + 1.2 * u, y + 3.5 * u, col_w - 2.4 * u, 4.5 * u,
                 [(lbl, lambda m=m: cfg_set(win, night_mode=m), cur_night == m)
                  for m, lbl in (('off', 'Aus'), ('warm', 'Warm'), ('night', 'Nacht'))])
+        y += card_h1 + gap
+
+        # ---- 1b. Unterwegs-Sparmodus & Panel-Frequenz (Akku-Optimierung) ----
+        travel_on = bool(win.CFG.get('travel_mode'))
+        cur_hz = 60 if (travel_on or int(win.CFG.get('panel_hz') or 120) == 60) else 120
+        tcard = QRectF(x0, y, col_w, card_h1)
+        hzcard = QRectF(x0 + col_w + gap, y, col_w, card_h1)
+        win.box(p, tcard, 1.7 * u, PANEL, LIVE if travel_on else LINE)
+        win.text(p, 'AKKU UNTERWEGS', tcard.x() + 1.6 * u, y + 1.1 * u, f_sec, LIVE if travel_on else MUTED, col_w - 3.2 * u)
+        seg_row(tcard.x() + 1.2 * u, y + 3.5 * u, col_w - 2.4 * u, 4.5 * u,
+                [('Normal', lambda: cfg_set(win, travel_mode=False), not travel_on, 'travel:off'),
+                 ('Unterwegs', lambda: cfg_set(win, travel_mode=True), travel_on, 'travel:on')],
+                LIVE if travel_on else FOCUS)
+
+        win.box(p, hzcard, 1.7 * u, PANEL, LINE)
+        win.text(p, 'DISPLAY OBEN (HZ)', hzcard.x() + 1.6 * u, y + 1.1 * u, f_sec, MUTED, col_w - 3.2 * u)
+        seg_row(hzcard.x() + 1.2 * u, y + 3.5 * u, col_w - 2.4 * u, 4.5 * u,
+                [('120 Hz', lambda: cfg_set(win, travel_mode=False, panel_hz=120), cur_hz == 120, 'hz:120'),
+                 ('60 Hz Spar', lambda: cfg_set(win, panel_hz=60), cur_hz == 60, 'hz:60')])
         y += card_h1 + gap
 
         # ---- 2. Brightness & Volume Bento Card ----

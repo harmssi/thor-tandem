@@ -43,11 +43,13 @@ def all_candidates(home=None):
         ('port-homm3', ports / 'homm3/data/vcmi'),
         ('port-kknd2', ports / 'kknd2/data/support'),
         ('port-ra2', ports / 'ra2/data/ra2engine'),
+        ('steam-userdata', h / '.local/share/Steam/userdata'),
     ]
     for nroot, prefix in ((h / '.local/share/banananative', 'banananative'), (h / '.local/share/peanuts', 'peanuts')):
         if nroot.is_dir():
             for sub in sorted(nroot.iterdir()):
                 if (sub / 'save').is_dir(): candidates.append((f'{prefix}-{sub.name}', sub / 'save'))
+                if (sub / 'save.work').is_dir(): candidates.append((f'{prefix}-{sub.name}-work', sub / 'save.work'))
     return candidates
 
 
@@ -68,6 +70,8 @@ def sources(home=None):
 
 def card_backup_dir():
     """Backup folder on an inserted SD card, if writable, else ~/.local/state/tandem/backups."""
+    override = os.environ.get('TANDEM_SAVE_BACKUP_DIR')
+    if override: return Path(override)
     for pat in ('/run/media/*/*', '/media/*/*'):
         for root in sorted(glob.glob(pat)):
             p = Path(root)

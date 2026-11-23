@@ -47,6 +47,159 @@ def _guides_dir(gid):
     return d
 
 
+# ---- Native Game Companion Registry, Persistent State & Live Gamepad Bridge ------------------------------------------
+NATIVE_TID_DECKS = {
+    '01001B300B9BE000': 'd3',          # Diablo III: Eternal Collection
+    '01005CA01580E000': 'p5r',         # Persona 5 Royal
+    '01006BB00C6F0000': 'zelda_la',    # The Legend of Zelda: Link's Awakening
+    '0400486024DEC000': 'oot',         # The Legend of Zelda: Ocarina of Time
+    '0100000000010000': 'odyssey',     # Super Mario Odyssey
+    '010015100B514000': 'wonder',      # Super Mario Bros. Wonder
+    '0400C3F00006E000': 'mkworld',     # Mario Kart World
+    '0100152000022000': 'mkworld',     # Mario Kart 8 Deluxe
+    '0100187003A36000': 'letsgo',      # Pokémon: Let's Go, Eevee!
+    '010003F003A34000': 'letsgo',      # Pokémon: Let's Go, Pikachu!
+    '01009AA000FAA000': 'mania',       # Sonic Mania Plus
+    '0100606026F12000': 'ffres',       # FINAL FANTASY RESONANCE
+    '010051F0207B2000': 'tomodachi',   # Tomodachi Life: Living the Dream
+}
+
+NATIVE_APPID_DECKS = {
+    '1687950': 'p5r',                  # Persona 5 Royal (Steam)
+    '2344520': 'd3',                   # Diablo IV / III family fallback if shortcutted
+}
+
+NATIVE_TITLE_PATTERNS = (
+    ('diablo iii', 'd3'),
+    ('diablo 3', 'd3'),
+    ('persona 5', 'p5r'),
+    ("link's awakening", 'zelda_la'),
+    ('links awakening', 'zelda_la'),
+    ('ocarina of time', 'oot'),
+    ('mario odyssey', 'odyssey'),
+    ('mario bros. wonder', 'wonder'),
+    ('mario bros wonder', 'wonder'),
+    ('mario wonder', 'wonder'),
+    ('mario kart world', 'mkworld'),
+    ('mario kart 8', 'mkworld'),
+    ("let's go, eevee", 'letsgo'),
+    ("let's go, evoli", 'letsgo'),
+    ("let's go, pikachu", 'letsgo'),
+    ('lets go eevee', 'letsgo'),
+    ('lets go evoli', 'letsgo'),
+    ('sonic mania', 'mania'),
+    ('final fantasy resonance', 'ffres'),
+    ('tomodachi life', 'tomodachi'),
+    ('wow forever', 'wow'),
+    ('world of warcraft', 'wow'),
+    ('super mario sunshine', 'sunshine'),
+    ("luigi's mansion", 'luigis_mansion'),
+    ('luigis mansion', 'luigis_mansion'),
+    ('thousand-year door', 'ttyd'),
+    ('onentor', 'ttyd'),
+    ('double dash', 'mkdd'),
+    ('smash bros. melee', 'melee'),
+    ('smash bros melee', 'melee'),
+    ('animal crossing', 'ac_gc'),
+    ('wrath of cortex', 'crash_woc'),
+    ('zorn des cortex', 'crash_woc'),
+)
+
+
+def resolve_native_companion(game):
+    """Return bespoke bottom-screen companion key ('d3', 'p5r', 'zelda_la', 'oot', 'odyssey', 'wonder',
+    'mkworld', 'letsgo', 'mania', 'ffres', 'tomodachi') for a Native or matching game dict, or None."""
+    if not isinstance(game, dict):
+        return None
+    tid = str(game.get('tid') or '').strip().upper()
+    if not tid:
+        gid = str(game.get('id') or '')
+        if gid.startswith('native-') and len(gid) >= 23:
+            tid = gid[7:23].upper()
+        elif game.get('path'):
+            m = re.search(r'\[([0-9A-Fa-f]{16})\]', str(game['path']))
+            if m:
+                tid = m.group(1).upper()
+                if tid.endswith('800'):
+                    tid = tid[:-3] + '000'
+    if tid in NATIVE_TID_DECKS:
+        return NATIVE_TID_DECKS[tid]
+    appid = str(game.get('appid') or '').strip()
+    if appid in NATIVE_APPID_DECKS:
+        return NATIVE_APPID_DECKS[appid]
+    title = str(game.get('t') or '').lower().replace('’', "'")
+    for needle, deck_key in NATIVE_TITLE_PATTERNS:
+        if needle in title:
+            return deck_key
+    return None
+
+
+def _cstate_dir():
+    d = STATE / 'cstate'
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def cstate_get(key):
+    if not SAFE_ID.fullmatch(str(key or '')):
+        return {'error': 'ungültige ID'}
+    f = _cstate_dir() / f'{key}.json'
+    try:
+        data = json.loads(f.read_text(encoding='utf-8'))
+        if not isinstance(data, dict):
+            data = {}
+    except (OSError, ValueError):
+        data = {}
+    return {'key': key, 'data': data}
+
+
+def cstate_save(key, payload):
+    if not SAFE_ID.fullmatch(str(key or '')):
+        return {'error': 'ungültige ID'}
+    cur = cstate_get(key).get('data') or {}
+    if isinstance(payload, dict):
+        if isinstance(payload.get('data'), dict):
+            cur = dict(payload['data'])
+        if isinstance(payload.get('patch'), dict):
+            for k, v in payload['patch'].items():
+                ks = str(k)[:80]
+                if v is None:
+                    cur.pop(ks, None)
+                else:
+                    cur[ks] = v
+        if isinstance(payload.get('toggle'), str):
+            tk = payload['toggle'][:80]
+            done = dict(cur.get('done') or {})
+            if done.get(tk):
+                done.pop(tk, None)
+            else:
+                done[tk] = True
+            cur['done'] = done
+    raw = json.dumps(cur, ensure_ascii=False)
+    if len(raw) > 262144:
+        return {'error': 'Ungültige Dateigröße.'}
+    f = _cstate_dir() / f'{key}.json'
+    tmp = f.with_suffix('.tmp')
+    tmp.write_text(raw, encoding='utf-8')
+    os.replace(tmp, f)
+    return {'ok': True, 'key': key, 'data': cur}
+
+
+def send_native_pad(seq, port=8779):
+    """Send a live button/chord/melody/shake sequence (e.g. 'R', 'PLUS,R', 'SHAKE', 'NOTE:RLeft,RUp,RRight')
+    to the running PeanutsNative / BananaNative host on 127.0.0.1:8779 without stealing window focus."""
+    import socket
+    s = re.sub(r'[^A-Za-z0-9_+,:\-]', '', str(seq or ''))[:180]
+    if not s:
+        return {'error': 'ungültige ID'}
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.sendto(s.encode('ascii'), ('127.0.0.1', int(port)))
+        return {'ok': True, 'sent': s}
+    except OSError as e:
+        return {'error': str(e)}
+
+
 # ---- Per-game notes, checklists & finger sketch ----------------------------------------------------------------------
 def notes_get(gid):
     if not SAFE_ID.fullmatch(str(gid or '')): return {'error': 'ungültige ID'}
@@ -784,4 +937,758 @@ def switch_native_convert(game, roots=(), home=None, on_done=None):
 
     threading.Thread(target=worker, daemon=True).start()
     return {'ok': True, 'text': f'Native Umwandlung für „{game["t"]}“ im Hintergrund gestartet.'}
+
+
+# ---- GBADuo v1.0.1 Companion Catalog, Multi-Region Matcher & Automatic Pack Sync -------------------------------------
+GBADUO_REPO = 'khumam/gba-duo-companions'
+GBADUO_CATALOG_URL = f'https://raw.githubusercontent.com/{GBADUO_REPO}/main/companions.json'
+GBADUO_RAW_BASE = f'https://raw.githubusercontent.com/{GBADUO_REPO}/main/'
+PACK_ID_RE = re.compile(r'^[a-z0-9][a-z0-9_\-]{1,63}$')
+HACK_PACK_KEYWORDS = {
+    'pokemon-unbound-companion': ('unbound',),
+    'pokemon-light-platinum-companion': ('light platinum', 'lightplatinum'),
+    'pokemon-monomyth-companion': ('monomyth',),
+}
+WILDCARD_PACK_KEYWORDS = {
+    'mario-land-2-companion': ('mario land 2', '6 golden coins', 'supermarioland2'),
+    'super-mario-land-2-companion': ('mario land 2', '6 golden coins', 'supermarioland2'),
+}
+_PACK_SYNC_LOCK = threading.Lock()
+_LAST_AUTO_SYNC = 0.0
+
+
+def packs_dir(cfg_dir=None):
+    base = Path(cfg_dir) if cfg_dir else Path(os.environ.get('XDG_CONFIG_HOME', HOME / '.config')) / 'tandem'
+    d = base / 'packs'
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _cache_dir():
+    d = Path(os.environ.get('XDG_CACHE_HOME', HOME / '.cache')) / 'tandem'
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def same_gba_game(code_a, code_b):
+    """GBADuo v1.0.1 multi-region rule: 4-letter GBA codes share their 3-letter game stem across regions
+    (e.g. BPRE US == BPRD DE == BPRP EU == BPRJ JP). GB/GBC 'DMG-'/'CGB-' headers never cross-match."""
+    x = str(code_a or '').strip().upper().removeprefix('AGB-')
+    y = str(code_b or '').strip().upper().removeprefix('AGB-')
+    return len(x) == 4 and len(y) == 4 and '-' not in x and '-' not in y and '?' not in x and '?' not in y and x[:3] == y[:3]
+
+
+def _ver_tuple(ver):
+    return tuple(int(p) if p.isdigit() else 0 for p in re.findall(r'\d+', str(ver or '0'))[:4]) or (0,)
+
+
+def resolve_overview_url(raw_ov):
+    if not isinstance(raw_ov, str) or not raw_ov.strip():
+        return None
+    s = raw_ov.strip()
+    if s.startswith('https://'):
+        return s
+    if s.startswith('http://') or '..' in s.split('/') or s.startswith('/'):
+        return None
+    return GBADUO_RAW_BASE + s.lstrip('./')
+
+
+def parse_gbaduo_catalog(data):
+    if not isinstance(data, dict) or not isinstance(data.get('companions'), list):
+        return []
+    out = []
+    for item in data['companions']:
+        if not isinstance(item, dict):
+            continue
+        pid = str(item.get('id') or '').strip().lower()
+        dl = str(item.get('download') or '').strip()
+        if not PACK_ID_RE.fullmatch(pid) or not dl.startswith('https://'):
+            continue
+        games = [g for g in (item.get('games') or []) if isinstance(g, dict) and g.get('gameCode')]
+        codes = [str(g['gameCode']).strip().upper() for g in games if g.get('gameCode')]
+        crcs = []
+        for g in games:
+            if g.get('crc32'):
+                try:
+                    crcs.append(int(str(g['crc32']), 16))
+                except ValueError:
+                    pass
+        out.append({
+            'id': pid,
+            'title': str(item.get('title') or pid)[:100],
+            'description': str(item.get('description') or '')[:400],
+            'version': str(item.get('version') or '0.1.0')[:24],
+            'author': str(item.get('author') or '')[:60],
+            'official': bool(item.get('official')),
+            'download': dl,
+            'codes': codes,
+            'crcs': crcs,
+            'pages': [str(p)[:30] for p in (item.get('pages') or []) if isinstance(p, str)][:10],
+            'tags': [str(t)[:24] for t in (item.get('tags') or []) if isinstance(t, str)][:12],
+            'canModifyGame': bool(item.get('canModifyGame')),
+            'overview': resolve_overview_url(item.get('overview')),
+        })
+    return out
+
+
+def fetch_gbaduo_catalog(force=False, timeout=10, opener=None):
+    """Return parsed list of official & community packs from khumam/gba-duo-companions (cached 6h on disk)."""
+    cfile = _cache_dir() / 'gbaduo-companions.json'
+    if not force and cfile.is_file():
+        try:
+            age = time.time() - cfile.stat().st_mtime
+            if age < 6 * 3600:
+                cached = parse_gbaduo_catalog(json.loads(cfile.read_text(encoding='utf-8')))
+                if cached:
+                    return cached
+        except (OSError, ValueError):
+            pass
+    open_fn = opener or urllib.request.urlopen
+    try:
+        req = urllib.request.Request(GBADUO_CATALOG_URL, headers={'User-Agent': 'ToravoTandem/1.0'})
+        with open_fn(req, timeout=timeout) as resp:
+            raw = resp.read().decode('utf-8')
+        parsed = parse_gbaduo_catalog(json.loads(raw))
+        if parsed:
+            tmp = cfile.with_suffix('.tmp')
+            tmp.write_text(raw, encoding='utf-8')
+            os.replace(tmp, cfile)
+            return parsed
+    except Exception:
+        pass
+    if cfile.is_file():
+        try:
+            return parse_gbaduo_catalog(json.loads(cfile.read_text(encoding='utf-8')))
+        except (OSError, ValueError):
+            pass
+    return []
+
+
+def _title_matches_special_pack(pack_id, title_hint):
+    low = str(title_hint or '').lower().replace('_', ' ').replace('-', ' ')
+    if pack_id in HACK_PACK_KEYWORDS:
+        return any(k in low for k in HACK_PACK_KEYWORDS[pack_id])
+    if pack_id in WILDCARD_PACK_KEYWORDS:
+        return any(k in low for k in WILDCARD_PACK_KEYWORDS[pack_id])
+    return True
+
+
+def list_installed_packs(cfg_dir=None):
+    pdir = packs_dir(cfg_dir)
+    items = []
+    for mf in sorted(pdir.glob('*/manifest.json')):
+        try:
+            m = json.loads(mf.read_text(encoding='utf-8'))
+            match = m.get('match') or {}
+            codes = [str(c).strip().upper() for c in (match.get('gameCode') or [])]
+            crcs = [int(str(c), 16) for c in (match.get('crc32') or [])]
+        except (OSError, ValueError, TypeError, AttributeError):
+            continue
+        ov_dir = mf.parent / 'overview'
+        local_ov = None
+        if ov_dir.is_dir():
+            pics = sorted(f for f in ov_dir.iterdir()
+                          if f.is_file() and not f.name.startswith('.') and f.suffix.lower() in {'.png', '.jpg', '.jpeg', '.webp'})
+            if pics:
+                local_ov = str(pics[0])
+        items.append({
+            'id': mf.parent.name,
+            'manifest_id': str(m.get('id') or mf.parent.name),
+            'title': str(m.get('name') or mf.parent.name),
+            'version': str(m.get('version') or '0.1.0'),
+            'author': str(m.get('author') or ''),
+            'formatVersion': int(m.get('formatVersion') or 1),
+            'codes': codes,
+            'crcs': crcs,
+            'has_wide': bool(m.get('gameScript')),
+            'overview_file': local_ov,
+        })
+    return items
+
+
+def match_packs_for_rom(code, crc, title_hint='', installed=None, catalog=None):
+    """Return {'exact_installed', 'other_installed', 'exact_web', 'other_web', 'best_installed', 'best_web'}
+    implementing GBADuo v1.0.1 exact + multi-region matching while keeping hack/wildcard packs accurate."""
+    res = {'exact_installed': [], 'other_installed': [], 'exact_web': [], 'other_web': [],
+           'best_installed': None, 'best_other_region': False, 'best_web': None}
+    if not code:
+        return res
+    u_code = str(code).strip().upper()
+    norm_codes = lambda cs: [str(c).strip().upper() for c in cs]
+
+    for it in (installed if installed is not None else list_installed_packs()):
+        cs, crcs = norm_codes(it['codes']), it['crcs']
+        is_wildcard = bool(cs) and all('?' in c for c in cs)
+        if is_wildcard and not crcs and not _title_matches_special_pack(it['id'], title_hint):
+            continue
+        exact_code = (u_code in cs or ('AGB-' + u_code) in cs) if cs else bool(crcs)
+        if exact_code and (not crcs or crc in crcs):
+            res['exact_installed'].append(it)
+        elif not crcs and not is_wildcard and any(same_gba_game(c, u_code) for c in cs):
+            res['other_installed'].append(it)
+
+    any_hack_hit = any(_title_matches_special_pack(hpid, title_hint) for hpid in HACK_PACK_KEYWORDS)
+
+    def _rank_pack(p):
+        pid = p['id']
+        is_hack = pid in HACK_PACK_KEYWORDS
+        hack_ok = _title_matches_special_pack(pid, title_hint)
+        if any_hack_hit:
+            pref = 0 if (is_hack and hack_ok) else 1
+        else:
+            pref = 2 if is_hack else 0
+        has_crc = 0 if p.get('crcs') else 1
+        return (has_crc, pref, pid)
+
+    res['exact_installed'].sort(key=_rank_pack)
+    res['other_installed'].sort(key=_rank_pack)
+    if res['exact_installed']:
+        res['best_installed'] = res['exact_installed'][0]['id']
+        res['best_other_region'] = False
+    elif res['other_installed']:
+        res['best_installed'] = res['other_installed'][0]['id']
+        res['best_other_region'] = True
+
+    if catalog is not None:
+        for wp in catalog:
+            cs, crcs = norm_codes(wp['codes']), wp['crcs']
+            is_wildcard = bool(cs) and all('?' in c for c in cs)
+            if is_wildcard and not crcs and not _title_matches_special_pack(wp['id'], title_hint):
+                continue
+            if wp['id'] in HACK_PACK_KEYWORDS and not _title_matches_special_pack(wp['id'], title_hint):
+                continue
+            exact_code = (u_code in cs or ('AGB-' + u_code) in cs) if cs else bool(crcs)
+            if exact_code and (not crcs or crc in crcs):
+                res['exact_web'].append(wp)
+            elif not crcs and not is_wildcard and any(same_gba_game(c, u_code) for c in cs):
+                res['other_web'].append(wp)
+        res['exact_web'].sort(key=_rank_pack)
+        res['other_web'].sort(key=_rank_pack)
+        if res['exact_web']:
+            res['best_web'] = (res['exact_web'][0], False)
+        elif res['other_web']:
+            res['best_web'] = (res['other_web'][0], True)
+    return res
+
+
+def install_zip_pack(zip_bytes, expected_id=None, cfg_dir=None):
+    """Validate and atomically unpack a GBADuo companion `.zip` archive into `~/.config/tandem/packs/<id>`."""
+    import io, tempfile
+    if not zip_bytes or len(zip_bytes) > (32 << 20):
+        return {'error': 'Ungültige Dateigröße.'}
+    pdir = packs_dir(cfg_dir)
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
+    except zipfile.BadZipFile:
+        return {'error': 'Beschädigtes ZIP-Archiv.'}
+    with zf:
+        names = [n for n in zf.namelist() if not n.endswith('/') and not Path(n).name.startswith('.')]
+        if not names or sum(zf.getinfo(n).file_size for n in names) > (64 << 20):
+            return {'error': 'Ungültige Dateigröße.'}
+        m_entries = [n for n in names if Path(n).name == 'manifest.json' and len(Path(n).parts) <= 2]
+        if not m_entries:
+            return {'error': 'manifest.json fehlt im Begleiter-Paket.'}
+        m_entry = sorted(m_entries, key=lambda s: len(Path(s).parts))[0]
+        prefix = m_entry[:-len('manifest.json')]
+        try:
+            manifest = json.loads(zf.read(m_entry).decode('utf-8'))
+        except (ValueError, KeyError):
+            return {'error': 'manifest.json ist ungültig.'}
+        pid = str(expected_id or manifest.get('id') or Path(prefix.rstrip('/')).name).strip().lower()
+        if not PACK_ID_RE.fullmatch(pid):
+            return {'error': 'ungültige ID'}
+        with tempfile.TemporaryDirectory(dir=str(pdir)) as tmp:
+            tpath = Path(tmp) / 'stage'
+            tpath.mkdir()
+            t_res = tpath.resolve()
+            for n in names:
+                if prefix and not n.startswith(prefix):
+                    continue
+                rel = n[len(prefix):] if prefix else n
+                if not rel or '..' in Path(rel).parts or rel.startswith('/'):
+                    continue
+                dst = (tpath / rel).resolve()
+                if t_res not in dst.parents:
+                    return {'error': 'Ungültiger Pfad im Paket.'}
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                dst.write_bytes(zf.read(n))
+            if not (tpath / 'manifest.json').is_file():
+                return {'error': 'manifest.json fehlt im Begleiter-Paket.'}
+            final_dir = pdir / pid
+            old_dir = pdir / f'.old-{pid}-{os.getpid()}'
+            shutil.rmtree(old_dir, ignore_errors=True)
+            if final_dir.exists():
+                os.replace(final_dir, old_dir)
+            try:
+                os.replace(tpath, final_dir)
+            finally:
+                shutil.rmtree(old_dir, ignore_errors=True)
+    return {'ok': True, 'id': pid, 'version': str(manifest.get('version') or '0.1.0'),
+            'title': str(manifest.get('name') or pid)}
+
+
+def download_catalog_pack(pack_entry, cfg_dir=None, timeout=25, opener=None):
+    open_fn = opener or urllib.request.urlopen
+    dl = pack_entry.get('download') or ''
+    if not dl.startswith('https://'):
+        return {'error': 'Ungültige Download-Adresse.'}
+    try:
+        req = urllib.request.Request(dl, headers={'User-Agent': 'ToravoTandem/1.0'})
+        with open_fn(req, timeout=timeout) as resp:
+            raw = resp.read(32 << 20)
+        return install_zip_pack(raw, expected_id=pack_entry['id'], cfg_dir=cfg_dir)
+    except Exception as e:
+        return {'error': str(e)}
+
+
+def cached_rom_identities(games_iter, rom_id_fn):
+    """Fast persistent `(mtime, size) -> (code, crc)` cache so checking 60+ GB/GBC/GBA ROMs takes < 2 ms."""
+    cfile = _cache_dir() / 'rom-ids.json'
+    try:
+        cache = json.loads(cfile.read_text(encoding='utf-8'))
+        if not isinstance(cache, dict):
+            cache = {}
+    except (OSError, ValueError):
+        cache = {}
+    dirty = False
+    out = []
+    for g in games_iter:
+        if g.get('s') not in ('gb', 'gbc', 'gba') or not g.get('path'):
+            continue
+        p = str(g['path'])
+        try:
+            st = os.stat(p)
+            sig = f'{int(st.st_mtime)}:{st.st_size}'
+        except OSError:
+            continue
+        hit = cache.get(p)
+        if isinstance(hit, list) and len(hit) == 3 and hit[0] == sig:
+            code, crc = hit[1], hit[2]
+        else:
+            code, crc = rom_id_fn(p)
+            cache[p] = [sig, code, crc]
+            dirty = True
+        if code:
+            out.append((g, code, crc))
+    if dirty:
+        try:
+            tmp = cfile.with_suffix('.tmp')
+            tmp.write_text(json.dumps(cache), encoding='utf-8')
+            os.replace(tmp, cfile)
+        except OSError:
+            pass
+    return out
+
+
+def sync_owned_gba_packs(games_iter, rom_id_fn, cfg_dir=None, force_catalog=False, opener=None):
+    """Automatically download & update GBADuo v1.0.1 companion packs from `khumam/gba-duo-companions`
+    for every GB/GBC/GBA game present in the user's library (exact + multi-region matches)."""
+    global _LAST_AUTO_SYNC
+    if not _PACK_SYNC_LOCK.acquire(blocking=False):
+        return {'busy': True, 'installed': [], 'updated': []}
+    try:
+        _LAST_AUTO_SYNC = time.time()
+        roms = cached_rom_identities(games_iter, rom_id_fn)
+        if not roms:
+            return {'ok': True, 'installed': [], 'updated': [], 'owned_roms': 0}
+        catalog = fetch_gbaduo_catalog(force=force_catalog, opener=opener)
+        if not catalog:
+            return {'ok': False, 'installed': [], 'updated': [], 'owned_roms': len(roms)}
+        installed = {p['id']: p for p in list_installed_packs(cfg_dir)}
+        wanted = {}
+        for g, code, crc in roms:
+            m = match_packs_for_rom(code, crc, title_hint=f"{g.get('t', '')} {Path(g.get('path', '')).stem}",
+                                    installed=list(installed.values()), catalog=catalog)
+            if m['best_web']:
+                wp, _other = m['best_web']
+                wanted[wp['id']] = wp
+        added, updated = [], []
+        for pid, wp in wanted.items():
+            cur = installed.get(pid)
+            if cur and _ver_tuple(cur['version']) >= _ver_tuple(wp['version']):
+                continue
+            res = download_catalog_pack(wp, cfg_dir=cfg_dir, opener=opener)
+            if res.get('ok'):
+                (updated if cur else added).append(pid)
+        return {'ok': True, 'installed': added, 'updated': updated, 'owned_roms': len(roms), 'catalog_count': len(catalog)}
+    finally:
+        _PACK_SYNC_LOCK.release()
+
+
+def gba_shelf_status(games_iter, rom_id_fn, saved_assign=None, cfg_dir=None):
+    """Build the GBADuo v1.0.1 Companion Shelf overview: installed packs, catalog packs, and owned-game matches."""
+    installed = list_installed_packs(cfg_dir)
+    inst_map = {p['id']: p for p in installed}
+    catalog = fetch_gbaduo_catalog(force=False)
+    roms = cached_rom_identities(games_iter, rom_id_fn)
+    assign = saved_assign or {}
+    owned_matches = []
+    for g, code, crc in roms:
+        hint = f"{g.get('t', '')} {Path(g.get('path', '')).stem}"
+        m = match_packs_for_rom(code, crc, title_hint=hint, installed=installed, catalog=catalog)
+        if m['exact_installed'] or m['other_installed'] or m['exact_web'] or m['other_web']:
+            chosen = assign.get(g['id']) or m['best_installed']
+            owned_matches.append({
+                'gid': g['id'],
+                'title': g.get('t', ''),
+                'system': g.get('s', 'gba'),
+                'gameCode': code,
+                'assigned': chosen,
+                'otherRegion': bool(m['best_other_region'] if chosen == m['best_installed'] else
+                                    any(x['id'] == chosen for x in m['other_installed'])),
+                'installedPacks': [x['id'] for x in (m['exact_installed'] + m['other_installed'])],
+                'webPacks': [x['id'] for x in (m['exact_web'] + m['other_web']) if x['id'] not in inst_map],
+            })
+    return {
+        'source': f'https://github.com/{GBADUO_REPO}',
+        'installed': installed,
+        'catalog': [{**c, 'installedVersion': inst_map[c['id']]['version'] if c['id'] in inst_map else None,
+                     'updateAvailable': c['id'] in inst_map and _ver_tuple(c['version']) > _ver_tuple(inst_map[c['id']]['version'])}
+                    for c in catalog],
+        'games': owned_matches,
+    }
+
+
+# ---- Smart Gameplay Moment Capture ("Zuletzt im Spiel" without Save/Pause Menus) ---------------------------------------
+def score_gameplay_frame_rgb(w, h, rgb):
+    """Pure-Python fast visual classifier on a ~160x90 RGB24 thumbnail (<3 ms).
+    Auto-crops 4:3/3:2 black pillarbox/letterbox bars, rejects black/white/fade frames, and detects & rejects
+    save-slot / pause / system menus (like Final Fantasy save screens, RPG status menus, or RetroArch overlays)
+    by measuring flat UI-panel area (`flat_ratio`), long horizontal box-fill runs (`long_run_ratio`), and 8x6 spatial
+    palette diversity (`unique_ratio`)."""
+    if w < 16 or h < 12 or len(rgb) < w * h * 3:
+        return {'score': 0.0, 'is_menu': True, 'reason': 'invalid', 'fp': b''}
+
+    # Precompute integer luma (0..255) per pixel
+    mv = memoryview(rgb)
+    luma = [0] * (w * h)
+    idx = 0
+    for i in range(w * h):
+        luma[i] = (mv[idx] * 77 + mv[idx + 1] * 150 + mv[idx + 2] * 29) >> 8
+        idx += 3
+
+    # Trim black pillarboxes (left/right) and letterboxes (top/bottom) so 4:3/3:2 retro games score fairly
+    x0, x1 = 0, w
+    while x0 < w // 3:
+        col_vals = [luma[y * w + x0] for y in range(0, h, 2)]
+        if sum(col_vals) / len(col_vals) < 8 and max(col_vals) < 24:
+            x0 += 1
+        else:
+            break
+    while x1 > w - w // 3:
+        col_vals = [luma[y * w + (x1 - 1)] for y in range(0, h, 2)]
+        if sum(col_vals) / len(col_vals) < 8 and max(col_vals) < 24:
+            x1 -= 1
+        else:
+            break
+    y0, y1 = 0, h
+    while y0 < h // 4:
+        row_vals = luma[y0 * w + x0:y0 * w + x1:2]
+        if row_vals and sum(row_vals) / len(row_vals) < 8 and max(row_vals) < 24:
+            y0 += 1
+        else:
+            break
+    while y1 > h - h // 4:
+        row_vals = luma[(y1 - 1) * w + x0:(y1 - 1) * w + x1:2]
+        if row_vals and sum(row_vals) / len(row_vals) < 8 and max(row_vals) < 24:
+            y1 -= 1
+        else:
+            break
+
+    aw, ah = x1 - x0, y1 - y0
+    if aw < w * 0.35 or ah < h * 0.35:
+        return {'score': 0.0, 'is_menu': True, 'reason': 'black_bars', 'fp': b''}
+
+    # Build 16x9 motion fingerprint over active viewport
+    fp = bytearray(16 * 9)
+    for fy in range(9):
+        sy = y0 + (fy * ah) // 9
+        for fx in range(16):
+            sx = x0 + (fx * aw) // 16
+            fp[fy * 16 + fx] = luma[sy * w + sx]
+
+    total_px = aw * ah
+    sum_l = 0
+    sum_l2 = 0
+    flat_px = 0
+    interior_px = max(1, (aw - 1) * (ah - 1))
+    long_run_px = 0
+    min_run = max(10, int(aw * 0.18))
+    grad_sum = 0
+
+    for y in range(y0, y1):
+        row_off = y * w
+        b0_start = (row_off + x0) * 3
+        run_r, run_g, run_b = mv[b0_start], mv[b0_start + 1], mv[b0_start + 2]
+        run_len = 1
+        for x in range(x0, x1):
+            lv = luma[row_off + x]
+            sum_l += lv
+            sum_l2 += lv * lv
+            b_off = (row_off + x) * 3
+            r0, g0, b0 = mv[b_off], mv[b_off + 1], mv[b_off + 2]
+            if x > x0:
+                if abs(r0 - run_r) <= 2 and abs(g0 - run_g) <= 2 and abs(b0 - run_b) <= 2:
+                    run_len += 1
+                else:
+                    if run_len >= min_run:
+                        long_run_px += run_len
+                    run_r, run_g, run_b = r0, g0, b0
+                    run_len = 1
+            if x + 1 < x1 and y + 1 < y1:
+                r_r, g_r, b_r = mv[b_off + 3], mv[b_off + 4], mv[b_off + 5]
+                b_dn = b_off + w * 3
+                r_d, g_d, b_d = mv[b_dn], mv[b_dn + 1], mv[b_dn + 2]
+                dx = max(abs(r0 - r_r), abs(g0 - g_r), abs(b0 - b_r))
+                dy = max(abs(r0 - r_d), abs(g0 - g_d), abs(b0 - b_d))
+                grad_sum += dx + dy
+                if dx <= 1 and dy <= 1:
+                    flat_px += 1
+        if run_len >= min_run:
+            long_run_px += run_len
+
+    mean_l = sum_l / total_px
+    var_l = max(0.0, (sum_l2 / total_px) - mean_l * mean_l)
+    std_l = var_l ** 0.5
+    if mean_l < 14.0 or mean_l > 242.0 or std_l < 13.0:
+        return {'score': 0.0, 'is_menu': True, 'reason': 'fade_or_blank', 'fp': bytes(fp)}
+
+    flat_ratio = flat_px / interior_px
+    long_run_ratio = long_run_px / total_px
+    mean_grad = grad_sum / (2.0 * interior_px)
+
+    # 8x6 spatial color+texture diversity across the active viewport
+    buckets = set()
+    gx, gy = 8, 6
+    for ty in range(gy):
+        by0 = y0 + (ty * ah) // gy
+        by1 = max(by0 + 1, y0 + ((ty + 1) * ah) // gy)
+        for tx in range(gx):
+            bx0 = x0 + (tx * aw) // gx
+            bx1 = max(bx0 + 1, x0 + ((tx + 1) * aw) // gx)
+            sr = sg = sb = cnt = 0
+            lmin, lmax = 255, 0
+            for yy in range(by0, by1):
+                for xx in range(bx0, bx1):
+                    p3 = (yy * w + xx) * 3
+                    sr += mv[p3]
+                    sg += mv[p3 + 1]
+                    sb += mv[p3 + 2]
+                    lv = luma[yy * w + xx]
+                    if lv < lmin: lmin = lv
+                    if lv > lmax: lmax = lv
+                    cnt += 1
+            if cnt:
+                buckets.add(((sr // cnt) >> 5, (sg // cnt) >> 5, (sb // cnt) >> 5, min(3, (lmax - lmin) // 28)))
+    unique_ratio = len(buckets) / float(gx * gy)
+
+    # Save screens & pause menus have large flat panel fills + long horizontal slot runs + low tile variety
+    is_menu = bool(
+        flat_ratio > 0.56
+        or (long_run_ratio > 0.46 and unique_ratio < 0.38)
+        or (flat_ratio > 0.44 and long_run_ratio > 0.52)
+        or unique_ratio < 0.21
+    )
+
+    richness = (
+        0.42 * min(1.0, unique_ratio / 0.68)
+        + 0.28 * max(0.0, 1.0 - flat_ratio / 0.65)
+        + 0.18 * max(0.0, 1.0 - long_run_ratio / 0.62)
+        + 0.12 * min(1.0, mean_grad / 18.0)
+    )
+    score = round(richness * (0.18 if is_menu else 1.0), 4)
+    return {
+        'score': score,
+        'is_menu': is_menu,
+        'flat_ratio': round(flat_ratio, 3),
+        'long_run_ratio': round(long_run_ratio, 3),
+        'unique_ratio': round(unique_ratio, 3),
+        'fp': bytes(fp),
+    }
+
+
+def frame_motion_diff(fp_a, fp_b):
+    if not fp_a or not fp_b or len(fp_a) != len(fp_b):
+        return 10.0
+    return sum(abs(a - b) for a, b in zip(fp_a, fp_b)) / float(len(fp_a))
+
+
+def load_rgb_thumb(image_path, tw=160, th=90):
+    p = Path(image_path)
+    if not p.is_file():
+        return None
+    try:
+        from PySide6.QtCore import Qt
+        from PySide6.QtGui import QImage
+        img = QImage(str(p))
+        if not img.isNull():
+            sub = img.scaled(tw, th, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            sub = sub.convertToFormat(QImage.Format.Format_RGB888)
+            ptr = sub.constBits()
+            stride = sub.bytesPerLine()
+            if stride == tw * 3:
+                return bytes(ptr[:tw * th * 3])
+            rows = bytearray()
+            for y in range(th):
+                rows.extend(ptr[y * stride:y * stride + tw * 3])
+            return bytes(rows)
+    except Exception:
+        pass
+    if shutil.which('ffmpeg'):
+        res = subprocess.run(
+            ['ffmpeg', '-v', 'error', '-i', str(p), '-vf', f'scale={tw}:{th}', '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'],
+            capture_output=True, timeout=8,
+        )
+        if res.returncode == 0 and len(res.stdout) >= tw * th * 3:
+            return res.stdout[:tw * th * 3]
+    return None
+
+
+def score_gameplay_frame(image_path):
+    rgb = load_rgb_thumb(image_path, 160, 90)
+    if not rgb:
+        return {'score': 0.0, 'is_menu': True, 'reason': 'unreadable', 'fp': b''}
+    return score_gameplay_frame_rgb(160, 90, rgb)
+
+
+def pick_best_moment(entries, quit_at, min_pre_quit_secs=25.0):
+    """Given captured gameplay frames `[{'path', 'at', 'score', 'is_menu', 'motion'}]` and `quit_at`,
+    choose the best real in-world scene from BEFORE the player opened the save/pause menu to quit.
+    Returns the chosen dict or None if only menus/fades were seen."""
+    valid = [e for e in (entries or ()) if not e.get('is_menu') and float(e.get('score') or 0) >= 0.34 and Path(e['path']).is_file()]
+    if not valid:
+        return None
+    pre_menu = [e for e in valid if (quit_at - float(e['at'])) >= min_pre_quit_secs]
+    pool = pre_menu if pre_menu else valid
+    newest_t = max(float(e['at']) for e in pool)
+    def rank(e):
+        recency = max(0.0, 1.0 - (newest_t - float(e['at'])) / 180.0)
+        mot_bonus = 0.08 * min(1.0, float(e.get('motion') or 0.0) / 10.0)
+        return float(e['score']) + mot_bonus + 0.07 * recency
+    return max(pool, key=rank)
+
+
+class MomentTracker:
+    """Captures rolling top-screen gameplay frames via `gamescopectl screenshot` while playing and commits
+    the best non-menu pre-quit scene to `~/.local/state/tandem/moments/<gid>.jpg` when the game exits."""
+
+    def __init__(self, state_dir):
+        self.moments_dir = Path(state_dir) / 'moments'
+        self._lock = threading.Lock()
+        self._sessions = {}
+
+    def moment_path(self, gid):
+        p = self.moments_dir / f'{gid}.jpg'
+        return str(p) if p.is_file() else None
+
+    def start(self, tandem_obj, gid):
+        if getattr(tandem_obj, 'dry', False) or not shutil.which('gamescopectl'):
+            return
+        rt_dir = os.environ.get('XDG_RUNTIME_DIR') or f'/run/user/{os.getuid()}'
+        work_dir = Path(rt_dir) / 'tandem-snaps' / re.sub(r'[^a-zA-Z0-9_-]', '_', gid)
+        shutil.rmtree(work_dir, ignore_errors=True)
+        work_dir.mkdir(parents=True, exist_ok=True)
+        sess = {'gid': gid, 'work_dir': work_dir, 'entries': [], 'committed': None, 'active': True}
+        with self._lock:
+            self._sessions[gid] = sess
+        threading.Thread(target=self._loop, args=(tandem_obj, sess), daemon=True).start()
+
+    def _capture_once(self, out_png):
+        rt_dir = os.environ.get('XDG_RUNTIME_DIR') or f'/run/user/{os.getuid()}'
+        env = {**os.environ, 'XDG_RUNTIME_DIR': rt_dir, 'WAYLAND_DISPLAY': 'gamescope-0'}
+        out_png.unlink(missing_ok=True)
+        try:
+            subprocess.run(['gamescopectl', 'screenshot', str(out_png)], env=env,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=4)
+        except Exception:
+            return False
+        for _ in range(12):
+            if out_png.is_file() and out_png.stat().st_size > 8192:
+                return True
+            time.sleep(0.05)
+        return out_png.is_file() and out_png.stat().st_size > 8192
+
+    def _loop(self, tandem_obj, sess):
+        gid = sess['gid']
+        # Skip the first 22 seconds (boot logos, title screens, file-load screens)
+        for _ in range(22):
+            time.sleep(1.0)
+            if not sess['active'] or not tandem_obj.run or tandem_obj.run.get('id') != gid:
+                return
+        slot = 0
+        last_fp = b''
+        prev_good = None
+        while sess['active']:
+            run = tandem_obj.run
+            if not run or run.get('id') != gid:
+                return
+            if not run.get('paused') and not run.get('quitting'):
+                raw_png = sess['work_dir'] / f'ring-{slot % 6}.png'
+                if self._capture_once(raw_png):
+                    now = time.time()
+                    info = score_gameplay_frame(raw_png)
+                    mot = frame_motion_diff(last_fp, info.get('fp') or b'')
+                    if info.get('fp'):
+                        last_fp = info['fp']
+                    entry = {'path': str(raw_png), 'at': now, 'score': info['score'],
+                             'is_menu': info['is_menu'], 'motion': round(mot, 2)}
+                    with self._lock:
+                        # Keep only entries whose ring slot was not overwritten
+                        sess['entries'] = [e for e in sess['entries'] if e['path'] != str(raw_png)]
+                        sess['entries'].append(entry)
+                        # Promote the PREVIOUS good moving gameplay frame to committed anchor (so even 5+ minutes
+                        # inside a pause/save menu never clobbers the last real world scene!)
+                        if not entry['is_menu'] and entry['score'] >= 0.44:
+                            if prev_good and Path(prev_good['path']).is_file():
+                                anchor_png = sess['work_dir'] / 'committed.png'
+                                try:
+                                    shutil.copy2(prev_good['path'], anchor_png)
+                                    sess['committed'] = {**prev_good, 'path': str(anchor_png)}
+                                except OSError:
+                                    pass
+                            if mot >= 2.2 or prev_good is None:
+                                prev_good = dict(entry)
+                    slot += 1
+            for _ in range(20):
+                time.sleep(1.0)
+                if not sess['active'] or not tandem_obj.run or tandem_obj.run.get('id') != gid:
+                    return
+
+    def finish(self, gid):
+        with self._lock:
+            sess = self._sessions.pop(gid, None)
+            if not sess:
+                return None
+            sess['active'] = False
+            pool = list(sess['entries'])
+            if sess.get('committed'):
+                pool.append(sess['committed'])
+        try:
+            winner = pick_best_moment(pool, quit_at=time.time(), min_pre_quit_secs=25.0)
+            if not winner or not Path(winner['path']).is_file():
+                return None
+            self.moments_dir.mkdir(parents=True, exist_ok=True)
+            dest = self.moments_dir / f'{gid}.jpg'
+            tmp_dest = self.moments_dir / f'.tmp-{gid}.jpg'
+            saved_ok = False
+            try:
+                from PySide6.QtGui import QImage
+                img = QImage(winner['path'])
+                if not img.isNull():
+                    saved_ok = bool(img.save(str(tmp_dest), 'JPG', 92))
+            except Exception:
+                saved_ok = False
+            if not saved_ok and shutil.which('ffmpeg'):
+                r = subprocess.run(['ffmpeg', '-v', 'error', '-y', '-i', winner['path'], '-q:v', '2', str(tmp_dest)],
+                                   capture_output=True, timeout=10)
+                saved_ok = (r.returncode == 0 and tmp_dest.is_file())
+            if saved_ok and tmp_dest.is_file():
+                os.replace(tmp_dest, dest)
+                return str(dest)
+            tmp_dest.unlink(missing_ok=True)
+            return None
+        finally:
+            shutil.rmtree(sess['work_dir'], ignore_errors=True)
+
+
 

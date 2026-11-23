@@ -1237,7 +1237,68 @@ class Views(unittest.TestCase):
         self.paint('settings-wifi')
         self.tap('Daheim'); self.assertIn('Daheim', bottom.PROMPT['title'])
         self.tap('Abbrechen'); self.assertIsNone(bottom.PROMPT)
+        # System backup & retroactive Android/Linux storage split inside Bibliothek
+        fake_sysbk = {
+            'backups': {
+                'dest': '/run/media/armada/THOR/Backups/Thor-Linux', 'dest_on_card': True, 'dest_free_gib': 108.9,
+                'last': int(time.time()) - 3600, 'last_mode': 'profile', 'last_where': 'SD-Karte + Server',
+                'archives': [{'file': 'thor-profile-20261122-154000.tar.zst', 'kind': 'profile',
+                              'at': int(time.time()) - 3600, 'size_gb': 1.84, 'items': 28}],
+                'job': {'running': False, 'step': '', 'error': ''},
+            },
+            'storage': {
+                'supported': True, 'disk': '/dev/sda', 'sector_size': 4096, 'total_gib': 234.2,
+                'userdata_node': '/dev/sda17', 'userdata_num': 17, 'android_gib': 113.0, 'android_min_gib': 8,
+                'presets_gib': [16, 24, 32, 48], 'linux_total_gib': 112.2, 'linux_used_gib': 94.1,
+                'linux_free_gib': 18.1, 'reclaimable_max_gib': 105, 'extra_chunks': [],
+                'job': {'running': False, 'step': '', 'error': ''},
+            },
+        }
+        old_sysbk = tandem.sysbackup_state
+        tandem.sysbackup_state = lambda: fake_sysbk
+        try:
+            for win in (top, bottom): win.SYSBK = None; win.sysbk_at = 0
+            self.tap('Bibliothek'); self.wait(lambda: top.S.get('page') == 'library' and bottom.SYSBK and top.SYSBK)
+            self.paint('settings-library')
+            self.tap('Linux- & Tandem-Backup'); self.wait(lambda: top.S.get('page') == 'library>sysbackup')
+            self.paint('settings-sysbackup')
+            self.tap('nav-back'); self.wait(lambda: top.S.get('page') == 'library')
+            self.tap('Android- & Linux-Speicher'); self.wait(lambda: top.S.get('page') == 'library>storage')
+            self.paint('settings-storage')
+            self.tap('nav-back'); self.wait(lambda: top.S.get('page') == 'library')
+        finally:
+            tandem.sysbackup_state = old_sysbk
+        # Integrated Update & Auto-Companion Center inside Updates
+        self.tap('Updates'); self.wait(lambda: top.S.get('page') == 'updates' and bottom.UPDC is not None)
+        self.paint('settings-updates')
+        self.tap('Spiel-Begleiter'); self.wait(lambda: top.S.get('page') == 'updates>companions')
+        self.paint('settings-companions')
+        self.tap('nav-back'); self.wait(lambda: top.S.get('page') == 'updates')
+        self.tap('Emulatoren & Quellen'); self.wait(lambda: top.S.get('page') == 'updates>apps')
+        self.paint('settings-apps')
+        self.tap('nav-back'); self.wait(lambda: top.S.get('page') == 'updates')
         bottom.open_tab(1); self.wait(lambda: top.S['tab'] == 1)
+        # Touchscreen gestures: system back-pill, top-bezel swipe-down Quick Menu, left-edge swipe-back & top-screen touch pads
+        self.tap('PlayStation'); self.tap('PlayStation'); self.wait(lambda: top.S.get('sys') == 'psx')
+        self.paint('system-touch-back')
+        self.assertIn('sys-back', [h[3] for h in bottom.hits])
+        was_fav = bool(top.L.get('fav'))
+        self.tap('pad:Y', win=top); self.wait(lambda: bool(top.L.get('fav')) != was_fav)
+        self.tap('pad:Y', win=top); self.wait(lambda: bool(top.L.get('fav')) == was_fav)
+        self.tap('sys-back'); self.wait(lambda: top.S.get('sys') is None)
+        # Swipe down from top bezel of bottom screen opens Quick Menu, left-edge swipe-back closes it
+        p0, p1 = ui.QPointF(bottom.width() * 0.5, bottom.u * 1.2), ui.QPointF(bottom.width() * 0.5, bottom.u * 12.0)
+        QGuiApplication.sendEvent(bottom, QMouseEvent(QEvent.Type.MouseButtonPress, p0, p0, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+        QGuiApplication.sendEvent(bottom, QMouseEvent(QEvent.Type.MouseMove, p1, p1, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+        QGuiApplication.sendEvent(bottom, QMouseEvent(QEvent.Type.MouseButtonRelease, p1, p1, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+        self.app.processEvents()
+        self.assertTrue(bottom.QUICK)
+        b0, b1 = ui.QPointF(bottom.u * 1.0, bottom.height() * 0.5), ui.QPointF(bottom.u * 14.0, bottom.height() * 0.5)
+        QGuiApplication.sendEvent(bottom, QMouseEvent(QEvent.Type.MouseButtonPress, b0, b0, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+        QGuiApplication.sendEvent(bottom, QMouseEvent(QEvent.Type.MouseMove, b1, b1, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+        QGuiApplication.sendEvent(bottom, QMouseEvent(QEvent.Type.MouseButtonRelease, b1, b1, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+        self.app.processEvents()
+        self.assertIsNone(bottom.QUICK)
 
 
 @unittest.skipUnless(ui, 'PySide6 fehlt')
@@ -1354,6 +1415,8 @@ class CompanionDecksAndGameMenuTest(unittest.TestCase):
                 {'id': 'g3', 't': 'Golden Sun', 's': 'gba', 'year': '2001', 'dev': 'Camelot',
                  'desc': 'Magische Alchemie in Weyard.', 'cover': 'c3', 'box': 'b3'},
                 {'id': 'g4', 't': 'Metal Gear Solid', 's': 'psx', 'year': '1998', 'dev': 'Konami', 'cover': 'c4'},
+                *[{'id': f'gx{i}', 't': f'Klassiker {i}', 's': 'gba', 'cover': f'c{(i % 4) + 1}', 'box': f'b{(i % 3) + 1}'} for i in range(5, 33)],
+                {'id': 'steam999', 't': 'Uninstalled PC Game', 's': 'steam', 'inst': 'no', 'cover': 'c1'},
             ],
             'systems': {'sfc': {'name': 'Super Famicom'}, 'switch': {'name': 'Switch'}, 'gba': {'name': 'Game Boy Advance'}, 'psx': {'name': 'PlayStation'}},
             'played': {'g1': {'secs': 12600, 'last': int(time.time()) - 300}},
@@ -1369,6 +1432,8 @@ class CompanionDecksAndGameMenuTest(unittest.TestCase):
             for tw in (w_top, w):
                 for sz in ((244, 340), (345, 480)):
                     tw.thumbs.cache[(cid, sz[0], sz[1], True)] = cov
+                for mx in (380, 420, 440, 480):
+                    tw.saver_imgs.cache[(cid, mx, mx, False)] = cov
             ui.ACCENTS[cid] = col_a
         for bid, bw, bh, alpha, col_a in (('b1', 340, 242, False, '#ffb23e'), ('b2', 220, 356, True, '#ef4444'), ('b3', 340, 340, False, '#10b981')):
             bimg = QImage(bw, bh, QImage.Format.Format_ARGB32 if alpha else QImage.Format.Format_RGB32)
@@ -1377,8 +1442,9 @@ class CompanionDecksAndGameMenuTest(unittest.TestCase):
                 bp = ui.QPainter(bimg); bp.setBrush(ui.QColor(col_a)); bp.setPen(ui.Qt.PenStyle.NoPen)
                 bp.drawRoundedRect(8, 8, bw - 16, bh - 16, 18, 18); bp.end()
             for tw in (w_top, w):
-                for mx in (340, 480):
+                for mx in (340, 380, 420, 440, 480):
                     tw.thumbs.cache[(bid, mx, mx, False)] = bimg
+                    tw.saver_imgs.cache[(bid, mx, mx, False)] = bimg
 
         img_top = QImage(1920, 1080, QImage.Format.Format_RGB32)
         for st_name in ('kosmos', 'arcade', 'aurora', 'minimal'):
@@ -1391,6 +1457,31 @@ class CompanionDecksAndGameMenuTest(unittest.TestCase):
                 if SHOTS:
                     target_img.save(str(Path(SHOTS) / f'saver-{st_name}-{suffix}.png'))
 
+        # Verify top-screen "Zuletzt im Spiel" (`moment`) card + crisp `cover='hero'` rendering
+        w_top.RUN = None
+        w_top.L['fav'] = ['g1']
+        mom_sw, mom_sh = round(29.0 * w_top.u), round(16.3 * w_top.u)
+        mom_img = QImage(mom_sw, mom_sh, QImage.Format.Format_RGB32)
+        mp = ui.QPainter(mom_img)
+        mg = ui.QLinearGradient(0, 0, mom_sw, mom_sh)
+        mg.setColorAt(0, ui.QColor('#1d4ed8')); mg.setColorAt(0.55, ui.QColor('#10b981')); mg.setColorAt(1, ui.QColor('#f59e0b'))
+        mp.fillRect(0, 0, mom_sw, mom_sh, ui.QBrush(mg)); mp.end()
+        hero_img = QImage(1920, 1080, QImage.Format.Format_RGB32)
+        hp = ui.QPainter(hero_img)
+        hg = ui.QLinearGradient(0, 0, 1920, 1080)
+        hg.setColorAt(0, ui.QColor('#1e1b4b')); hg.setColorAt(1, ui.QColor('#312e81'))
+        hp.fillRect(0, 0, 1920, 1080, ui.QBrush(hg)); hp.end()
+        w_top.images.cache[('m1', mom_sw, mom_sh, True)] = mom_img
+        w_top.images.cache[('h1', 1920, 1080, 'hero')] = hero_img
+        w_top.S = {'tab': 0, 'sys': None, 'i': 0}
+        w_top.hero.update(key='g1', kt=time.time() - 5.0, cur=hero_img, prev=None, t0=time.time() - 5.0)
+        pm = ui.QPainter(img_top)
+        pm.setRenderHints(ui.QPainter.RenderHint.Antialiasing | ui.QPainter.RenderHint.TextAntialiasing)
+        w_top.draw_top(pm, [{**w_top.L['games'][0], 'hero': 'h1', 'moment': 'm1'}])
+        pm.end()
+        if SHOTS:
+            img_top.save(str(Path(SHOTS) / 'top-moment-preview.png'))
+
         # Regression check: universal deck initializes cleanly via ADDR fallback even if URL is unset
         from decks import universal as udeck
         saved_url = getattr(ui, 'URL', None)
@@ -1401,6 +1492,52 @@ class CompanionDecksAndGameMenuTest(unittest.TestCase):
             d_chk.close()
         finally:
             if saved_url is not None: ui.URL = saved_url
+
+        # All 11 bespoke Native Game Companions render cleanly at 1240x1080 across every tab (including embedded Werkzeuge)
+        native_cases = (
+            ('d3', '01001B300B9BE000', 'Diablo III: Eternal Collection (PeanutsNative)'),
+            ('p5r', '01005CA01580E000', 'Persona 5 Royal (PeanutsNative)'),
+            ('zelda_la', '01006BB00C6F0000', "The Legend of Zelda: Link's Awakening (PeanutsNative)"),
+            ('oot', '0400486024DEC000', 'The Legend of Zelda: Ocarina of Time (BananaNative)'),
+            ('odyssey', '0100000000010000', 'SUPER MARIO ODYSSEY (PeanutsNative)'),
+            ('wonder', '010015100B514000', 'Super Mario Bros. Wonder (PeanutsNative)'),
+            ('mkworld', '0400C3F00006E000', 'Mario Kart World (BananaNative)'),
+            ('letsgo', '0100187003A36000', "Pokémon: Let's Go, Evoli! (PeanutsNative)"),
+            ('mania', '01009AA000FAA000', 'Sonic Mania Plus (PeanutsNative)'),
+            ('ffres', '0100606026F12000', 'FINAL FANTASY RESONANCE (PeanutsNative)'),
+            ('tomodachi', '010051F0207B2000', 'Tomodachi Life: Living the Dream (PeanutsNative)'),
+        )
+        old_run, old_deck, old_dname = w.RUN, w.deck, getattr(w, 'deck_name', None)
+        try:
+            w.deck, w.deck_name = None, None
+            for comp_key, tid, title in native_cases:
+                w.RUN = {'id': 'native-' + tid.lower(), 'tid': tid, 't': title, 's': 'switch',
+                         'emu': 'PeanutsNative', 'since': int(time.time()) - 120, 'companion': comp_key}
+                comp_img = QImage(1240, 1080, QImage.Format.Format_RGB32)
+                w.hits = []
+                cp = ui.QPainter(comp_img)
+                cp.setRenderHints(ui.QPainter.RenderHint.Antialiasing | ui.QPainter.RenderHint.TextAntialiasing)
+                ok_deck = w.show_deck(cp)
+                cp.end()
+                self.assertTrue(ok_deck, f'Companion {comp_key} failed to paint tab 0')
+                self.assertIsNot(w.deck, False, f'Companion {comp_key} raised during paint')
+                self.assertGreater(len(w.hits), 3, f'Companion {comp_key} registered too few interactive hit areas')
+                if SHOTS:
+                    comp_img.save(str(Path(SHOTS) / f'companion-{comp_key}.png'))
+                # Cycle through every tab of this bespoke companion (including embedded Werkzeuge tab)
+                ntabs = len(w.deck.TABS)
+                for ti in range(1, ntabs):
+                    w.deck.set_tab(ti)
+                    w.hits = []
+                    cp2 = ui.QPainter(comp_img)
+                    cp2.setRenderHints(ui.QPainter.RenderHint.Antialiasing | ui.QPainter.RenderHint.TextAntialiasing)
+                    self.assertTrue(w.show_deck(cp2), f'Companion {comp_key} failed on tab {ti}')
+                    cp2.end()
+                w.deck.set_tab(0)
+            if w.deck and w.deck is not False:
+                w.deck.close()
+        finally:
+            w.RUN, w.deck, w.deck_name = old_run, old_deck, old_dname
 
 
 if __name__ == '__main__':

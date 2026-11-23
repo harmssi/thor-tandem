@@ -84,12 +84,16 @@ def power():
 
 
 def state():
-    """What the settings show: {'rgb', 'gyro', 'power', 'os'}; a part is None where it cannot be read."""
-    out = {'rgb': None, 'gyro': None, 'power': power(), 'os': None}
+    """What the settings show: {'rgb', 'gyro', 'power', 'os', 'sleep_mode', 'bottom_enabled'}; None where unavailable."""
+    out = {'rgb': None, 'gyro': None, 'power': power(), 'os': None, 'sleep_mode': None, 'bottom_enabled': None}
     try:
         config = decky('get_config')
         out['gyro'] = config['gyro'] if (config.get('gyro') or {}).get('supported') else None
         out['os'] = config.get('osVersion')
+        if config.get('sleepMode') in ('s2idle', 'fake'):
+            out['sleep_mode'] = config['sleepMode']
+        if isinstance(config.get('bottomScreenEnabled'), bool):
+            out['bottom_enabled'] = config['bottomScreenEnabled']
         if config.get('rgbSupported'):
             rgb = decky('get_rgb')
             out['rgb'] = {**rgb, 'level': rgb.get('maxBrightness' if rgb.get('linkBrightness') else 'brightness', 50)}  # what the one slider shows
@@ -98,8 +102,8 @@ def state():
 
 
 def change(key, value):
-    """One setting: 'profile' (Eco|Balanced|Performance), 'gyro' (bool) or 'rgb' (dict with any of enabled,
-    color, brightness 0-100, linkBrightness). Returns the new state() or {'error': text}."""
+    """One setting: 'profile' (Eco|Balanced|Performance), 'gyro' (bool), 'sleep_mode' (s2idle|fake),
+    'bottom_screen' (bool) or 'rgb' (dict). Returns the new state() or {'error': text}."""
     try:
         if key == 'profile':
             if value not in PROFILES: return {'error': 'Unbekanntes Leistungsprofil.'}
@@ -107,6 +111,11 @@ def change(key, value):
             if not done or done.returncode: return {'error': 'Das Leistungsprofil lässt sich gerade nicht ändern.'}
         elif key == 'gyro':
             decky('set_gyro_enabled', bool(value))
+        elif key == 'sleep_mode':
+            if value not in ('s2idle', 'fake'): return {'error': 'Unbekannter Standby-Modus.'}
+            decky('set_sleep_mode', str(value))
+        elif key == 'bottom_screen':
+            decky('set_bottom_screen_enabled', bool(value))
         elif key == 'rgb':
             if not isinstance(value, dict): return {'error': 'Ungültige Farbe.'}
             now = decky('get_rgb') or {}

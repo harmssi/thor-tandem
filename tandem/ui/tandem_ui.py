@@ -31,6 +31,7 @@ quick_view.ui = sys.modules[__name__]
 import screensaver  # noqa: E402  dual-screen OLED screensaver showcase
 screensaver.ui = sys.modules[__name__]
 import lang  # noqa: E402  English texts (config lang 'en')
+import qr  # noqa: E402  pure-Python QR code renderer for phone sign-in
 
 INK, PANEL, RAISED, LINE, TEXT, MUTED, FOCUS, LIVE, WARN = (QColor(c) for c in ('#07080b', '#15161b', '#202128', '#2c2d35', '#f5f5f7', '#9a9ba4', '#ffb23e', '#34d399', '#ff6b5e'))
 ON_ART = QColor('#eef0f6')  # text on covers and on their dark shade: light in every theme
@@ -268,22 +269,66 @@ def save_accents():
 
 
 def load_image(path, w, h, cover=True, addr=None):
-    """Decode straight to the size on screen: the full-size picture never sits in memory. cover fills w x h (centred,
-    cropped), otherwise the picture fits inside; w = 0 keeps its own size. cover 'tile': like cover, but a picture much
-    taller or wider than the tile (Steam's 2:3 covers) is shown whole over a blurred, darkened fill of itself, so no
-    title on top or bottom gets cut off."""
+    """Decode and scale cleanly with `SmoothTransformation` (never raw `QImageReader` upscaling) plus crisp integer
+    pixel-art preservation for native <=512x480 console screenshots.
+    `cover`:
+      - True: fills w x h (centred, cropped)
+      - False: fits inside w x h preserving aspect ratio
+      - 'tile': portrait/wide cover over darkened blurred self-fill so no title gets cut off
+      - 'hero': full-screen top backdrop; if source is low-res (<720x360) or portrait/square (<1.15:1), renders a silky
+        ambient color-wash backdrop + razor-sharp framed showcase artwork on the right instead of smearing small art."""
     buf = QBuffer(); buf.setData(QByteArray(fetch(path, addr=addr))); buf.open(QBuffer.OpenModeFlag.ReadOnly)
     kind = path.rsplit('.', 1)[-1].lower().replace('jpeg', 'jpg').encode()
     reader = QImageReader(buf, kind)  # naming the format keeps Qt from loading every image plug-in (HEIF, RAW, EXR …) to probe
     if not reader.canRead(): buf.seek(0); reader = QImageReader(buf)  # wrong file ending: let Qt find out
     size = reader.size()
+    orig_w = size.width() if size.isValid() else 0
+    orig_h = size.height() if size.isValid() else 0
+    is_pixel_art = bool(0 < orig_w <= 512 and 0 < orig_h <= 480 and orig_w != orig_h)
+
+    if cover == 'hero':
+        if w and h and orig_w and orig_h and (orig_w < 720 or orig_h < 360 or (orig_w / orig_h) < 1.15):
+            img = reader.read()
+            if img.isNull(): return False
+            blur = img.scaled(22, 14, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+            blur = blur.scaled(w, h, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+            out = QImage(w, h, QImage.Format.Format_ARGB32_Premultiplied)
+            p = QPainter(out)
+            p.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
+            p.drawImage(0, 0, blur, (blur.width() - w) // 2, (blur.height() - h) // 2, w, h)
+            p.fillRect(0, 0, w, h, QColor(8, 9, 14, 158))
+            max_fw, max_fh = round(w * 0.42), round(h * 0.66)
+            src = img
+            if is_pixel_art:
+                mult = max(2, min(4, int(min(max_fw / orig_w, max_fh / orig_h)) or 2))
+                src = img.scaled(orig_w * mult, orig_h * mult, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.FastTransformation)
+            fit = src.scaled(max_fw, max_fh, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            fx = round(w * 0.74 - fit.width() / 2)
+            fy = round(h * 0.44 - fit.height() / 2)
+            rad = max(8.0, w * 0.008)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(0, 0, 0, 135))
+            p.drawRoundedRect(QRectF(fx - 4, fy + 8, fit.width() + 8, fit.height() + 8), rad + 3, rad + 3)
+            clip = QPainterPath()
+            clip.addRoundedRect(QRectF(fx, fy, fit.width(), fit.height()), rad, rad)
+            p.save()
+            p.setClipPath(clip)
+            p.drawImage(fx, fy, fit)
+            p.restore()
+            p.setPen(QPen(QColor(255, 255, 255, 48), 1.2))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawRoundedRect(QRectF(fx, fy, fit.width(), fit.height()), rad, rad)
+            p.end()
+            return out
+        cover = True
+
     if cover == 'tile':
         cover = True
-        if w and h and size.isValid() and size.height() and not .83 < (size.width() / size.height()) / (w / h) < 1.2:
+        if w and h and orig_w and orig_h and not .83 < (orig_w / orig_h) / (w / h) < 1.2:
             img = reader.read()
             if img.isNull(): return False
             fit = img.scaled(w, h, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-            blur = img.scaled(12, 12, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+            blur = img.scaled(14, 14, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
             blur = blur.scaled(w, h, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
             out = QImage(w, h, QImage.Format.Format_ARGB32_Premultiplied)
             p = QPainter(out)
@@ -292,15 +337,30 @@ def load_image(path, w, h, cover=True, addr=None):
             p.drawImage((w - fit.width()) // 2, (h - fit.height()) // 2, fit)
             p.end()
             return out
-    if w and size.isValid() and size.width() and size.height():
-        k = (max if cover else min)(w / size.width(), h / size.height())
-        reader.setScaledSize(QSize(max(w if cover else 1, round(size.width() * k)), max(h if cover else 1, round(size.height() * k))))
+
+    # Only pre-downscale in QImageReader when source is much larger than target (2x supersampled decode);
+    # NEVER upscale via QImageReader.setScaledSize (which uses non-smooth point scaling in Qt!).
+    if w and h and orig_w and orig_h:
+        k = (max if cover else min)(w / orig_w, h / orig_h)
+        if k < 0.5:
+            k2 = min(1.0, k * 2.0)
+            reader.setScaledSize(QSize(max(1, round(orig_w * k2)), max(1, round(orig_h * k2))))
     img = reader.read()
     if img.isNull(): return False
-    if cover and w:
-        if img.width() < w or img.height() < h or not size.isValid():
-            img = img.scaled(w, h, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
-        img = img.copy((img.width() - w) // 2, (img.height() - h) // 2, w, h)
+    if w and h and img.width() and img.height():
+        if is_pixel_art and (img.width() < w or img.height() < h):
+            mult = max(2, min(4, math.ceil(max(w / img.width(), h / img.height()))))
+            img = img.scaled(img.width() * mult, img.height() * mult,
+                             Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.FastTransformation)
+        if cover:
+            if img.width() != w or img.height() != h:
+                img = img.scaled(w, h, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+            img = img.copy((img.width() - w) // 2, (img.height() - h) // 2, w, h)
+        else:
+            k_fit = min(w / img.width(), h / img.height())
+            tw, th = max(1, round(img.width() * k_fit)), max(1, round(img.height() * k_fit))
+            if (tw, th) != (img.width(), img.height()):
+                img = img.scaled(tw, th, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
     return img.convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
 
 
@@ -358,7 +418,7 @@ class Tandem(QRasterWindow):
         self.setTitle('Toravo Tandem')
         self.L = {'systems': {}, 'games': [], 'apps': [], 'fav': [], 'played': {}}
         self.S, self.RUN, self.BATT, self.SET, self.CFG = {'tab': 0, 'sys': None, 'i': 0}, None, None, {'bt': None, 'bb': None, 'vol': None}, {}
-        self.ACH = self.PAIR = self.SYS = self.PROMPT = self.CONFIRM = self.OSD = self.SETUP = self.QUICK = self.REC = self.SAVES = None
+        self.ACH = self.PAIR = self.SYS = self.PROMPT = self.CONFIRM = self.OSD = self.SETUP = self.QUICK = self.REC = self.SAVES = self.SYSBK = self.UPDC = None
         self.GAME_MENU, self.DOCK = None, None
         self.DOZE, self.MUTED, self.POWER_OPEN, self.PROMPT_OPEN, self.power_i = False, False, False, False, 0
         self.kb_rc, self.kb_pad = (1, 0), False
@@ -368,13 +428,20 @@ class Tandem(QRasterWindow):
         self.ui_lock, self.ui_out, self.ui_busy = threading.Lock(), None, False
         self.TOAST, self.SUB, self.KM, self.asked = '', '', set(), False
         self.hits, self.scrolls, self.clip, self.off, self.maxoff, self.seen = [], [], None, {}, {}, None
-        self.press = self.drag = self.scrolling = self.pending = self.deck = self.xf = None
+        self.tile_rects = []
+        self.press = self.drag = self.drag_kind = self.scrolling = self.pending = self.deck = self.xf = None
+        self.press_rect = None
+        self.vel_samples, self.kinetic, self.stopped_kinetic = [], None, False
+        self.scroll_touch_at = {}
+        self.stage_drag = None
+        self.lp_target, self.lp_fired = None, False
         self.zoom = 1.0
         self.moved = False
         self.fonts, self.svgs, self.u = {}, {}, 1.0
-        self.images = Images(8 if screen == 'top' else 84, self.loaded)  # top: hero, logo and preview; bottom: tiles and frames
+        self.images = Images(18 if screen == 'top' else 96, self.loaded)  # top: hero, logo and preview; bottom: tiles and frames
         self.comp_cache = OrderedDict()
-        self.thumbs = Images(6, self.loaded, workers=1)  # covers at 24 pixels, to find a game's colour
+        self.thumbs = Images(8, self.loaded, workers=1)  # covers at 24 pixels, to find a game's colour
+        self.saver_imgs = Images(160, self.loaded, workers=4)  # uncropped full-aspect covers & boxes for the dual-screen screensaver
         self.backdrop, self.WIFI = None, None
         self.hero = {'cur': None, 'prev': None, 't0': 0.0, 'key': None, 'kt': 0.0}  # top: picture cross-fade and title fade-in
         self.lift = (None, 0.0)  # bottom: the selected tile rises (key, start)
@@ -392,6 +459,13 @@ class Tandem(QRasterWindow):
         self.timers = {name: QTimer(self, singleShot=True) for name in ('toast', 'osd', 'set')}
         self.kb_rep = QTimer(self)
         self.kb_rep.timeout.connect(self._kb_repeat_tick)
+        self.kinetic_timer = QTimer(self, interval=16)
+        self.kinetic_timer.timeout.connect(self._tick_kinetic)
+        self.saver_timer = QTimer(self, interval=16)
+        self.saver_timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self.saver_timer.timeout.connect(self._tick_saver)
+        self.lp_timer = QTimer(self, singleShot=True)
+        self.lp_timer.timeout.connect(self._on_long_press)
         self.timers['toast'].timeout.connect(lambda: self.toast(''))
         self.timers['osd'].timeout.connect(lambda: (setattr(self, 'OSD', None), self.update()))
         self.tick = QTimer(self, interval=30000)
@@ -434,6 +508,10 @@ class Tandem(QRasterWindow):
             if s.get('power') and not self.POWER_OPEN: self.power_i = 0
             self.POWER_OPEN = bool(s.get('power'))
             self.PROMPT_OPEN = bool(s.get('prompt'))
+            if self.side == 'bottom' and s.get('swkbd') and (not self.PROMPT or self.PROMPT.get('swkbd_id') != s['swkbd'].get('id')):
+                self.open_swkbd(s['swkbd'])
+            elif self.side == 'bottom' and not s.get('swkbd') and self.PROMPT and self.PROMPT.get('swkbd_id'):
+                self.PROMPT = None
             self.follow_setup(s.get('setup'))
             self.follow_theme()
             if not self.drag and isinstance(s.get('settings'), dict):
@@ -499,10 +577,18 @@ class Tandem(QRasterWindow):
     def wake(self):  # True: this input only woke the screen up
         was = self.resting()
         self.active = time.time()
+        if self.saver_timer.isActive():
+            self.saver_timer.stop()
         if getattr(self, 'SAVER_NOW', False):
             self.SAVER_NOW = False
             self.post('api/saver', {'open': False})
         return was
+
+    def _tick_saver(self):
+        if not self.DOZE and self.resting():
+            self.update()
+        else:
+            self.saver_timer.stop()
 
     def on_event(self, m):
         kind = m.get('kind')
@@ -512,6 +598,17 @@ class Tandem(QRasterWindow):
         if kind == 'toast': return self.toast(m.get('text', ''))
         if kind == 'mute': self.MUTED = bool(m.get('muted')); return self.update()
         if kind == 'saves': self.SAVES = m.get('saves'); return self.update()
+        if kind == 'sysbackup':
+            self.SYSBK = {'backups': m.get('backups') or {}, 'storage': m.get('storage') or {}}
+            return self.update()
+        if kind == 'updater':
+            self.UPDC = {k: v for k, v in m.items() if k != 'kind'}
+            return self.update()
+        if kind == 'open_shrink':
+            self.wake()
+            if self.side == 'bottom':
+                self.ask_shrink_android(int(m.get('gib') or 8))
+            return self.update()
         if kind == 'dock': self.DOCK = m.get('dock'); return self.update()
         if kind == 'quick':  # the Thor key: its menu lives on the bottom screen
             if self.side == 'bottom': self.wake(); quick_view.toggle(self)
@@ -558,6 +655,15 @@ class Tandem(QRasterWindow):
         if kind == 'prompt':
             if m.get('from') != self.me: self.PROMPT_OPEN = bool(m.get('open'))
             return self.update()
+        if kind == 'swkbd':
+            self.PROMPT_OPEN = bool(m.get('open'))
+            if self.side == 'bottom':
+                if m.get('open'):
+                    self.wake()
+                    self.open_swkbd(m)
+                elif self.PROMPT and self.PROMPT.get('swkbd_id') == m.get('id'):
+                    self.PROMPT = None
+            return self.update()
         if kind == 'confirm':
             if m.get('from') != self.me:
                 if m.get('open') and m.get('action') in POWER: self.confirm_action(m['action'], remote=True)
@@ -569,6 +675,10 @@ class Tandem(QRasterWindow):
             self.follow_theme()
             return self.pulse()
         if kind == 'thor': self.THOR = m.get('thor'); return self.update()
+        if kind == 'ai_auth':
+            self.AI_AUTH = m
+            if self.side == 'bottom' and m.get('open'): self.wake()
+            return self.update()
         if kind == 'saver':
             self.SAVER_NOW = bool(m.get('open'))
             if not self.SAVER_NOW: self.active = time.time()
@@ -635,31 +745,43 @@ class Tandem(QRasterWindow):
 
     def show_deck(self, p):
         """The running game's own bottom screen, if there is a native one. Loaded on first use, see DECKS."""
+        comp = self.RUN.get('companion')
+        comp_mod = ({'d3': 'd3', 'p5r': 'p5r', 'zelda_la': 'zelda_decks', 'oot': 'zelda_decks',
+                     'odyssey': 'mario_decks', 'wonder': 'mario_decks', 'mkworld': 'mario_decks',
+                     'letsgo': 'world_decks', 'mania': 'world_decks', 'ffres': 'world_decks', 'tomodachi': 'world_decks',
+                     'wow': 'classic_decks', 'sunshine': 'classic_decks', 'luigis_mansion': 'classic_decks',
+                     'ttyd': 'classic_decks', 'mkdd': 'classic_decks', 'melee': 'classic_decks',
+                     'ac_gc': 'classic_decks', 'crash_woc': 'classic_decks'}.get(comp)
+                    if comp and not self.RUN.get('pack') and not self.RUN.get('dual') else None)
         name = (DECKS.get(str(self.RUN.get('appid')))
                 or (self.RUN.get('port') or {}).get('deck')
                 or ('pack' if self.RUN.get('pack') else None)
                 or ('dualscreen' if self.RUN.get('dual') else None)
+                or comp_mod
                 or ('universal' if self.RUN.get('s') not in ('term',) and not self.RUN.get('keys') else None))
+        deck_tag = f'pack:{self.RUN.get("pack")}' if name == 'pack' else (f'{name}:{comp}' if comp_mod and name == comp_mod else name)
         if not name: return False
-        if self.deck is not None and getattr(self, 'deck_name', None) is None:
-            self.deck_name = name
-        elif getattr(self, 'deck_name', None) != name:
+        if self.deck is not None and (getattr(self, 'deck_name', None) is None or getattr(self, '_deck_id', None) != id(self.deck)):
+            self.deck_name, self._deck_id = deck_tag, id(self.deck)
+        elif getattr(self, 'deck_name', None) != deck_tag:
             if self.deck and self.deck is not False: self.deck.close()
-            self.deck = None
-            self.deck_name = name
+            self.deck, self._deck_id = None, None
+            self.deck_name = deck_tag
         if self.deck is False: return False
         if self.deck is None:
-            try: self.deck = (importlib.import_module('decks.' + name), name)[0].Deck(self)
+            try:
+                self.deck = (importlib.import_module('decks.' + name), name)[0].Deck(self)
+                self._deck_id = id(self.deck)
             except Exception as error:
                 traceback.print_exc()
-                self.deck = False  # not again for this game
+                self.deck, self._deck_id = False, None  # not again for this game
                 self.toast(f'Begleiter lädt nicht: {error}')
                 return False
         return self.deck.paint(p)
 
     def drop_deck(self):  # the game is over: its deck, the module and the pictures go
         if self.deck and self.deck is not False: self.deck.close()
-        self.deck, self.deck_name = None, None
+        self.deck, self.deck_name, self._deck_id = None, None, None
         for name in [n for n in sys.modules if n.startswith('decks.')]: del sys.modules[name]
         gc.collect()  # a deck is full of closures: collect it now …
         try: ctypes.CDLL(None).malloc_trim(0)  # … and hand the freed memory back to the system (glibc would keep it)
@@ -685,7 +807,8 @@ class Tandem(QRasterWindow):
         return sorted(seq, key=lambda g: (g['id'] not in L['fav'], -last(g), g['t'].lower()))
 
     def items(self):
-        L, S, RUN, games = self.L, self.S, self.RUN, self.L['games']
+        L, S, RUN = self.L, self.S, self.RUN
+        games = [g for g in self.L['games'] if g.get('inst') != 'no']
         hidden = set(L.get('hidden') or [])
         if S.get('q'):
             words = S['q'].lower().split()
@@ -724,7 +847,9 @@ class Tandem(QRasterWindow):
             return col_items + sys_items + hid_items
         if S['tab'] == 2: return sorted((g for g in games if g['s'] == 'steam' and g['id'] not in hidden), key=lambda g: (g.get('inst') == 'no', g.get('inst') != 'load'))  # loading first, then installed, then the rest
         if S['tab'] == 4: return []
-        return [{'id': 'term', 't': 'Terminal', 's': 'app'}, *L['apps'],
+        return [{'id': 'ai:claude', 't': 'Claude Code (Skip Permissions)', 's': 'app'},
+                {'id': 'ai:agy', 't': 'Google Antigravity · agy (Skip Permissions)', 's': 'app'},
+                {'id': 'term', 't': 'Terminal', 's': 'app'}, *L['apps'],
                 *({'id': 'upd:' + e['id'], 't': e['name'] + (' aktualisieren' if e.get('installed') else ' installieren'), 's': 'app'} for e in L.get('extras') or []),
                 {'id': 'act:steam', 't': 'Steam starten', 's': 'app'}, {'id': 'rescan', 't': 'Bibliothek neu einlesen', 's': 'app'}, {'id': 'act:desktop', 't': 'Zum Desktop', 's': 'app'}]
 
@@ -838,7 +963,35 @@ class Tandem(QRasterWindow):
         self.PROMPT_OPEN = True
         self.post('api/prompt', {'open': True, 'from': self.me})
 
+    def open_swkbd(self, req):
+        sid = req.get('id')
+        def done(val):
+            self.post('api/swkbd_done', {'id': sid, 'ok': True, 'text': val})
+        self.PROMPT = {'title': req.get('title') or 'Text eingeben', 'secret': False, 'done': done,
+                       'value': req.get('initial') or '', 'guide': req.get('guide') or '',
+                       'min': int(req.get('min') or 0), 'max': int(req.get('max') or 0), 'swkbd_id': sid}
+        self.KM, self.kb_rc, self.kb_pad = set(), (1, 0), False
+        self.PROMPT_OPEN = True
+
+    def finish_prompt(self, ok):
+        P = self.PROMPT
+        if not P: return
+        sid = P.get('swkbd_id')
+        if ok and P.get('min', 0) > 0 and len(P['value']) < P['min']:
+            return self.toast(f'Mindestens {P["min"]} Zeichen eingeben.')
+        if not ok and sid and P.get('min', 0) > 0:
+            return self.toast('Name erforderlich – bitte eingeben und Fertig tippen.')
+        self.PROMPT, self.PROMPT_OPEN = None, False
+        if sid:
+            if ok: P['done'](P['value'])
+            else: self.post('api/swkbd_done', {'id': sid, 'ok': False, 'text': ''})
+        else:
+            self.post('api/prompt', {'open': False, 'from': self.me})
+            if ok: P['done'](P['value'])
+
     def cancel_prompt(self):
+        if self.PROMPT and self.PROMPT.get('swkbd_id'):
+            return self.finish_prompt(False)
         self.PROMPT, self.PROMPT_OPEN = None, False
         self.post('api/prompt', {'open': False, 'from': self.me})
 
@@ -881,6 +1034,44 @@ class Tandem(QRasterWindow):
         self.ask('Sicherungsziel (SSH)', False, done, self.CFG.get('save_target', ''))
         self.update()
 
+    def ask_restore_sysbackup(self, arc_file):
+        def done(val):
+            if val.strip().upper() not in ('JA', 'YES'):
+                return self.toast('Abgebrochen.')
+            self.toast('Stelle System-Sicherung wieder her …')
+            self.post('api/sysbackup', {'action': 'restore', 'file': arc_file},
+                      then=lambda r: (setattr(self, 'sysbk_at', 0),
+                                      self.toast('Keine Antwort.' if r is None else r.get('error') or r.get('text', ''))))
+        self.ask('„JA“ tippen zum Wiederherstellen', False, done, '')
+        self.update()
+
+    def ask_shrink_android(self, gib):
+        def _submit(pw=None):
+            payload = {'action': 'shrink_android', 'gib': int(gib)}
+            if pw: payload['password'] = pw
+            self.post('api/sysbackup', payload,
+                      then=lambda r: (setattr(self, 'sysbk_at', 0),
+                                      self.toast('Keine Antwort.' if r is None else r.get('error') or r.get('text', '')),
+                                      self.update()))
+        def _checked(r):
+            if r is None: return self.toast('Tandem-Dienst antwortet nicht.')
+            if r.get('need_password'):
+                def _got_pw(pw):
+                    if not pw: return self.toast('Abgebrochen.')
+                    _submit(pw)
+                self.ask(f'Linux-Passwort (Android auf {gib} GiB)', True, _got_pw, '')
+                self.update()
+            elif r.get('ok'):
+                def _got_ok(val):
+                    if val.strip().upper() not in ('JA', 'YES'):
+                        return self.toast('Abgebrochen.')
+                    _submit(None)
+                self.ask(f'„JA“ tippen (Android auf {gib} GiB)', False, _got_ok, '')
+                self.update()
+            else:
+                self.toast(r.get('error') or 'Nicht erlaubt.')
+        self.post('api/sysbackup', {'action': 'check_sudo'}, then=_checked)
+
     def ask_wol_mac(self):
         def done(value):
             def saved(c):
@@ -889,6 +1080,27 @@ class Tandem(QRasterWindow):
                 self.toast(c.get('error') or 'Gespeichert.')
             self.post('api/config', {'wol_mac': value.strip()}, then=saved)
         self.ask('PC-MAC-Adresse (AA:BB:CC:DD:EE:FF)', False, done, self.CFG.get('wol_mac', ''))
+        self.update()
+
+    def ask_custom_feed(self):
+        def done(value):
+            val = value.strip()
+            if not val:
+                return
+            self.post('api/updater', {'action': 'add_feed', 'repo': val},
+                      then=lambda r: (setattr(self, 'updc_at', 0),
+                                      r and self.toast(r.get('error') or r.get('text', ''))))
+        self.ask('GitHub-Quelle (Besitzer/Projekt)', False, done, '')
+        self.update()
+
+    def ask_ai_workdir(self):
+        def done(value):
+            def saved(c):
+                if c is None: return self.toast('Speichern fehlgeschlagen.')
+                self.CFG = c
+                self.toast(c.get('error') or 'Gespeichert.')
+            self.post('api/config', {'ai_workdir': value.strip()}, then=saved)
+        self.ask('KI-Arbeitsordner (leer = Home)', False, done, self.CFG.get('ai_workdir', ''))
         self.update()
 
     def cycle_sort(self):
@@ -987,11 +1199,11 @@ class Tandem(QRasterWindow):
         if code in (42, 100): self.KM ^= {KB_MODS[code]}
         elif code == 14: P['value'] = P['value'][:-1]
         elif code == 28:
-            self.PROMPT, self.PROMPT_OPEN = None, False
-            self.post('api/prompt', {'open': False, 'from': self.me})
-            P['done'](P['value'])
+            self.finish_prompt(True)
         else:
-            P['value'] += ' ' if code == 57 else self.key_label(code, 'us' if self.CFG.get('kb_layout') == 'us' else 'de')
+            ch = ' ' if code == 57 else self.key_label(code, 'us' if self.CFG.get('kb_layout') == 'us' else 'de')
+            if not P.get('max') or len(P['value']) + len(ch) <= P['max']:
+                P['value'] += ch
             self.KM -= {'shift', 'altgr'}
 
     def kb_key(self, a, press, skip=(), cancel=None):
@@ -1098,11 +1310,86 @@ class Tandem(QRasterWindow):
             return self.update()
         if a: self.go(a)
 
+    def _tick_kinetic(self):
+        kin = self.kinetic
+        if not kin:
+            self.kinetic_timer.stop()
+            return
+        now = time.time()
+        dt = max(0.001, min(0.05, now - kin['t']))
+        kin['t'] = now
+        key = kin['key']
+        mx = self.maxoff.get(key, 0)
+        cur = self.off.get(key, 0)
+        nxt = max(0.0, min(mx, cur + kin['v'] * dt))
+        self.off[key] = nxt
+        self.scroll_touch_at[key] = now
+        kin['v'] *= 0.915 ** (dt * 60.0)
+        if abs(kin['v']) < 18.0 or (nxt <= 0.0 and kin['v'] < 0) or (nxt >= mx and kin['v'] > 0):
+            self.kinetic = None
+            self.kinetic_timer.stop()
+        self.update()
+
+    def _on_long_press(self):
+        if self.press is None or self.moved or self.drag or self.lp_target is None:
+            return
+        idx = self.lp_target
+        items = self.items()
+        if not (0 <= idx < len(items)):
+            return
+        it = items[idx]
+        if it.get('kind') or it.get('s') in ('app', 'term'):
+            return
+        self.lp_fired = True
+        self.press_rect = None
+        self.haptic()
+        if self.S.get('i') != idx:
+            self.S['i'] = idx
+            self.push()
+        self.open_game_menu(it)
+
+    def wheelEvent(self, e):
+        if self.DOZE or self.wake(): return
+        pos = e.position()
+        dy = e.angleDelta().y()
+        if not dy: return
+        sc = next((entry for entry in reversed(self.scrolls) if entry[0].contains(pos)), None)
+        if sc:
+            _, key, zoom = sc
+            self.kinetic = None
+            self.off[key] = max(0, min(self.maxoff.get(key, 0), self.off.get(key, 0) - (dy * 0.75) / zoom))
+            self.scroll_touch_at[key] = time.time()
+            self.update()
+        elif self.side == 'bottom' and self.stage_on():
+            items = self.items()
+            if items:
+                self.S['i'] = max(0, min(len(items) - 1, self.S['i'] + (-1 if dy > 0 else 1)))
+                self.push()
+
     def mousePressEvent(self, e):
         if self.DOZE: return
         if self.wake(): return self.push()
         pos = e.position()
+        now = time.time()
         self.press, self.moved, self.last = pos, False, pos.y()
+        self.vel_samples = [(now, pos.x(), pos.y())]
+        self.lp_timer.stop()
+        self.lp_target, self.lp_fired = None, False
+        self.stage_drag = None
+        # Tap on a fast-coasting scroller stops momentum cleanly without firing an accidental tile tap
+        if self.kinetic and abs(self.kinetic.get('v', 0)) > 115:
+            sc_hit = next((entry for entry in reversed(self.scrolls) if entry[0].contains(pos)), None)
+            if sc_hit and sc_hit[1] == self.kinetic['key']:
+                self.stopped_kinetic = True
+                self.kinetic = None
+                self.kinetic_timer.stop()
+            else:
+                self.stopped_kinetic = False
+        else:
+            self.stopped_kinetic = False
+            if self.kinetic:
+                self.kinetic = None
+                self.kinetic_timer.stop()
         khit = next((k for k in reversed(self.kb_keys) if k[0].contains(pos)), None)
         if khit is not None:
             self.kb_pad = False
@@ -1113,13 +1400,29 @@ class Tandem(QRasterWindow):
                 self.kb_rep.start(340)
             self.update()
             return
-        self.drag = next((fn for rect, fn, drag, _ in reversed(self.hits) if drag and rect.contains(pos)), None)
-        self.scrolling = next((entry for entry in self.scrolls if entry[0].contains(pos)), None)
-        if self.drag: self.drag(pos.x())
+        dhit = next(((fn, drag) for rect, fn, drag, _ in reversed(self.hits) if drag and rect.contains(pos)), None)
+        self.drag = dhit[0] if dhit else None
+        self.drag_kind = dhit[1] if dhit else None
+        self.scrolling = next((entry for entry in reversed(self.scrolls) if entry[0].contains(pos)), None)
+        if self.drag:
+            self.drag(pos.y() if self.drag_kind == 'y' else pos.x())
+            self.press_rect = None
+        else:
+            phit = next((rect for rect, _, drag, _ in reversed(self.hits) if not drag and rect.contains(pos)), None)
+            self.press_rect = phit
+            # Arm 420ms long-press on game tiles to open per-game options menu
+            if (self.side == 'bottom' and not self.playing() and not self.PROMPT and not self.CONFIRM
+                    and not self.QUICK and not self.GAME_MENU and not self.POWER_OPEN and not self.stopped_kinetic):
+                t_idx = next((idx for trect, idx in reversed(self.tile_rects) if trect.contains(pos)), None)
+                if t_idx is not None:
+                    self.lp_target = t_idx
+                    self.lp_timer.start(420)
         if self.deck and hasattr(self.deck, 'press'): self.deck.press(pos)
+        if self.press_rect is not None: self.update()
 
     def mouseMoveEvent(self, e):
         pos = e.position()
+        now = time.time()
         if self.kb_down is not None:
             khit = next((k for k in reversed(self.kb_keys) if k[0].contains(pos)), None)
             if khit is not None and khit[1] != self.kb_down[1] and self.kb_down[1] != 14:
@@ -1128,18 +1431,52 @@ class Tandem(QRasterWindow):
                 self.update()
             return
         if self.press is None: return
+        self.vel_samples.append((now, pos.x(), pos.y()))
+        cutoff = now - 0.10
+        while len(self.vel_samples) > 2 and self.vel_samples[0][0] < cutoff:
+            self.vel_samples.pop(0)
+        dx, dy = pos.x() - self.press.x(), pos.y() - self.press.y()
+        if abs(dx) > 1.25 * self.u or abs(dy) > 1.25 * self.u:
+            self.lp_timer.stop()
+            if self.press_rect is not None:
+                self.press_rect = None
+                self.update()
         if self.deck and hasattr(self.deck, 'move') and self.deck.move(pos): return
-        if self.drag: return self.drag(pos.x())
-        if self.scrolling and (self.moved or abs(pos.y() - self.press.y()) > 1.5 * self.u):
+        if self.drag:
+            return self.drag(pos.y() if self.drag_kind == 'y' else pos.x())
+        # Live 1:1 horizontal finger drag on the Stage Carousel (`Bühne`)
+        if (self.side == 'bottom' and not self.playing() and not self.PROMPT and not self.CONFIRM
+                and not self.QUICK and not self.GAME_MENU and self.stage_on()):
+            if self.stage_drag is not None or (abs(dx) > 1.4 * self.u and abs(dx) > abs(dy) and self.press.y() > 8.5 * self.u):
+                items = self.items()
+                if items:
+                    self.moved = True
+                    step = max(8.0 * self.u, 21.0 * self.u)
+                    if self.stage_drag is None:
+                        self.stage_drag = {'start_i': float(self.S['i']), 'pos': float(self.S['i']), 'step': step}
+                    raw_pos = max(0.0, min(float(len(items) - 1), self.stage_drag['start_i'] - dx / self.stage_drag['step']))
+                    self.stage_drag['pos'] = raw_pos
+                    near_i = int(round(raw_pos))
+                    if near_i != self.S['i']:
+                        self.S['i'] = near_i
+                        self.haptic()
+                        self.push()
+                    self.update()
+                    return
+        if self.scrolling and (self.moved or (abs(dy) > 1.35 * self.u and abs(dy) >= abs(dx) * 0.7)):
             self.moved = True
             _, key, zoom = self.scrolling
             if key == 'grid': self.scroll_anim = None
             self.off[key] = max(0, min(self.maxoff.get(key, 0), self.off.get(key, 0) - (pos.y() - self.last) / zoom))
+            self.scroll_touch_at[key] = now
             self.last = pos.y()
             self.update()
 
     def mouseReleaseEvent(self, e):
         pos, self.press = self.press, None
+        self.lp_timer.stop()
+        had_press_rect = self.press_rect is not None
+        self.press_rect = None
         if self.kb_down is not None:
             self.kb_rep.stop()
             krect, code, label, _, press_fn = self.kb_down
@@ -1153,11 +1490,98 @@ class Tandem(QRasterWindow):
             self.update()
             return
         if self.deck and hasattr(self.deck, 'press'): self.deck.press(None)
-        if self.drag or self.moved or pos is None:
-            self.drag = None
+        if self.lp_fired:
+            self.lp_fired = False
+            self.drag = self.drag_kind = None
+            self.update()
             return
+        rel = e.position()
+        # Compute finger release velocity (vx, vy in px/s)
+        vx = vy = 0.0
+        if len(self.vel_samples) >= 2:
+            dt = self.vel_samples[-1][0] - self.vel_samples[0][0]
+            if dt > 0.008:
+                vx = (self.vel_samples[-1][1] - self.vel_samples[0][1]) / dt
+                vy = (self.vel_samples[-1][2] - self.vel_samples[0][2]) / dt
+        # Finish Stage Carousel horizontal drag / flick
+        if self.stage_drag is not None:
+            sd = self.stage_drag
+            self.stage_drag = None
+            items = self.items()
+            if items:
+                proj = sd['pos'] - (vx * 0.16) / sd['step']
+                target_i = max(0, min(len(items) - 1, int(round(proj))))
+                self.stage_anim.update({'from': sd['pos'], 'to': float(target_i), 't0': time.time()})
+                if target_i != self.S['i']:
+                    self.S['i'] = target_i
+                    self.haptic()
+                self.push()
+            self.update()
+            return
+        if self.drag:
+            self.drag = self.drag_kind = None
+            if had_press_rect: self.update()
+            return
+        if pos is None:
+            return
+        dx, dy = rel.x() - pos.x(), rel.y() - pos.y()
+        # Edge & swipe gestures when no scroll/button drag claimed the gesture
+        if not self.PROMPT and not self.POWER_OPEN:
+            # 1) Swipe down from top bezel of bottom screen -> toggle Thor Bento Quick Menu
+            if self.side == 'bottom' and pos.y() < 3.1 * self.u and dy > 6.5 * self.u and abs(dx) < dy * 0.75:
+                self.haptic()
+                quick_view.toggle(self)
+                return
+            # 2) Swipe up from bottom edge while Quick Menu is open -> close Quick Menu
+            if self.side == 'bottom' and self.QUICK and pos.y() > self.height() - 6.0 * self.u and dy < -6.0 * self.u:
+                self.haptic()
+                quick_view.close(self)
+                return
+            # 3) Universal left-edge swipe-back on bottom screen
+            if self.side == 'bottom' and pos.x() < 3.4 * self.u and dx > 7.0 * self.u and abs(dy) < dx * 0.68:
+                if self.QUICK:
+                    self.haptic(); quick_view.close(self); return
+                if self.GAME_MENU:
+                    self.haptic(); self.GAME_MENU = None; self.update(); return
+                if settings_view.open_now(self):
+                    self.haptic(); self.post('api/uikey', {'a': 'back'}); return
+                if self.S.get('sys') or self.S.get('q'):
+                    self.haptic(); self.post('api/uikey', {'a': 'back'}); return
+            # 4) Horizontal swipe on Top Screen when browsing games -> step previous/next game
+            if (self.side == 'top' and not self.playing() and not self.CONFIRM
+                    and not settings_view.open_now(self) and abs(dx) > 9.0 * self.u and abs(dx) > abs(dy) * 1.5):
+                self.haptic()
+                self.go('right' if dx < 0 else 'left')
+                return
+        if self.moved:
+            # Start smooth 120 Hz kinetic momentum on the active scroller!
+            if self.scrolling and abs(vy) > 155.0:
+                _, key, zoom = self.scrolling
+                self.kinetic = {'key': key, 'v': max(-4200.0, min(4200.0, -vy / zoom)), 't': time.time()}
+                if not self.kinetic_timer.isActive():
+                    self.kinetic_timer.start()
+            if had_press_rect: self.update()
+            return
+        if self.stopped_kinetic:
+            self.stopped_kinetic = False
+            return
+        # Exact hit first, then forgiving 1.1u nearest-target touch slop so slightly off-edge taps never miss!
         fn = next((fn for rect, fn, drag, _ in reversed(self.hits) if not drag and rect.contains(pos)), None)
-        if fn: fn(); self.update()
+        if fn is None:
+            slop = 1.1 * self.u
+            best_d2 = (slop * 3.5) ** 2
+            for rect, cand_fn, drag, _ in reversed(self.hits):
+                if not drag and rect.adjusted(-slop, -slop, slop, slop).contains(pos):
+                    c = rect.center()
+                    d2 = (pos.x() - c.x()) ** 2 + (pos.y() - c.y()) ** 2
+                    if d2 < best_d2:
+                        best_d2, fn = d2, cand_fn
+        if fn:
+            self.haptic()
+            fn()
+            self.update()
+        elif had_press_rect:
+            self.update()
 
     # ---- drawing helpers ---------------------------------------------------------------------------------------------
     def resizeEvent(self, e):
@@ -1335,27 +1759,57 @@ class Tandem(QRasterWindow):
         return g
 
     def scroller(self, p, key, rect, draw):
-        """A clipped area whose content (draw(y) -> end y) can be dragged up and down."""
+        """A clipped area whose content (draw(y) -> end y) can be dragged, flicked with momentum, or fast-scrubbed."""
+        u = self.u
         off = max(0, min(self.off.get(key, 0), self.maxoff.get(key, 0)))
         p.save(); p.setClipRect(rect)
         self.clip = rect
         end = draw(rect.y() - off)
         self.clip = None
         p.restore()
-        self.off[key], self.maxoff[key] = off, max(0, end - (rect.y() - off) - rect.height())
-        self.scrolls.append((self.xf.mapRect(rect) if self.xf is not None else rect, key, self.zoom))
+        max_off = max(0, end - (rect.y() - off) - rect.height())
+        self.off[key], self.maxoff[key] = off, max_off
+        mapped = self.xf.mapRect(rect) if self.xf is not None else rect
+        self.scrolls.append((mapped, key, self.zoom))
+        if max_off > 3.0 * u and rect.height() > 10.0 * u:
+            total_h = rect.height() + max_off
+            bar_h = max(4.2 * u, rect.height() * (rect.height() / total_h))
+            bar_y = rect.y() + (rect.height() - bar_h) * (off / max_off)
+            dt_touch = time.time() - self.scroll_touch_at.get(key, 0.0)
+            active_sb = dt_touch < 1.35 or (self.kinetic and self.kinetic.get('key') == key)
+            alpha = 0.56 if active_sb else 0.18
+            bw = (0.66 if active_sb else 0.44) * u
+            bx = rect.right() - bw - 0.32 * u
+            self.capsule(p, QRectF(bx, bar_y, bw, bar_h), faded(FOCUS if active_sb else TEXT, alpha))
+            if key == 'grid' and max_off > rect.height() * 1.1:
+                def scrub_y(py, r_top=mapped.y(), r_h=mapped.height(), m_off=max_off, k=key):
+                    frac = max(0.0, min(1.0, (py - r_top - 2.0 * u) / max(1.0, r_h - 4.0 * u)))
+                    self.kinetic = None
+                    self.scroll_anim = None
+                    self.off[k] = frac * m_off
+                    self.scroll_touch_at[k] = time.time()
+                    self.update()
+                self.hit(QRectF(rect.right() - 2.8 * u, rect.y(), 3.2 * u, rect.height()), scrub_y, 'y', 'scrollbar:' + key)
 
     # ---- painting ----------------------------------------------------------------------------------------------------
     def paintEvent(self, _):
         p = QPainter(self)
         p.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.TextAntialiasing | QPainter.RenderHint.SmoothPixmapTransform)
-        self.hits, self.scrolls, self.kb_keys, self.clip = [], [], [], None
+        self.hits, self.scrolls, self.kb_keys, self.tile_rects, self.clip = [], [], [], [], None
         if self.DOZE:  # panels asleep on a charger: pure black, zero touch targets
+            if self.saver_timer.isActive(): self.saver_timer.stop()
             p.fillRect(0, 0, self.width(), self.height(), QColor(0, 0, 0))
             return p.end()
-        if self.resting():  # dual-screen OLED showcase screensaver
+        if self.resting():  # dual-screen 60-FPS OLED showcase screensaver (30-FPS in travel_mode)
+            iv = 33 if self.CFG.get('travel_mode') else 16
+            if self.saver_timer.interval() != iv:
+                self.saver_timer.setInterval(iv)
+            if not self.saver_timer.isActive() and os.environ.get('QT_QPA_PLATFORM') != 'offscreen':
+                self.saver_timer.start()
             screensaver.draw(self, p)
             return p.end()
+        if self.saver_timer.isActive():
+            self.saver_timer.stop()
         items = self.items()
         if not settings_view.open_now(self): self.S['i'] = max(0, min(self.S['i'], len(items) - 1))
         p.fillRect(0, 0, self.width(), self.height(), INK)
@@ -1388,6 +1842,12 @@ class Tandem(QRasterWindow):
         else: (self.draw_top if self.side == 'top' else self.draw_bottom)(p, items)
         if self.QUICK and self.side == 'bottom': quick_view.draw(self, p)
         if self.POWER_OPEN: self.draw_power(p)
+        if self.press_rect is not None and not self.moved and not self.kb_down:
+            pr = self.press_rect
+            rad_p = min(pr.height() / 2, 1.8 * self.u)
+            p.setPen(QPen(faded(FOCUS, .42), max(1.0, .14 * self.u)))
+            p.setBrush(rgba(255, 255, 255, .09))
+            p.drawRoundedRect(pr, rad_p, rad_p)
         if self.TOAST and not (self.side == 'bottom' and (self.PROMPT or self.CONFIRM or self.POWER_OPEN)): self.draw_toast(p)
         if self.OSD is not None: self.draw_osd(p)
         p.end()
@@ -1447,16 +1907,28 @@ class Tandem(QRasterWindow):
         p.drawEllipse(QRectF(x, y, d, d))
         self.text(p, letter, x, y, ('u', d / self.u * .5, 700), INK, d, 1, 2)
 
-    def pads(self, p, x, y, hints, size=1.7, gap=2.4):
-        """Controller hints as glass capsules: a round key cap and its meaning; the first is the main action."""
+    def pads(self, p, x, y, hints, size=1.7, gap=2.4, actions=None):
+        """Controller hints as interactive glass capsules: works both as pad legend AND direct touchscreen buttons."""
         u, f = self.u, ('u', 1.6 * size / 1.7, 500)
         h = 3.6 * u * size / 1.7
         d = h - 1.1 * u * size / 1.7
+        key_map = {'A': 'ok', 'B': 'back', 'X': 'close', 'Y': 'fav', '+': 'menu', '−': 'search'}
         for n, (letter, label) in enumerate(hints):
             w = (h - d) / 2 + d + .9 * u + self.width_of(label, f) + 1.5 * u
-            self.capsule(p, QRectF(x, y, w, h), faded(TEXT, .16 if n == 0 else .08), faded(TEXT, .1))
+            crect = QRectF(x, y, w, h)
+            self.capsule(p, crect, faded(TEXT, .16 if n == 0 else .08), faded(TEXT, .1))
             self.keycap(p, x + (h - d) / 2, y + (h - d) / 2, d, letter, FOCUS if n == 0 else faded(TEXT, .85))
             self.text(p, label, x + (h - d) / 2 + d + .9 * u, y, f if n else (f[0], f[1], 600), TEXT, lh=h / (f[1] * u))
+            custom_fn = (actions or {}).get(letter)
+            if custom_fn:
+                self.hit(crect.adjusted(-.3 * u, -.5 * u, .3 * u, .5 * u), custom_fn, name=f'pad:{letter}')
+            elif letter in key_map:
+                act_a = key_map[letter]
+                if letter == 'B' and self.playing():
+                    fn_pad = self.confirm_quit
+                else:
+                    fn_pad = lambda a=act_a: self.post('api/uikey', {'a': a})
+                self.hit(crect.adjusted(-.3 * u, -.5 * u, .3 * u, .5 * u), fn_pad, name=f'pad:{letter}')
             x += w + gap * u * .5
         return x
 
@@ -1466,7 +1938,7 @@ class Tandem(QRasterWindow):
         it = RUN if P else items[self.S['i']] if items else None
         full, hero = QRectF(0, 0, W, H), self.hero
         if (it or {}).get('id') != hero['key']: hero['key'], hero['kt'] = (it or {}).get('id'), time.time()
-        art = self.images.get(it['hero'], W, H) if it and it.get('hero') else False
+        art = self.images.get(it['hero'], W, H, 'hero') if it and it.get('hero') else False
         if art and art is not hero['cur']: hero['prev'], hero['cur'], hero['t0'] = hero['cur'], art, time.time()
         if it:
             shown = art or (hero['cur'] if art is None else None)  # while the next picture loads, the last one stays
@@ -1534,8 +2006,10 @@ class Tandem(QRasterWindow):
                 hints = [('A', 'Öffnen' if it.get('kind') == 'sys' else 'Fortsetzen' if held else 'Installieren' if inst == 'no' else 'Lädt noch' if inst == 'load' else 'Starten')] + \
                         ([('X', 'Beenden')] if held else []) + [('B', 'Suche beenden' if self.S.get('q') else 'Zurück')] + ([] if not can_opt else [('Y', 'Favorit'), ('+', 'Optionen')]) + \
                         ([] if self.S['tab'] == 3 else [('−', 'Suche')])
-        sw, sh = round(26.5 * u), round(14.9 * u)
-        shot = self.images.get(it['shot'], sw, sh, True) if it and not P and it.get('shot') else False
+        has_moment = bool(it and not P and it.get('moment'))
+        shot_src = it.get('moment') if has_moment else (it.get('shot') if it and not P else None)
+        sw, sh = (round(29.0 * u), round(16.3 * u)) if has_moment else (round(26.5 * u), round(14.9 * u))
+        shot = self.images.get(shot_src, sw, sh, True) if shot_src else False
         max_tw = (W - 4.2 * u - sw - 6.8 * u) if shot else 60 * u
         logo = self.images.get(it['logo'], round(min(40 * u, max_tw)), round(15.5 * u), False) if it and it.get('logo') else False
         nf, mf = ('u', 4.6, 700, -.025), ('m', 1.3, 500)
@@ -1560,8 +2034,12 @@ class Tandem(QRasterWindow):
         else:
             for row in rows: y += self.text(p, row, x, y, nf, TEXT, lh=1.08)
         y += 1.5 * u
-        mx = x
+        mx, mx_limit = x, x + max_tw
+        sep_w = self.width_of('   ·   ', m)
         for n, part in enumerate(meta):
+            part_w = sum(self.width_of(txt, fnt) for txt, fnt, _ in part)
+            if n and mx + sep_w + part_w > mx_limit:
+                break
             if n: mx = self.spans(p, mx, y, [('   ·   ', m, faded(MUTED, .6))])
             mx = self.spans(p, mx, y, part)
         y += 1.8 * u
@@ -1583,7 +2061,16 @@ class Tandem(QRasterWindow):
             for k, a in ((1.4, .18), (.7, .28)): self.box(p, srect.adjusted(-k * u, -k * u + .65 * u, k * u, k * u + .65 * u), sr + k * u, rgba(0, 0, 0, a * t))
             sbrush = QBrush(shot)
             sbrush.setTransform(sbrush.transform().translate(srect.x(), srect.y()))
-            self.box(p, srect, sr, sbrush, rgba(255, 255, 255, .18), 1.0)
+            self.box(p, srect, sr, sbrush, faded(FOCUS, .45) if has_moment else rgba(255, 255, 255, .18), 1.3 if has_moment else 1.0)
+            if has_moment:
+                blbl = '● Zuletzt im Spiel'
+                bf = ('u', 1.25, 700, .03)
+                bw = self.width_of(blbl, bf) + 2.2 * u
+                bh = 2.5 * u
+                brect = QRectF(srect.x() + 1.0 * u, srect.y() + 1.0 * u, bw, bh)
+                self.capsule(p, brect, rgba(10, 11, 18, .82), rgba(255, 255, 255, .18))
+                self.text(p, blbl, brect.x(), brect.y(), bf, FOCUS, bw, 1, bh / (1.25 * u))
+            self.hit(srect, lambda: self.post('api/uikey', {'a': 'ok'}), name='pad:shot')
         p.setOpacity(1)
         self.draw_confirm(p)
 
@@ -1822,11 +2309,11 @@ class Tandem(QRasterWindow):
         x0, cw, bottom = 2.6 * u, W - 5.2 * u, H - 2.6 * u
         act = lambda label, fn, x, w, quit=False: self.button(p, QRectF(x, bottom - 6.3 * u, w, 6.3 * u), label, fn, ('u', 2.2, 600), INK if quit else TEXT, WARN if quit else PANEL, None, 1.4)
         if self.PROMPT:
-            def close(ok):
-                P_ = self.PROMPT
-                self.cancel_prompt()
-                if ok and P_: P_['done'](P_['value'])
-            y = self.tabs(p, self.PROMPT['title'], [('Abbrechen', False, lambda: close(False)), ('Fertig', True, lambda: close(True))])
+            btns = []
+            if not (self.PROMPT.get('swkbd_id') and self.PROMPT.get('min', 0) > 0):
+                btns.append(('Abbrechen', False, lambda: self.finish_prompt(False)))
+            btns.append(('Fertig', True, lambda: self.finish_prompt(True)))
+            y = self.tabs(p, self.PROMPT['title'], btns)
             raw_val = self.PROMPT['value']
             masked = self.PROMPT['secret'] and not self.PROMPT.get('show')
             value = '•' * len(raw_val) if masked else raw_val
@@ -1866,6 +2353,45 @@ class Tandem(QRasterWindow):
         if self.GAME_MENU and not P:
             return self.draw_game_menu(p)
         if P and (RUN['s'] == 'term' or RUN.get('keys')):  # keys: YouTube browser login or Battle.net launcher
+            ai_auth = getattr(self, 'AI_AUTH', None) or {}
+            if RUN['s'] == 'term' and ai_auth.get('open'):
+                y = self.tabs(p, 'KI-Anmeldung per QR-Code', [('Zur Tastatur', False, lambda: self.post('api/ai_auth', {'action': 'close'}))])
+                qr_url = ai_auth.get('qr') or ''
+                card_h = H - y - 10.6 * u
+                card_r = QRectF(x0, y, cw, max(24 * u, card_h))
+                self.box(p, card_r, 2.0 * u, PANEL, faded(FOCUS, .45))
+                qsize = min(card_r.height() - 4.0 * u, 30 * u)
+                qrect = QRectF(card_r.x() + 2.4 * u, card_r.y() + (card_r.height() - qsize) / 2, qsize, qsize)
+                if qr_url:
+                    try:
+                        qr.draw(p, qrect, qr_url, round(1.8 * u))
+                    except ValueError:
+                        self.box(p, qrect, 1.5 * u, RAISED, LINE)
+                        self.text(p, 'Kein QR', qrect.x(), qrect.y(), ('u', 2.0, 600), MUTED, qrect.width(), 1, qrect.height() / (2.0 * u))
+                else:
+                    self.box(p, qrect, 1.5 * u, RAISED, LINE)
+                    self.text(p, 'Kein WLAN', qrect.x(), qrect.y(), ('u', 2.0, 600), WARN, qrect.width(), 1, qrect.height() / (2.0 * u))
+                tx = qrect.right() + 2.8 * u
+                tw = card_r.right() - tx - 2.4 * u
+                ty = qrect.y() + .4 * u
+                self.text(p, 'Bequem am Handy anmelden', tx, ty, ('u', 2.6, 700, -.01), TEXT, tw)
+                ty += 4.2 * u
+                steps = ('1. QR-Code mit dem Handy scannen und auf „Anmeldung im Browser öffnen“ tippen.\n\n'
+                         '2. Bei Google oder Claude anmelden und den angezeigten Code (oder die Callback-URL) '
+                         'auf der Handy-Seite einfügen → „An Thor senden“.')
+                self.text(p, steps, tx, ty, ('u', 1.95, 400), MUTED, tw, lh=1.42, lines=None)
+                if qr_url:
+                    self.text(p, qr_url, tx, qrect.bottom() - 2.6 * u, ('m', 1.45, 500), FOCUS, tw)
+                by = card_r.bottom() + 1.8 * u
+                bh = 5.6 * u
+                half = (cw - 1.4 * u) / 2
+                self.button(p, QRectF(x0, by, half, bh), 'Auf Thor im Browser öffnen',
+                            lambda: self.post('api/ai_auth', {'action': 'browser'}, then=lambda r: r and r.get('error') and self.toast(r['error'])),
+                            ('u', 2.0, 600), TEXT, PANEL, LINE, 1.3)
+                self.button(p, QRectF(x0 + half + 1.4 * u, by, half, bh), 'Zur Tastatur',
+                            lambda: self.post('api/ai_auth', {'action': 'close'}),
+                            ('u', 2.0, 700), INK, FOCUS, None, 1.3)
+                return
             layout = RUN.get('layout') if RUN.get('layout') in KB else 'us'
             lang_btn = (f'Tastatur: {"Deutsch" if layout == "de" else "Englisch"}', False, lambda: self.post('api/layout', {'layout': 'us' if layout == 'de' else 'de'}))
             if RUN.get('login'):
@@ -1873,7 +2399,7 @@ class Tandem(QRasterWindow):
                 title = 'Bei YouTube anmelden'
             else:
                 btns = [lang_btn, ('Schließen', False, lambda: self.post('api/quit'))]
-                title = RUN['t'] if RUN.get('keys') else 'Linux-Shell'
+                title = RUN['t'] if (RUN.get('keys') or RUN.get('id', '').startswith('ai:')) else 'Linux-Shell'
             y = self.tabs(p, title, btns)
             if RUN.get('keys'):
                 quick = [('@', 'seq', '@'), ('.com', 'seq', '.com'), ('.de', 'seq', '.de'), ('gmail.com', 'seq', 'gmail.com'), ('Tab ⇥', 'code', 15), ('Weiter ↵', 'code', 28)]
@@ -1884,6 +2410,34 @@ class Tandem(QRasterWindow):
                     qfn = (lambda v=qval: self.post('api/key', {'seq': v})) if qkind == 'seq' else (lambda v=qval: self.term_key(v))
                     self.button(p, QRectF(x0 + qi * (qw + qgap), y, qw, qh), qlbl, qfn, ('u', 2.0, 600), INK if is_go else TEXT, FOCUS if is_go else PANEL, faded(TEXT, .1) if not is_go else None, 1.2)
                 y += qh + 1.4 * u
+            elif RUN['s'] == 'term':
+                if str(RUN.get('id') or '').startswith('ai:'):
+                    ai_quick = [
+                        ('QR-Login', lambda: self.post('api/ai_auth', {'action': 'open'}), False),
+                        ('@', lambda: self.post('api/key', {'seq': '@'}), False),
+                        ('Tab ⇥', lambda: self.post('api/key', {'code': 15, 'mods': []}), False),
+                        ('Einfügen', lambda: self.post('api/ai_window', {'action': 'paste'}), False),
+                        ('Web ⇄ Term', lambda: self.post('api/ai_window', {'action': 'toggle'}, then=lambda r: r and r.get('error') and self.toast(r['error'])), False),
+                        ('⇧Tab', lambda: self.post('api/key', {'code': 15, 'mods': ['shift']}), False),
+                        ('Strg+C', lambda: self.post('api/key', {'code': 46, 'mods': ['ctrl']}), False),
+                        ('Senden ↵', lambda: self.post('api/key', {'code': 28, 'mods': []}), True),
+                    ]
+                else:
+                    ai_quick = [
+                        ('Claude ⚡', lambda: self.post('api/key', {'seq': 'claude --dangerously-skip-permissions', 'enter': True}), False),
+                        ('agy ⚡', lambda: self.post('api/key', {'seq': 'agy --dangerously-skip-permissions', 'enter': True}), False),
+                        ('Einfügen', lambda: self.post('api/ai_window', {'action': 'paste'}), False),
+                        ('Web ⇄ Term', lambda: self.post('api/ai_window', {'action': 'toggle'}, then=lambda r: r and r.get('error') and self.toast(r['error'])), False),
+                        ('Strg+C', lambda: self.post('api/key', {'code': 46, 'mods': ['ctrl']}), False),
+                        ('Esc', lambda: self.post('api/key', {'code': 1, 'mods': []}), False),
+                        ('Senden ↵', lambda: self.post('api/key', {'code': 28, 'mods': []}), True),
+                    ]
+                qh, qgap = 4.8 * u, 0.8 * u
+                qw = (cw - qgap * (len(ai_quick) - 1)) / len(ai_quick)
+                for qi, (qlbl, qfn, is_go) in enumerate(ai_quick):
+                    self.button(p, QRectF(x0 + qi * (qw + qgap), y, qw, qh), qlbl, qfn, ('u', 1.72, 600),
+                                INK if is_go else TEXT, FOCUS if is_go else PANEL, faded(TEXT, .1) if not is_go else None, 1.15)
+                y += qh + 1.2 * u
             return self.keyboard(p, y, self.term_key)
         if P and self.show_deck(p): return  # HOOK: native deck, see DECKS above
         g = QLinearGradient(0, 0, 0, H * .55)  # a breath of the game's colour from the top: ties both screens together
@@ -1897,12 +2451,26 @@ class Tandem(QRasterWindow):
         else:
             y = self.tabs(p)
             room = x0 + cw - getattr(self, 'tabs_right', x0) - 1.0 * u
-            if room > 5 * u:
+            if room > 5 * u and not self.S['sys']:
                 cf = ('u', 1.75, 500)
-                full_crumb = f'{self.sys_name({"s": self.S["sys"]})} · {len(items)}' if self.S['sys'] else f'{len(items)} Eintrag' if len(items) == 1 else f'{len(items)} Einträge'
+                full_crumb = f'{len(items)} Eintrag' if len(items) == 1 else f'{len(items)} Einträge'
                 if self.width_of(full_crumb, cf) > room:
-                    full_crumb = f'{len(items)} Spiele' if self.S['sys'] else str(len(items))
+                    full_crumb = str(len(items))
                 self.text(p, full_crumb, getattr(self, 'tabs_right', x0) + 1.0 * u, 2.4 * u, cf, MUTED, room, 2, 5.4 / 1.75)
+            if self.S['sys']:
+                bf = ('u', 1.9, 600)
+                back_txt = '‹ Systeme'
+                bw_c = self.width_of(back_txt, bf) + 3.0 * u
+                bh_c = 4.4 * u
+                brect_c = QRectF(x0, y - .5 * u, bw_c, bh_c)
+                self.capsule(p, brect_c, faded(TEXT, .10), faded(FOCUS, .32))
+                self.text(p, back_txt, x0, y - .5 * u, bf, FOCUS, bw_c, 1, bh_c / (1.9 * u))
+                self.hit(brect_c, lambda: self.go('back'), name='sys-back')
+                sys_title = self.sys_name({'s': self.S['sys']})
+                cnt_txt = f'{len(items)} Eintrag' if len(items) == 1 else f'{len(items)} Spiele'
+                self.text(p, f'{sys_title} · {cnt_txt}', x0 + bw_c + 1.5 * u, y - .5 * u, ('u', 2.05, 700, -.01), TEXT,
+                          cw - bw_c - 1.5 * u, lh=bh_c / (2.05 * u))
+                y += bh_c + 2.0 * u
         if RUN and RUN.get('paused'):
             rect = QRectF(x0, y, cw, 7 * u)
             self.box(p, rect, 2 * u, PANEL, faded(LIVE, .35))
@@ -2034,13 +2602,17 @@ class Tandem(QRasterWindow):
             cur = sa['from'] + (sa['to'] - sa['from']) * ts
             sa.update({'from': cur, 'to': float(i), 't0': time.time()})
         ts = self.ease(sa['t0'], self.dur(.24)) if sa['t0'] else 1.0
-        pos = float(i) if self.CFG.get('motion') == 'reduced' else sa['from'] + (sa['to'] - sa['from']) * ts
+        pos = (self.stage_drag['pos'] if self.stage_drag is not None
+               else float(i) if self.CFG.get('motion') == 'reduced'
+               else sa['from'] + (sa['to'] - sa['from']) * ts)
         seen = (self.S['tab'], self.S['sys'], self.S.get('q', ''), i, len(items))
         if self.lift[0] != seen[:4]: self.lift = (seen[:4], time.time())
         avail_h = bottom - y
         info_h = 11.5 * u
         stage_h = max(20 * u, avail_h - info_h)
         csize = min(30 * u, stage_h * .82)
+        if self.stage_drag is not None:
+            self.stage_drag['step'] = max(8.0 * u, csize * .72)
         cy = y + stage_h * .46
         cx = W / 2
         order = sorted([n for n in range(len(items)) if abs(n - pos) <= 3.35], key=lambda n: -abs(n - pos))
@@ -2247,6 +2819,10 @@ class Tandem(QRasterWindow):
             if n == self.S['i']: self.go('ok')
             else: self.S['i'] = n; self.push()
         self.hit(base, tap, name=x['t'])
+        if not x.get('kind') and x.get('s') not in ('app', 'term'):
+            trect = base.intersected(self.clip) if self.clip is not None else base
+            if self.xf is not None: trect = self.xf.mapRect(trect)
+            if not trect.isEmpty(): self.tile_rects.append((trect, n))
 
 
 def main():

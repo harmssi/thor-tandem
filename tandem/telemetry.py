@@ -60,6 +60,98 @@ def battery_detail(root='/sys/class/power_supply'):
             'health': soh, 'cycles': cycles, 'bat_temp': bat_temp}
 
 
+def _active_usb_type(raw):
+    m = re.search(r'\[([A-Za-z0-9_]+)\]', str(raw or ''))
+    return m.group(1) if m else ''
+
+
+def charger_detail(root='/sys/class/power_supply', typec_root='/sys/class/typec'):
+    """Inspect USB-C PD / PPS fast-charging negotiation, voltage, input current limit, and cell charge ceiling."""
+    base = Path(root)
+    bat = next((p for p in sorted(base.glob('*')) if (p / 'type').is_file() and (p / 'type').read_text(errors='ignore').strip() == 'Battery'), None)
+    usb_supplies = [p for p in sorted(base.glob('*')) if p != bat and (p / 'type').is_file() and (p / 'type').read_text(errors='ignore').strip() == 'USB']
+    if not bat and not usb_supplies:
+        return None
+
+    online = False
+    usb_v = 0.0
+    usb_i_lim = 0.0
+    usb_i_now = 0.0
+    modes = []
+    for u in usb_supplies:
+        if _read_int(u / 'online') == 1:
+            online = True
+        ut = _active_usb_type((u / 'usb_type').read_text(errors='ignore') if (u / 'usb_type').is_file() else '')
+        if ut and ut != 'Unknown':
+            modes.append(ut)
+        vn = _read_int(u / 'voltage_now') or _read_int(u / 'voltage_max') or 0
+        if vn > 0:
+            usb_v = max(usb_v, round(vn / 1e6, 2))
+        il = _read_int(u / 'input_current_limit') or _read_int(u / 'current_max') or 0
+        if il > 0:
+            usb_i_lim = max(usb_i_lim, round(il / 1e6, 2))
+        inow = _read_int(u / 'current_now') or 0
+        if inow > 0 and vn > 0:
+            usb_i_now = max(usb_i_now, round(inow / 1e6, 2))
+
+    # Prefer highest negotiated protocol across UCSI + battmgr (PD_PPS > PD > DCP > CDP > C > SDP)
+    prio = ('PD_PPS', 'PD_DRP', 'PD', 'DCP', 'ACA', 'CDP', 'C', 'SDP')
+    protocol = next((m for m in prio if m in modes), (modes[0] if modes else ('Online' if online else 'Offline')))
+
+    data_role = ''
+    pd_partner = False
+    tc = Path(typec_root)
+    if (tc / 'port0/data_role').is_file():
+        data_role = _active_usb_type((tc / 'port0/data_role').read_text(errors='ignore'))
+    if (tc / 'port0-partner/supports_usb_power_delivery').is_file():
+        pd_partner = (tc / 'port0-partner/supports_usb_power_delivery').read_text(errors='ignore').strip() == 'yes'
+
+    cc_cur = _read_int(bat / 'constant_charge_current') if bat else None
+    cc_max = _read_int(bat / 'constant_charge_current_max') if bat else None
+    ttf = _read_int(bat / 'time_to_full_avg') if bat else None
+    status = (bat / 'status').read_text(errors='ignore').strip() if (bat and (bat / 'status').is_file()) else ''
+    cap = _read_int(bat / 'capacity') if bat else None
+
+    max_w = round(usb_v * usb_i_lim, 1) if (usb_v and usb_i_lim) else None
+    live_in_w = round(usb_v * usb_i_now, 1) if (usb_v and usb_i_now) else None
+    fast_active = bool(online and (protocol in ('PD_PPS', 'PD', 'PD_DRP') and (usb_v >= 8.0 or (max_w and max_w >= 20.0))))
+    pc_port = bool(online and (protocol == 'SDP' or (data_role == 'device' and usb_v <= 5.5)))
+
+    if not online:
+        state_lbl = 'Akkubetrieb (PD/PPS bis 27–35 W bereit)'
+        hint = 'Für Schnellladen ein USB-PD- / PPS-Netzteil (9 V / 3 A, ab 27 W) anschließen.'
+    elif status == 'Full' or (cap is not None and cap >= 99):
+        state_lbl = f'Voll geladen · {"PC-Port (5 V)" if pc_port else protocol}'
+        hint = 'Akku ist voll (Erhaltungsladung). Schnellladen greift im Bereich 5–85 % mit voller Leistung.'
+    elif fast_active:
+        state_lbl = f'✓ Schnellladen aktiv ({protocol} · {max_w or 27:g} W)'
+        hint = 'USB-Power-Delivery-Hochvolt-Schnellladen ist aktiv.'
+    elif pc_port:
+        state_lbl = f'PC-Datenport ({usb_v or 5:g} V · langsam)'
+        hint = 'Am Computer-USB-Port begrenzt 5 V die Ladeleistung. Für Schnellladen ein 27W+ USB-PD-Wandnetzteil nutzen.'
+    else:
+        state_lbl = f'Lädt ({protocol} · bis {max_w:g} W)' if max_w else f'Lädt ({protocol})'
+        hint = 'Standardladung aktiv; für maximales Schnellladen ein PPS-/PD-Netzteil ab 27 W verwenden.'
+
+    return {
+        'online': online,
+        'protocol': protocol,
+        'pd_partner': pd_partner,
+        'data_role': data_role,
+        'voltage_v': usb_v or None,
+        'current_limit_a': usb_i_lim or None,
+        'live_input_w': live_in_w,
+        'max_input_w': max_w,
+        'cell_charge_a': round(cc_cur / 1e6, 2) if cc_cur else None,
+        'cell_max_a': round(cc_max / 1e6, 2) if cc_max else None,
+        'mins_to_full': round(ttf / 60) if (ttf and ttf > 0) else None,
+        'fast_charging': fast_active,
+        'pc_port': pc_port,
+        'label': state_lbl,
+        'hint': hint,
+    }
+
+
 def cpu_ram():
     """(cpu_percent, ram_used_gb, ram_total_gb) from /proc/stat and /proc/meminfo."""
     cpu_pct = None
@@ -238,8 +330,9 @@ def bgm_control(action, path='', vol=None):
 
 
 def snapshot(sample=True):
-    """Combined telemetry snapshot for the in-game Cockpit tab."""
+    """Combined telemetry snapshot for the in-game Cockpit tab & battery/charger diagnostics."""
     bat = battery_detail()
+    chg = charger_detail()
     cpu, ram_u, ram_t = cpu_ram()
     pwr = thor.power() or {}
     dock = dock_state()
@@ -249,7 +342,7 @@ def snapshot(sample=True):
         if bat and bat.get('watts') is not None: _HIST['watts'].append(bat['watts'])
         if cpu is not None: _HIST['cpu'].append(cpu)
         if pwr.get('temp') is not None: _HIST['temp'].append(pwr['temp'])
-    return {'battery': bat, 'cpu': cpu, 'ram_used': ram_u, 'ram_total': ram_t,
+    return {'battery': bat, 'charger': chg, 'cpu': cpu, 'ram_used': ram_u, 'ram_total': ram_t,
             'temp': pwr.get('temp'), 'fan': pwr.get('fan'), 'profile': pwr.get('profile'),
             'dock': dock, 'hist': {k: list(_HIST[k]) for k in ('watts', 'cpu', 'temp')}}
 

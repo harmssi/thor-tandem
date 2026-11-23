@@ -15,6 +15,8 @@ import companion  # per-game notes/sketches, guides, visual save states, dual-sc
 import saves  # rolling local + SSH savegame backups (SD card + optional SSH host)
 import telemetry  # battery wattage/playtime, CPU/RAM, PipeWire mixer, dock state & Wake-on-LAN
 import thor  # the Thor's own hardware: stick lights, gyro, performance profile
+import thor_storage  # integrated Linux/Tandem system backups & live retroactive Android partition shrinker
+import thor_updater  # Obtainium-class integrated emulator/core updater & automatic game companion provisioner
 
 HOME = Path.home()
 HERE = Path(__file__).resolve().parent
@@ -298,21 +300,56 @@ def rom_identity(path):
     return text(0xAC, 0xB0), crc
 
 
-def find_pack(game):
-    """The companion pack (a folder in ~/.config/tandem/packs) made for this ROM: manifest.json names game codes and/or
-    CRC32s (gba-duo-wide: the code must be listed, and the CRC too if any are; a pack without codes goes by CRC alone)."""
+def find_pack_info(game, assigned=None):
+    """Return `(pack_id, other_region, candidates)` for a GB/GBC/GBA ROM using GBADuo v1.0.1 exact + multi-region rules."""
     packs = CONFIG.parent / 'packs'
-    if game.get('s') not in ('gb', 'gbc', 'gba') or not game.get('path') or not packs.is_dir(): return None
-    code = crc = None
-    for manifest in sorted(packs.glob('*/manifest.json')):
-        try:
-            match = json.loads(manifest.read_text(encoding='utf-8'))['match']
-            codes, crcs = [str(c) for c in match.get('gameCode') or []], [int(str(c), 16) for c in match.get('crc32') or []]
-        except (OSError, ValueError, KeyError, AttributeError, TypeError): continue
-        if code is None: code, crc = rom_identity(game['path'])  # read the ROM only when there is a pack at all
-        if code is None: return None
-        if (code in codes or 'AGB-' + code in codes if codes else bool(crcs)) and (not crcs or crc in crcs): return manifest.parent.name
-    return None
+    if game.get('s') not in ('gb', 'gbc', 'gba') or not game.get('path') or not packs.is_dir():
+        return None, False, []
+    if assigned == '__off__':
+        return None, False, []
+    installed = companion.list_installed_packs(CONFIG.parent)
+    if not installed:
+        return None, False, []
+    code, crc = rom_identity(game['path'])
+    if code is None:
+        return None, False, []
+    hint = f"{game.get('t', '')} {Path(game['path']).stem}"
+    m = companion.match_packs_for_rom(code, crc, title_hint=hint, installed=installed, catalog=None)
+    cands = [x['id'] for x in (m['exact_installed'] + m['other_installed'])]
+    if assigned and assigned != '__art__':
+        if (packs / assigned / 'manifest.json').is_file():
+            is_other = any(x['id'] == assigned for x in m['other_installed']) or (assigned not in [x['id'] for x in m['exact_installed']])
+            return assigned, is_other, cands
+    return m['best_installed'], m['best_other_region'], cands
+
+
+def find_pack(game):
+    """The companion pack (a folder in ~/.config/tandem/packs) made for this ROM: exact match first, then GBADuo v1.0.1 multi-region."""
+    return find_pack_info(game)[0]
+
+
+def ensure_game_pack(game, assigned=None):
+    """If the user launches a GB/GBC/GBA game whose companion pack is available in `khumam/gba-duo-companions`
+    but not installed yet, download & unpack it immediately (<1 s) so it works on first launch."""
+    if assigned == '__off__' or game.get('s') not in ('gb', 'gbc', 'gba') or not game.get('path'):
+        return None, False, []
+    pack, other_reg, cands = find_pack_info(game, assigned=assigned)
+    if pack or not load_config().get('auto_packs', True):
+        return pack, other_reg, cands
+    code, crc = rom_identity(game['path'])
+    if not code:
+        return None, False, []
+    catalog = companion.fetch_gbaduo_catalog(force=False, timeout=4)
+    if not catalog:
+        return None, False, []
+    hint = f"{game.get('t', '')} {Path(game['path']).stem}"
+    m = companion.match_packs_for_rom(code, crc, title_hint=hint, installed=[], catalog=catalog)
+    if m['best_web']:
+        wp, _ = m['best_web']
+        res = companion.download_catalog_pack(wp, cfg_dir=CONFIG.parent, timeout=8)
+        if res.get('ok'):
+            return find_pack_info(game, assigned=assigned)
+    return None, False, []
 
 
 def wide_core(cmd, pack, on):
@@ -585,11 +622,11 @@ class Library:
         cover, box, hero, logo, shot, vid = {}, {}, {}, {}, {}, {}
         sys_names = list(reversed([system] + SYS_ALIASES.get(system, [])))  # primary system name wins over alias
         for sname in sys_names:
-            for media, covers, boxes, heroes, logos, shots, vids in (
+            for media, covers, boxes, heroes, logos, shots, vids in reversed((
                     (base / 'ES-DE/downloaded_media', ('covers', 'miximages', 'screenshots'), ('3dboxes', 'covers'), ('fanart', 'screenshots'), ('marquees', 'wheel'), ('screenshots',), ('videos',)),
                     (HOME / 'ES-DE/downloaded_media', ('covers', 'miximages', 'screenshots'), ('3dboxes', 'covers'), ('fanart', 'screenshots'), ('marquees', 'wheel'), ('screenshots',), ('videos',)),
                     (base / 'Cocoon/downloaded_media', ('icon', 'screenshot_title'), (), ('hero', 'screenshot_gameplay'), ('logo',), ('screenshot_gameplay', 'screenshot_title'), ('videos', 'video')),
-                    (MEDIA, ('covers', 'boxes'), ('boxes', 'covers'), ('snaps',), (), ('snaps',), ())):
+                    (MEDIA, ('covers', 'boxes'), ('boxes', 'covers'), ('snaps',), (), ('snaps',), ()))):
                 for kinds, target in ((covers, cover), (boxes, box), (heroes, hero), (logos, logo), (shots, shot)):
                     for kind in reversed(kinds):  # earlier names win
                         target.update(self._media_index(media / sname / kind))
@@ -660,6 +697,27 @@ class Library:
         self.media[token] = path
         return 'media/' + token
 
+    @staticmethod
+    def _norm_switch_key(text):
+        s = re.sub(r'\s*\((?:PeanutsNative|BananaNative)\)\s*$', '', str(text or ''), flags=re.I)
+        s = re.sub(r'\s*\[[^\]]*\]', '', s)
+        return re.sub(r'[^a-z0-9]+', '', s.lower())
+
+    def _match_switch_media(self, tid, title, media_map):
+        if not media_map: return None
+        tid_up = (tid or '').upper()
+        if tid_up:
+            for stem, fp in media_map.items():
+                if tid_up in stem.upper():
+                    return fp
+        norm_t = self._norm_switch_key(title)
+        if len(norm_t) >= 4:
+            for stem, fp in media_map.items():
+                ns = self._norm_switch_key(stem)
+                if ns and (ns == norm_t or (len(ns) >= 7 and (ns.startswith(norm_t) or norm_t.startswith(ns)))):
+                    return fp
+        return None
+
     def scan(self):
         games, media = {}, {}
         self.media = media
@@ -715,6 +773,10 @@ class Library:
             games[gid] = {'id': gid, 't': name[1], 's': 'steam', 'appid': appid[1], 'cover': self._image(steam_art(self.steam, appid[1], 'library_600x900.jpg')),
                           'hero': self._image(steam_art(self.steam, appid[1], 'library_hero.jpg')), **({'logo': s_logo} if s_logo else {})}
             if loading: games[gid].update(inst='load', pct=round(100 * done / total) if total else None)
+        sw_cov, sw_box, sw_hero, sw_logo, sw_shot = {}, {}, {}, {}, {}
+        for root in self.roots:
+            c0, b0, h0, l0, s0, _ = self._art(root, 'switch')
+            sw_cov.update(c0); sw_box.update(b0); sw_hero.update(h0); sw_logo.update(l0); sw_shot.update(s0)
         seen_native_dirs, seen_native_tids = set(), set()
         for appid, name, grid in steam_shortcuts(self.steam):  # Battle.net and other launchers: they want a login, keys go along
             art = lambda n: self._image(str(grid / n)) if (grid / n).is_file() else None
@@ -735,8 +797,17 @@ class Library:
                         seen_native_tids.add(sc_tid)
                 if sc_tid:
                     entry['tid'] = sc_tid
-                    sc_box = self._image(_find_switch_box([sc_tid, 'steam' + appid]))
+                    sc_box = self._image(_find_switch_box([sc_tid, 'steam' + appid]) or self._match_switch_media(sc_tid, name, sw_box))
                     if sc_box: entry['box'] = sc_box
+                    if not entry.get('cover'):
+                        entry['cover'] = self._image(self._match_switch_media(sc_tid, name, sw_cov)) or sc_box
+                    if not entry.get('hero'):
+                        entry['hero'] = self._image(self._match_switch_media(sc_tid, name, sw_hero)) or entry.get('cover')
+                    if not entry.get('logo'):
+                        ml = self._image(self._match_switch_media(sc_tid, name, sw_logo))
+                        if ml: entry['logo'] = ml
+                    ms = self._image(self._match_switch_media(sc_tid, name, sw_shot))
+                    if ms and ms not in (entry.get('hero'), entry.get('cover')): entry['shot'] = ms
             else: entry.update(appid=appid, gameid=str(int(appid) << 32 | 0x02000000), keys=True)
             games['steam' + appid] = entry
         for np in companion.discover_native_packs(self.roots, HOME):
@@ -748,11 +819,18 @@ class Library:
             seen_native_dirs.update((rdir, pdir))
             seen_native_tids.add(np['tid'].upper())
             nid = 'native-' + np['tid'].lower()
-            np_cov = self._image(np['cover'])
-            np_box = self._image(np.get('box') or _find_switch_box([np['tid'].upper(), nid]))
-            games[nid] = {'id': nid, 't': np['title'], 's': 'switch', 'tid': np['tid'].upper(), 'direct': np['direct'],
-                          'native_engine': np['engine'], 'cover': np_cov or np_box, 'hero': np_cov or np_box,
-                          **({'box': np_box} if np_box else {})}
+            tid_up = np['tid'].upper()
+            hi_cov = self._image(self._match_switch_media(tid_up, np['title'], sw_cov))
+            hi_hero = self._image(self._match_switch_media(tid_up, np['title'], sw_hero))
+            hi_logo = self._image(self._match_switch_media(tid_up, np['title'], sw_logo))
+            hi_shot = self._image(self._match_switch_media(tid_up, np['title'], sw_shot))
+            np_cov = hi_cov or self._image(np['cover'])
+            np_box = self._image(np.get('box') or _find_switch_box([tid_up, nid]) or self._match_switch_media(tid_up, np['title'], sw_box))
+            ng = {'id': nid, 't': np['title'], 's': 'switch', 'tid': tid_up, 'direct': np['direct'],
+                  'native_engine': np['engine'], 'cover': np_cov or np_box, 'hero': hi_hero or hi_shot or np_cov or np_box,
+                  **({'box': np_box} if np_box else {}), **({'logo': hi_logo} if hi_logo else {})}
+            if hi_shot and hi_shot != ng['hero']: ng['shot'] = hi_shot
+            games[nid] = ng
         for port, (title, folder, _, deck) in PORTS.items():
             if not (PORTS_DIR / folder / 'run').is_file(): continue
             own = PORTS_DIR / folder / 'dist/art/cover.png'  # art the port brings itself (no Steam release to borrow from)
@@ -762,15 +840,16 @@ class Library:
             games['port-' + port] = {'id': 'port-' + port, 't': title, 's': 'port', 'port': port,
                                      'cover': self._image(str(mine)) if mine.is_file() else art('library_600x900.jpg'), 'hero': art('library_hero.jpg'),
                                      **({'logo': p_logo} if p_logo else {})}
-        # The rest of the Steam library, read from Steam's own files: these can be installed from here.
-        for appid, app in steam_apps(self.steam / 'appcache/appinfo.vdf').items():
-            if 'steam' + appid in games or app.get('type', '').lower() != 'game' or not app.get('installdir'): continue
-            cover = steam_art(self.steam, appid, 'library_600x900.jpg')
-            if not cover: continue
-            s_logo = self._image(steam_art(self.steam, appid, 'logo.png'))
-            games['steam' + appid] = {'id': 'steam' + appid, 't': app['name'], 's': 'steam', 'appid': appid, 'inst': 'no', 'dir': app['installdir'],
-                                      'cover': self._image(cover), 'hero': self._image(steam_art(self.steam, appid, 'library_hero.jpg')),
-                                      **({'logo': s_logo} if s_logo else {})}
+        # Only installed Steam games (from appmanifest_*.acf & shortcuts.vdf above) are shown in Tandem.
+        moments_dir = STATE / 'moments'
+        if moments_dir.is_dir():
+            for gid, gm in games.items():
+                mp = moments_dir / f'{gid}.jpg'
+                if mp.is_file():
+                    m_tok = self._image(str(mp))
+                    gm['moment'] = m_tok
+                    if not gm.get('hero'):
+                        gm['hero'] = m_tok
         with self.lock: self.games = games
         return games
 
@@ -877,9 +956,12 @@ class Tandem:
         self.ui, self.run, self.proc, self.clients, self.lock = {'tab': 0, 'sys': None, 'i': 0}, None, None, [], threading.Lock()
         self.power_open = False  # True while the long-press power menu sits in front: routes pad input to Tandem
         self.prompt_open = False  # True while the bottom screen's text prompt is open: routes pad input to its keyboard
+        self.swkbd = None  # Active native Switch software-keyboard request waiting for the bottom screen
+        self.swkbd_seq = 0
         self.steam_show = 0  # until when Steam's own window may show, see hide_steam
         self.mirror = None  # Wii U: the GamePad picture on the bottom screen
         self.home_window = 0  # Tandem's own top window, noted when a game starts
+        self.moments = companion.MomentTracker(STATE)  # rolling gameplay snapshotter ("Zuletzt im Spiel", menu-free)
         self.setup = {'open': not SETUP_MARK.exists(), 'step': 0}  # the first-run assistant on the screens (see setup_info)
         STATE.mkdir(parents=True, exist_ok=True)
         try: self.saved = json.loads((STATE / 'state.json').read_text())
@@ -892,7 +974,74 @@ class Tandem:
         os.replace(tmp, STATE / 'state.json')
 
     def snapshot(self):
-        return {'ui': self.ui, 'run': self.run, 'setup': self.setup, 'doze': bool(DOZE), 'power': self.power_open, 'prompt': self.prompt_open}
+        sk = {k: v for k, v in self.swkbd.items() if k != 'event'} if self.swkbd else None
+        return {'ui': self.ui, 'run': self.run, 'setup': self.setup, 'doze': bool(DOZE), 'power': self.power_open, 'prompt': self.prompt_open, 'swkbd': sk}
+
+    def sync_gba_packs_bg(self, force=False):
+        """Automatically provision & update game companions (Steam mods, GBADuo packs, RetroArch UDP & dual-screen layouts)."""
+        if self.dry:
+            return
+        cfg = load_config()
+        if not cfg.get('auto_companions', True) and not cfg.get('auto_packs', True):
+            return
+        def work():
+            res = thor_updater.sync_all_companions(
+                list(self.library.games.values()), rom_identity,
+                roots=self.library.roots, home=HOME, cfg_dir=CONFIG.parent,
+                apply_updates=True, force_catalog=force,
+            )
+            changes = res.get('changes') or []
+            self.publish('updater', updater_state(self))
+            if changes:
+                self.publish('library')
+                self.publish('toast', {'text': f'Begleiter automatisch eingerichtet: {", ".join(changes[:3])}.'})
+        threading.Thread(target=work, daemon=True).start()
+
+    def ask_swkbd(self, data):
+        with self.lock:
+            if self.swkbd:
+                self.swkbd['ok'] = False
+                self.swkbd['event'].set()
+            self.swkbd_seq += 1
+            title = str(data.get('title') or '').strip()
+            sub = str(data.get('sub') or '').strip()
+            guide = str(data.get('guide') or '').strip()
+            label = f'{title} — {sub}' if title and sub and sub != title else (title or sub or guide or 'Text eingeben')
+            initial = str(data.get('initial') or '')
+            max_c = max(0, int(data.get('max') or 0)) if isinstance(data.get('max'), (int, float)) else 0
+            min_c = max(0, int(data.get('min') or 0)) if isinstance(data.get('min'), (int, float)) else 0
+            if max_c and len(initial) > max_c:
+                initial = initial[:max_c]
+            ev = threading.Event()
+            req = {'id': self.swkbd_seq, 'title': label[:90], 'guide': guide[:90], 'initial': initial,
+                   'min': min_c, 'max': max_c, 'ok': False, 'text': '', 'event': ev}
+            self.swkbd = req
+            self.prompt_open = True
+        if DOZE:
+            doze(False, self)
+        self.publish('swkbd', {'open': True, **{k: v for k, v in req.items() if k != 'event'}})
+        ev.wait(timeout=600)
+        with self.lock:
+            if self.swkbd is req:
+                self.swkbd = None
+                self.prompt_open = False
+        return {'ok': bool(req['ok']), 'text': req['text']}
+
+    def finish_swkbd(self, req_id=None, ok=False, text=''):
+        with self.lock:
+            req = self.swkbd
+            if not req or (req_id is not None and req['id'] != req_id):
+                return {'ok': False}
+            text = str(text or '')
+            if req['max'] and len(text) > req['max']:
+                text = text[:req['max']]
+            req['ok'] = bool(ok)
+            req['text'] = text if ok else ''
+            self.swkbd = None
+            self.prompt_open = False
+            req['event'].set()
+        self.publish('swkbd', {'open': False, 'id': req['id']})
+        return {'ok': True}
 
     def publish(self, kind='state', data=None):
         message = json.dumps({'kind': kind, **(data if data is not None else self.snapshot())})
@@ -911,12 +1060,23 @@ class Tandem:
     def launch(self, gid):
         with self.lock:
             if self.run: return {'error': 'Es ist noch ein Spiel offen – erst fortsetzen oder beenden.' if self.run.get('paused') else 'Es läuft schon ein Spiel.'}
-            if gid == 'term':
+            if gid in ('term', 'ai:claude', 'ai:agy'):
                 found = next(((which(name), args) for name, args in TERMINALS if which(name)), None)
                 layout = region_layout()
-                game = {'id': 'term', 't': 'Terminal', 's': 'term', 'layout': layout}
-                label, cmd = ('Terminal', [found[0], *found[1]]) if found else (None, 'Kein Terminal-Programm gefunden.')
-                if found: run_quiet(['setxkbmap', layout])  # the layout decides what the on-screen keys type
+                ai_tool = gid[3:] if gid.startswith('ai:') else ''
+                title = ('Claude Code (Skip Permissions)' if ai_tool == 'claude'
+                         else 'Google Antigravity · agy (Skip Permissions)' if ai_tool == 'agy'
+                         else 'Terminal')
+                game = {'id': gid, 't': title, 's': 'term', 'layout': layout, **({'ai': ai_tool} if ai_tool else {})}
+                if found:
+                    if ai_tool:
+                        script = write_ai_launcher(ai_tool)
+                        label, cmd = title, [found[0], *found[1], '-e', str(script)]
+                    else:
+                        label, cmd = 'Terminal', [found[0], *found[1]]
+                    run_quiet(['setxkbmap', layout])  # the layout decides what the on-screen keys type
+                else:
+                    label, cmd = None, 'Kein Terminal-Programm gefunden.'
             elif gid.startswith('app') and gid[3:].isdigit() and int(gid[3:]) < len(APPS):
                 entry = APPS[int(gid[3:])]
                 game, (label, (cmd, why)) = {'id': gid, 't': entry[0], 's': 'app'}, (entry[0], resolve(*entry[1:]))
@@ -933,12 +1093,26 @@ class Tandem:
                 if game['t'] == 'WoW Forever' and not self.dry: wow_login()  # its own login, as under Android (no Battle.net hand-over on ARM64)
                 if game.get('keys'): game = {**game, 'layout': region_layout()}; run_quiet(['setxkbmap', game['layout']])  # as for the terminal
             if not label: return {'error': cmd}
-            pack, wide = find_pack(game) if label == 'RetroArch' else None, None  # the native bottom screen runs it (ui/decks/pack.py)
+            assigned_pack = self.saved.get('pack_assign', {}).get(gid)
+            if label == 'RetroArch':
+                pack, pack_other, pack_cands = (find_pack_info(game, assigned=assigned_pack) if self.dry
+                                                else ensure_game_pack(game, assigned=assigned_pack))
+            else:
+                pack, pack_other, pack_cands = None, False, []
+            if not self.dry and game.get('s') == 'steam' and str(game.get('appid') or '') in ('377840', '377160', '1687950') and load_config().get('auto_companions', True):
+                st_comp = (thor_updater.load_state().get('steam_companions') or {})
+                if not any(v.get('installed_sha') for v in st_comp.values() if isinstance(v, dict)):
+                    try:
+                        thor_updater.sync_steam_companions(home=HOME, roots=self.library.roots, apply_updates=True, only_appid=str(game.get('appid')))
+                    except Exception:
+                        pass
+            wide = None
             if pack: cmd, wide = wide_core(cmd, pack, self.saved.get('wide', {}).get(gid, False))
             if not self.dry: self.home_window = focused_window()
             opt = self.saved.get('gameopt', {}).get(gid) or {}
-            prof = opt.get('profile') or ('Performance' if label in ('BananaNative', 'PeanutsNative') else '')
-            fps = opt.get('fps') if opt.get('fps') in FPS_LIMITS else 0
+            cfg_now = load_config()
+            prof = opt.get('profile') or ('Performance' if label in ('BananaNative', 'PeanutsNative') else ('Eco' if cfg_now.get('travel_mode') else ''))
+            fps = opt.get('fps') if opt.get('fps') in FPS_LIMITS and opt.get('fps') else base_panel_hz(cfg_now)
             scale = opt.get('scale') if opt.get('scale') in SCALING_FILTERS else 'linear'
             is_dual = bool((game['s'] == 'wiiu') or (game['s'] == 'nds' and label == 'melonDS') or (game['s'] == 'n3ds' and label == 'Azahar'))
             with open(STATE / 'launch.log', 'ab') as log:  # the child keeps its own copy of the handle
@@ -975,13 +1149,18 @@ class Tandem:
             tracked = game['s'] != 'app' or 'media' in game  # apps hand off to another process right away; the player stays
             if tracked:
                 fp_id = cmd[2] if len(cmd) >= 3 and Path(cmd[0]).name == 'flatpak' and cmd[1] == 'run' else None
+                comp_key = companion.resolve_native_companion(game)
                 self.run = {'id': gid, 't': game['t'], 's': game['s'], 'emu': label, 'since': int(time.time()), 'hero': game.get('hero'),
-                            'layout': game.get('layout'), 'appid': game.get('appid'), 'keys': game.get('keys'),
+                            'layout': game.get('layout'), 'appid': game.get('appid'), 'tid': game.get('tid'), 'keys': game.get('keys'),
+                            'companion': comp_key,
                             'deck': f'deck/{game["appid"]}.html' if game.get('appid') and (HERE / f'decks/{game["appid"]}.html').is_file() else None,
-                            'pack': pack, 'wide': wide, 'dual': is_dual, 'profile': prof, 'fps': fps, 'scale': scale,
+                            'pack': pack, 'pack_other_region': pack_other, 'pack_candidates': pack_cands,
+                            'pack_mode': 'art' if assigned_pack == '__art__' else 'pack',
+                            'wide': wide, 'dual': is_dual, 'profile': prof, 'fps': fps, 'scale': scale,
                             **({'flatpak': fp_id} if fp_id else {}),
                             'port': game.get('media') or ({'deck': PORTS[game['port']][3], 'socket': str(DECK_SOCKET)} if game['s'] == 'port' else None)}
                 if not self.dry: threading.Thread(target=self.watch, args=(self.proc, gid, game.get('appid')), daemon=True).start()
+                if not self.dry and game['s'] not in ('app', 'term'): self.moments.start(self, gid)
                 if not self.dry and game['s'] == 'wiiu' and load_config().get('wiiu_ffplay'):
                     threading.Thread(target=self.mirror_pad, args=(gid,), daemon=True).start()
         self.publish()
@@ -1194,9 +1373,20 @@ class Tandem:
             (STATE / 'running').unlink(missing_ok=True)
             self.mirror_stop()
         if steam: self.steam_rest()
-        if had_prof and not self.dry: thor.change('profile', load_config().get('perf_profile') or 'Balanced')
-        if had_fps and not self.dry: apply_fps_limit(0)
+        cfg_end = load_config()
+        if had_prof and not self.dry:
+            thor.change('profile', 'Eco' if cfg_end.get('travel_mode') else (cfg_end.get('perf_profile') or 'Balanced'))
+        if had_fps and not self.dry:
+            apply_fps_limit(base_panel_hz(cfg_end))
         if had_scale and not self.dry: apply_scaling_filter('linear')
+        if is_game and not self.dry:
+            saved_moment = self.moments.finish(gid)
+            if saved_moment and gid in self.library.games:
+                m_tok = self.library._image(saved_moment)
+                self.library.games[gid]['moment'] = m_tok
+                if not self.library.games[gid].get('hero'):
+                    self.library.games[gid]['hero'] = m_tok
+                self.publish('library')
         if is_game and not self.dry and load_config().get('save_auto', True):
             trigger_saves_backup(self, quiet=True)
         self.publish()
@@ -1239,6 +1429,7 @@ class Tandem:
 
     def quit(self):
         proc, run = self.proc, self.run
+        if self.swkbd: self.finish_swkbd(ok=False)
         if not run: return {'ok': True}
         if run.get('login'): yt_login(self, 'cancel')  # the sign-in window goes with the app
         run['quitting'] = True
@@ -1841,11 +2032,156 @@ MUTED = {'on': False}
 
 
 def apply_fps_limit(hz):
-    """Gamescope's frame limiter on the top screen (0 = off / full 120 Hz)."""
+    """Gamescope's frame limiter / panel refresh target on the top screen (0 = full 120 Hz, 60 = 60 Hz)."""
     if not shutil.which('xprop'): return
     env = {**os.environ, 'DISPLAY': os.environ.get('DISPLAY') or ':0'}
     try: subprocess.run(['xprop', '-root', '-f', 'GAMESCOPE_FPS_LIMIT', '32c', '-set', 'GAMESCOPE_FPS_LIMIT', str(int(hz))], env=env, capture_output=True, timeout=3)
     except (OSError, subprocess.SubprocessError): pass
+
+
+def base_panel_hz(cfg=None):
+    """0 = full 120 Hz, 60 = 60 Hz panel refresh when travel_mode or 60 Hz mode is enabled."""
+    c = cfg if cfg is not None else load_config()
+    return 60 if (c.get('travel_mode') or int(c.get('panel_hz') or 120) == 60) else 0
+
+
+def write_ai_browser_wrapper():
+    """Install a clean xdg-open / BROWSER wrapper for AI CLI sessions (agy / claude) so OAuth logins open
+    in a readable X11 Firefox window on :0 without blocking the terminal and record the login URL."""
+    ai_bin = STATE / 'ai-bin'
+    ai_bin.mkdir(parents=True, exist_ok=True)
+    prof = STATE / 'ai-browser-profile'
+    prof.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(prof, 0o700)
+    except OSError:
+        pass
+    user_js = prof / 'user.js'
+    if not user_js.is_file():
+        user_js.write_text(''.join(f'user_pref("{k}", {v});\n' for k, v in (
+            ('browser.shell.checkDefaultBrowser', 'false'), ('browser.aboutwelcome.enabled', 'false'),
+            ('browser.startup.homepage_override.mstone', '"ignore"'), ('datareporting.policy.dataSubmissionEnabled', 'false'),
+            ('toolkit.telemetry.reporting.policy.firstRun', 'false'), ('app.update.auto', 'false'),
+            ('intl.accept_languages', '"de-DE, de, en"'), ('browser.tabs.warnOnClose', 'false'),
+            ('browser.warnOnQuit', 'false'), ('browser.sessionstore.warnOnQuit', 'false'),
+            ('browser.sessionstore.resume_from_crash', 'false'), ('layout.css.devPixelsPerPx', '"1.3"'))), encoding='utf-8')
+    url_file = STATE / 'ai-auth-url.txt'
+    wrapper = ai_bin / 'ai-browser.sh'
+    wrapper.write_text(f'''#!/bin/bash
+URL="$1"
+[ -z "$URL" ] && exit 0
+case "$URL" in
+  http://*|https://*)
+    printf '%s\\n' "$URL" > {json.dumps(str(url_file))}
+    if python3 -c "import json,sys,urllib.request; urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8377/api/ai_auth', data=json.dumps({{'url': sys.argv[1]}}).encode(), headers={{'Content-Type':'application/json'}}), timeout=2)" "$URL" >/dev/null 2>&1; then
+      exit 0
+    fi
+    DISPLAY="${{DISPLAY:-:0}}" MOZ_ENABLE_WAYLAND=0 GDK_BACKEND=x11 \\
+      nohup firefox --profile {json.dumps(str(prof))} --new-tab "$URL" >/dev/null 2>&1 &
+    exit 0
+    ;;
+esac
+exec /usr/bin/xdg-open "$@"
+''', encoding='utf-8')
+    wrapper.chmod(0o755)
+    xdg_link = ai_bin / 'xdg-open'
+    try:
+        if xdg_link.is_symlink() or xdg_link.exists():
+            xdg_link.unlink()
+        xdg_link.symlink_to(wrapper)
+    except OSError:
+        pass
+    return wrapper
+
+
+def write_ai_launcher(tool):
+    """Create an executable launcher script in STATE that starts Claude Code or Google Antigravity (`agy`)
+    directly in `--dangerously-skip-permissions` mode (auto-installing ARM64 binary on first run if needed)."""
+    STATE.mkdir(parents=True, exist_ok=True)
+    wrapper = write_ai_browser_wrapper()
+    workdir = load_config().get('ai_workdir') or str(HOME)
+    script = STATE / f'launch-ai-{tool}.sh'
+    env_head = f'''#!/bin/bash
+export PATH="{wrapper.parent}:$HOME/.local/bin:/usr/local/bin:$PATH"
+export BROWSER={json.dumps(str(wrapper))}
+export DISPLAY="${{DISPLAY:-:0}}"
+export MOZ_ENABLE_WAYLAND=0
+export GDK_BACKEND=x11
+export COLORTERM=truecolor
+export TERM="${{TERM:-xterm-256color}}"
+cd {json.dumps(workdir)} 2>/dev/null || cd "$HOME"
+'''
+    if tool == 'claude':
+        body = env_head + '''if ! command -v claude >/dev/null 2>&1; then
+    echo "Installiere Claude Code (ARM64) ..."
+    curl -fsSL https://claude.ai/install.sh | bash
+fi
+printf "\\033[1;38;5;214m▶ Claude Code (--dangerously-skip-permissions) · %s\\033[0m\\n" "$(pwd)"
+claude --dangerously-skip-permissions
+exec "${SHELL:-/bin/bash}" -l
+'''
+    else:
+        body = env_head + '''if ! command -v agy >/dev/null 2>&1; then
+    echo "Installiere Google Antigravity CLI (agy ARM64) ..."
+    curl -fsSL https://antigravity.google/cli/install.sh | bash
+fi
+printf "\\033[1;38;5;39m▶ Google Antigravity · agy (--dangerously-skip-permissions) · %s\\033[0m\\n" "$(pwd)"
+agy --dangerously-skip-permissions
+exec "${SHELL:-/bin/bash}" -l
+'''
+    script.write_text(body, encoding='utf-8')
+    script.chmod(0o755)
+    return script
+
+
+def apply_travel_effects(on, tandem=None):
+    """Apply or restore hardware battery optimizations for On-The-Go (`Unterwegs-Modus`):
+    - Power profile -> Eco (`Sparsam`)
+    - Top OLED panel refresh rate -> 60 Hz (saves ~1.2–1.8 W vs 120 Hz)
+    - Stick RGB rings -> off (restored on exit)
+    - Gentle panel brightness cap if currently bright (> 45%)
+    - Ends idle background Steam client (~2 GB RAM & background wakeups)"""
+    if tandem and tandem.dry:
+        return
+    cfg = load_config()
+    if on:
+        st_cur = thor.state()
+        rgb_was = bool((st_cur.get('rgb') or {}).get('enabled', True))
+        prof_was = ((st_cur.get('power') or {}).get('profile')) or cfg.get('perf_profile') or 'Balanced'
+        cur_set = settings()
+        snap = {'profile': prof_was, 'rgb': rgb_was, 'bt': cur_set.get('bt'), 'bb': cur_set.get('bb')}
+        try: (STATE / 'travel-prev.json').write_text(json.dumps(snap))
+        except OSError: pass
+        threading.Thread(target=thor.change, args=('profile', 'Eco'), daemon=True).start()
+        threading.Thread(target=thor.change, args=('rgb', {'enabled': False}), daemon=True).start()
+        if not (tandem and tandem.run and tandem.run.get('fps')):
+            apply_fps_limit(60)
+        if isinstance(cur_set.get('bt'), int) and cur_set['bt'] > 45:
+            change('bt', 40)
+        if isinstance(cur_set.get('bb'), int) and cur_set['bb'] > 38:
+            change('bb', 30)
+        if tandem:
+            tandem.steam_rest()
+            tandem.publish('settings', {'settings': settings()})
+    else:
+        snap = {}
+        try:
+            snap = json.loads((STATE / 'travel-prev.json').read_text())
+            (STATE / 'travel-prev.json').unlink(missing_ok=True)
+        except (OSError, ValueError):
+            pass
+        prof_to = snap.get('profile') or cfg.get('perf_profile') or 'Balanced'
+        threading.Thread(target=thor.change, args=('profile', prof_to), daemon=True).start()
+        if snap.get('rgb', True):
+            threading.Thread(target=thor.change, args=('rgb', {'enabled': True}), daemon=True).start()
+        if not (tandem and tandem.run and tandem.run.get('fps')):
+            apply_fps_limit(base_panel_hz(cfg))
+        if isinstance(snap.get('bt'), int):
+            change('bt', snap['bt'])
+        if isinstance(snap.get('bb'), int):
+            change('bb', snap['bb'])
+        if tandem:
+            tandem.publish('settings', {'settings': settings()})
 
 
 def apply_scaling_filter(mode):
@@ -2171,6 +2507,21 @@ def save_config(data):
         config['night_mode'] = data['night_mode']
         threading.Thread(target=apply_night_mode, args=(data['night_mode'],), daemon=True).start()
     if isinstance(data.get('save_auto'), bool): config['save_auto'] = data['save_auto']
+    if isinstance(data.get('auto_update'), bool): config['auto_update'] = data['auto_update']
+    if isinstance(data.get('auto_companions'), bool): config['auto_companions'] = data['auto_companions']
+    travel_changed = None
+    if isinstance(data.get('travel_mode'), bool) and data['travel_mode'] != config.get('travel_mode', False):
+        config['travel_mode'] = data['travel_mode']
+        travel_changed = data['travel_mode']
+    if isinstance(data.get('auto_travel'), bool): config['auto_travel'] = data['auto_travel']
+    hz_changed = False
+    if data.get('panel_hz') in (60, 120):
+        config['panel_hz'] = int(data['panel_hz'])
+        hz_changed = True
+    if isinstance(data.get('ai_workdir'), str):
+        wd = data['ai_workdir'].strip()
+        if not wd: config.pop('ai_workdir', None)
+        elif len(wd) <= 180 and '\n' not in wd: config['ai_workdir'] = wd
     if isinstance(data.get('save_target'), str):
         st = data['save_target'].strip()
         if not st: config['save_target'] = ''
@@ -2207,6 +2558,11 @@ def save_config(data):
             done = controls.apply(config['controls_style'])
             if done: extra['text'] = 'Angeglichen: ' + ', '.join(done)
         except Exception: pass
+    if travel_changed is not None:
+        apply_travel_effects(travel_changed)
+        extra['text'] = 'Unterwegs-Sparmodus aktiviert (Eco · 60 Hz · LEDs aus).' if travel_changed else 'Unterwegs-Sparmodus beendet (volle Leistung).'
+    elif hz_changed:
+        apply_fps_limit(base_panel_hz(config))
     return {**public_config(), **extra}
 
 
@@ -2336,6 +2692,12 @@ def public_config():
             'charger_standby': config.get('charger_standby') if config.get('charger_standby') in ('doze', 'sleep') else 'doze',
             'night_mode': config.get('night_mode') if config.get('night_mode') in NIGHT_MODES else 'off',
             'save_auto': config.get('save_auto', True),
+            'auto_update': config.get('auto_update', True),
+            'auto_companions': config.get('auto_companions', True),
+            'travel_mode': bool(config.get('travel_mode', False)),
+            'auto_travel': bool(config.get('auto_travel', False)),
+            'panel_hz': 60 if int(config.get('panel_hz') or 120) == 60 else 120,
+            'ai_workdir': config.get('ai_workdir', ''),
             'save_target': config.get('save_target', saves.DEFAULT_TARGET),
             'view_mode': config.get('view_mode') if config.get('view_mode') in ('grid', 'stage') else 'grid',
             'overlays': config.get('overlays', True),
@@ -2517,22 +2879,72 @@ class Keyboard:
 KEYBOARD = Keyboard()
 
 
+def x11(display=None):
+    """Open libX11 with proper 64-bit ctypes signatures and a quiet error handler. Returns (lib, dpy) or (None, None)."""
+    import ctypes
+    try:
+        lib = ctypes.CDLL('libX11.so.6')
+    except OSError:
+        return None, None
+    lib.XOpenDisplay.argtypes = [ctypes.c_char_p]
+    lib.XOpenDisplay.restype = ctypes.c_void_p
+    lib.XCloseDisplay.argtypes = [ctypes.c_void_p]
+    lib.XFlush.argtypes = [ctypes.c_void_p]
+    lib.XSync.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    lib.XKeysymToKeycode.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+    lib.XKeysymToKeycode.restype = ctypes.c_ubyte
+    lib.XKeycodeToKeysym.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_int]
+    lib.XKeycodeToKeysym.restype = ctypes.c_ulong
+    global X_QUIET
+    X_QUIET = X_QUIET or ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p)(lambda *_: 0)
+    lib.XSetErrorHandler(X_QUIET)
+    dpy_name = display if isinstance(display, bytes) else (str(display or os.environ.get('DISPLAY') or ':0').encode())
+    dpy = lib.XOpenDisplay(dpy_name)
+    if not dpy:
+        return lib, None
+    return lib, dpy
+
+
+def x_press_code(code, mods=(), display=b':0'):
+    """Inject an evdev keycode (1..127) + optional modifiers straight into :0's Xwayland via XTestFakeKeyEvent.
+    More reliable than /dev/uinput when dual gamescope instances are active because it always targets the top screen."""
+    import ctypes
+    if not isinstance(code, int) or not 1 <= code < 128:
+        return False
+    lib, dpy = x11(display)
+    if not dpy:
+        return False
+    try:
+        xtst = ctypes.CDLL('libXtst.so.6')
+        xtst.XTestFakeKeyEvent.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_int, ctypes.c_ulong]
+        held = [Keyboard.MODS[m] + 8 for m in mods if m in Keyboard.MODS]
+        kc = code + 8  # standard Xorg / Xwayland evdev keycode offset
+        for m in held:
+            xtst.XTestFakeKeyEvent(dpy, m, 1, 0)
+        xtst.XTestFakeKeyEvent(dpy, kc, 1, 0)
+        xtst.XTestFakeKeyEvent(dpy, kc, 0, 0)
+        for m in reversed(held):
+            xtst.XTestFakeKeyEvent(dpy, m, 0, 0)
+        lib.XSync(dpy, 0)
+        return True
+    except OSError:
+        return False
+    finally:
+        lib.XCloseDisplay(dpy)
+
+
 def x_type_char(ch, display=b':0'):
     """Inject a single character (including '@', '€', umlauts, '-', '.') straight into :0's Xwayland via XTestFakeKeyEvent,
     looking up the live X11 keycode and modifier level (Shift / ISO_Level3_Shift) so seat focus on :1 or gamescope's us
     uinput keymap never drops or mangles '@'. Returns True when sent."""
+    import ctypes
     if not ch or len(ch) != 1: return False
     code_pt = ord(ch)
     sym = 0x20AC if ch == '€' else code_pt if 0x20 <= code_pt <= 0xFF else (0x01000000 | code_pt)
-    lib, dpy = x11()
-    if display != b':0' and lib:
-        if dpy: lib.XCloseDisplay(dpy)
-        dpy = lib.XOpenDisplay(display)
+    lib, dpy = x11(display)
     if not dpy: return False
     try:
         xtst = ctypes.CDLL('libXtst.so.6')
-        lib.XKeysymToKeycode.argtypes = [ctypes.c_void_p, ctypes.c_ulong]; lib.XKeysymToKeycode.restype = ctypes.c_ubyte
-        lib.XKeycodeToKeysym.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_int]; lib.XKeycodeToKeysym.restype = ctypes.c_ulong
         xtst.XTestFakeKeyEvent.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_int, ctypes.c_ulong]
         kc = lib.XKeysymToKeycode(dpy, sym)
         if not kc: return False
@@ -2541,7 +2953,7 @@ def x_type_char(ch, display=b':0'):
         idx = levels.index(sym)
         mods = []
         if idx in (2, 3, 4, 5):
-            lvl3 = lib.XKeysymToKeycode(dpy, 0xFE03) or 92  # XK_ISO_Level3_Shift
+            lvl3 = lib.XKeysymToKeycode(dpy, 0xFE03) or 108  # XK_ISO_Level3_Shift (AltGr)
             if lvl3: mods.append(lvl3)
         if idx in (1, 3, 5):
             sh = lib.XKeysymToKeycode(dpy, 0xFFE1) or 50    # XK_Shift_L
@@ -2550,7 +2962,7 @@ def x_type_char(ch, display=b':0'):
         xtst.XTestFakeKeyEvent(dpy, kc, 1, 0)
         xtst.XTestFakeKeyEvent(dpy, kc, 0, 0)
         for m in reversed(mods): xtst.XTestFakeKeyEvent(dpy, m, 0, 0)
-        lib.XFlush(dpy)
+        lib.XSync(dpy, 0)
         return True
     except OSError:
         return False
@@ -2559,10 +2971,180 @@ def x_type_char(ch, display=b':0'):
 
 
 def x_type_seq(seq):
-    for ch in str(seq)[:64]:
+    s = str(seq)[:512]
+    delay = 0.005 if len(s) > 40 else 0.012
+    for ch in s:
         if not x_type_char(ch): return False
-        time.sleep(0.015)
+        time.sleep(delay)
     return True
+
+
+AI_AUTH = {'url': '', 'token': '', 'ts': 0.0, 'open': False}
+AI_AUTH_TTL = 900  # 15 minutes
+
+
+def ai_auth_state():
+    """Current AI CLI QR-login bridge state (short LAN QR URL + whether an OAuth URL is ready)."""
+    now = time.time()
+    if AI_AUTH['token'] and now - AI_AUTH['ts'] > AI_AUTH_TTL:
+        AI_AUTH.update(url='', token='', ts=0.0, open=False)
+    ip = lan_address()
+    scheme = 'https' if PAIR.get('tls') else 'http'
+    port = PAIR.get('port') or 8378
+    qr_url = f'{scheme}://{ip}:{port}/ai-login/{AI_AUTH["token"]}' if (ip and AI_AUTH['token']) else ''
+    return {'open': bool(AI_AUTH['open']), 'has_url': bool(AI_AUTH['url']), 'qr': qr_url,
+            'host': f'{ip}:{port}' if ip else '', 'ts': int(AI_AUTH['ts'])}
+
+
+def ai_auth_register(tandem, url='', open_ui=True):
+    """Record an OAuth login URL from agy/claude and publish the short QR bridge URL to the screens."""
+    import secrets
+    now = time.time()
+    if not AI_AUTH['token'] or now - AI_AUTH['ts'] > AI_AUTH_TTL:
+        AI_AUTH['token'] = secrets.token_hex(8)
+    if url:
+        AI_AUTH['url'] = str(url).strip()
+        try:
+            STATE.mkdir(parents=True, exist_ok=True)
+            (STATE / 'ai-auth-url.txt').write_text(AI_AUTH['url'] + '\n', encoding='utf-8')
+        except OSError:
+            pass
+    AI_AUTH['ts'] = now
+    AI_AUTH['open'] = bool(open_ui)
+    st = ai_auth_state()
+    if tandem is not None:
+        tandem.publish('ai_auth', st)
+        if url:
+            tandem.publish('toast', {'text': 'QR-Code für KI-Anmeldung bereit.'})
+    return {'ok': True, **st}
+
+
+def ai_auth_open_browser(tandem):
+    """Open the captured OAuth URL directly in a clean X11 Firefox window on the Thor's top screen."""
+    url = AI_AUTH.get('url') or ''
+    if not url:
+        try:
+            url = (STATE / 'ai-auth-url.txt').read_text(encoding='utf-8').strip()
+        except OSError:
+            url = ''
+    if not url:
+        return {'error': 'Noch kein Anmeldelink vorhanden.'}
+    AI_AUTH['open'] = False
+    if tandem is not None:
+        tandem.publish('ai_auth', ai_auth_state())
+    if tandem is not None and tandem.dry:
+        return {'ok': True, 'url': url}
+    write_ai_browser_wrapper()
+    prof = STATE / 'ai-browser-profile'
+    env = {**os.environ, 'DISPLAY': os.environ.get('DISPLAY') or ':0', 'MOZ_ENABLE_WAYLAND': '0', 'GDK_BACKEND': 'x11',
+           'XDG_RUNTIME_DIR': os.environ.get('XDG_RUNTIME_DIR') or f'/run/user/{os.getuid()}'}
+    try:
+        subprocess.Popen(['firefox', '--profile', str(prof), '--new-tab', url],
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True, env=env)
+        return {'ok': True}
+    except OSError as err:
+        return {'error': f'Browser konnte nicht gestartet werden: {err}'}
+
+
+def ai_auth_submit(tandem, text):
+    """Receive either a localhost OAuth callback URL or a copy-paste auth code from the phone QR page."""
+    val = str(text or '').strip()
+    if not val:
+        return {'error': 'Bitte zuerst den Code oder Link einfügen.'}
+    if re.match(r'^https?://(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?/', val, re.I):
+        if tandem is None or not tandem.dry:
+            try:
+                urllib.request.urlopen(val, timeout=8).read(2048)
+            except Exception as err:
+                return {'error': f'Lokaler Callback fehlgeschlagen: {err}'}
+        AI_AUTH['open'] = False
+        if tandem is not None:
+            tandem.publish('ai_auth', ai_auth_state())
+            tandem.publish('toast', {'text': 'KI-Anmeldung bestätigt.'})
+        return {'ok': True, 'mode': 'callback', 'text': 'Anmeldung lokal bestätigt.'}
+    if tandem is None or not tandem.dry:
+        terms = x_windows_matching('konsole', 'foot', 'xterm')
+        browsers = x_windows_matching('firefox', 'chromium', 'chrome')
+        for wid in browsers:
+            x_window('unmap', wid)
+        for wid in terms:
+            x_window('map', wid)
+        time.sleep(0.15)
+        if not x_type_seq(val):
+            KEYBOARD.type_text(val, (tandem.run or {}).get('layout') or region_layout() if tandem else 'de')
+        x_press_code(28) or KEYBOARD.press(28, [])
+    AI_AUTH['open'] = False
+    if tandem is not None:
+        tandem.publish('ai_auth', ai_auth_state())
+        tandem.publish('toast', {'text': 'Anmeldecode an Terminal gesendet.'})
+    return {'ok': True, 'mode': 'code', 'text': 'Code an das Terminal auf dem Thor gesendet.'}
+
+
+def ai_login_page(token, msg='', ok=False):
+    """Compact mobile-friendly HTML page opened by scanning the Thor's AI-login QR code."""
+    import html as _html
+    url = AI_AUTH.get('url') or ''
+    safe_url = _html.escape(url, quote=True)
+    safe_tok = _html.escape(token, quote=True)
+    banner = (f'<div class="msg {"ok" if ok else "err"}">{_html.escape(msg)}</div>' if msg else '')
+    step1 = (f'<a class="btn go" href="{safe_url}" target="_blank" rel="noopener">1. Anmeldung im Browser öffnen ↗</a>'
+             if url else
+             '<div class="wait">Warte auf Anmeldelink vom Thor … (Seite lädt automatisch neu)</div><script>setTimeout(()=>location.reload(),2000)</script>')
+    return f'''<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Toravo Tandem · KI-Anmeldung</title><style>
+body{{margin:0;background:#090b10;color:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,Inter,sans-serif;padding:20px}}
+.card{{max-width:460px;margin:0 auto;background:#141720;border:1px solid #2b2f3d;border-radius:18px;padding:22px}}
+h1{{margin:0 0 8px;font-size:21px;color:#ff9f38}}p{{color:#a2a6b5;font-size:14px;line-height:1.45;margin:0 0 16px}}
+.btn{{display:block;width:100%;box-sizing:border-box;text-align:center;text-decoration:none;border:0;border-radius:12px;padding:15px 16px;font-size:16px;font-weight:700;cursor:pointer}}
+.go{{background:#ff8c1a;color:#090b10;margin-bottom:18px}}.send{{background:#34d399;color:#090b10;margin-top:12px}}
+textarea{{width:100%;box-sizing:border-box;min-height:92px;border-radius:12px;border:1px solid #353949;background:#0c0e14;color:#f5f5f7;padding:12px;font-size:15px;font-family:ui-monospace,monospace}}
+.msg{{padding:12px 14px;border-radius:10px;margin-bottom:14px;font-size:14px;font-weight:600}}
+.ok{{background:#123528;color:#6ee7b7;border:1px solid #225e46}}.err{{background:#3a1919;color:#fca5a5;border:1px solid #6b2626}}
+.wait{{padding:14px;border-radius:12px;background:#1d2130;color:#cbd5e1;font-size:14px;margin-bottom:18px}}
+</style></head><body><div class="card"><h1>Toravo Tandem · KI-Anmeldung</h1>
+<p>Melde dich bequem auf dem Handy an (Google / Claude) und sende danach den angezeigten Code oder die Callback-URL direkt an den Thor.</p>
+{banner}{step1}
+<form method="post" action="/ai-login/{safe_tok}">
+<label for="code" style="display:block;font-size:13px;color:#cbd5e1;margin-bottom:6px;font-weight:600">2. Code oder Callback-URL hier einfügen:</label>
+<textarea id="code" name="code" placeholder="4/0A... oder http://localhost:..." autocapitalize="off" autocomplete="off" spellcheck="false" required></textarea>
+<button class="btn send" type="submit">An Thor senden ✓</button>
+</form></div></body></html>'''
+
+
+def ai_window_act(tandem, action):
+    """Switch between browser (Firefox) and terminal (Konsole), close browser, or paste cleanly on :0."""
+    if tandem.dry:
+        return {'ok': True, 'action': action}
+    if action == 'paste':
+        wid = focused_window()
+        props = run_quiet(['xprop', '-id', str(wid), 'WM_CLASS']).lower() if wid else ''
+        mods = ['ctrl', 'shift'] if any(t in props for t in ('konsole', 'foot', 'xterm', 'alacritty', 'kitty')) else ['ctrl']
+        if x_press_code(47, mods):
+            return {'ok': True}
+        return KEYBOARD.press(47, mods)
+    browsers = x_windows_matching('firefox', 'chromium', 'chrome')
+    terms = x_windows_matching('konsole', 'foot', 'xterm')
+    if action == 'close_browser':
+        for wid in browsers:
+            x_window('close', wid)
+        for wid in terms:
+            x_window('map', wid)
+        return {'ok': True, 'closed': len(browsers)}
+    if action == 'toggle':
+        cur = focused_window()
+        if cur in browsers and terms:
+            for wid in browsers:
+                x_window('unmap', wid)
+            for wid in terms:
+                x_window('map', wid)
+            return {'ok': True, 'active': 'term'}
+        if browsers:
+            for wid in browsers:
+                x_window('map', wid)
+            return {'ok': True, 'active': 'browser'}
+        return {'ok': False, 'error': 'Kein Browser-Fenster offen.'}
+    return {'error': 'Unbekannte Fenster-Aktion.'}
 
 
 # Wine ignores AltGr from a virtual keyboard (@ came out as q in Battle.net's login): such a character goes in by pasting.
@@ -2793,6 +3375,101 @@ def controls_apply():
     return {'text': ('Angeglichen: ' + ', '.join(done)) if done else 'Alle Emulatoren haben schon die Tandem-Belegung.'}
 
 
+def sysbackup_state():
+    return {'backups': thor_storage.backup_overview(), 'storage': thor_storage.storage_layout()}
+
+
+def updater_state(tandem):
+    return thor_updater.overview(list(tandem.library.games.values()), rom_identity, tandem.library.roots, VERSION)
+
+
+def handle_updater(tandem, data):
+    act = str(data.get('action') or 'check')
+    games = list(tandem.library.games.values())
+    if act in ('check', 'update_all', 'update_app'):
+        apply_upd = (act == 'update_all')
+        target_app = str(data.get('id') or '') if act == 'update_app' else ''
+        def _done_upd(r):
+            if r.get('updated'):
+                tandem.library.scan()
+                tandem.publish('library')
+            tandem.publish('updater', updater_state(tandem))
+            tandem.publish('toast', {'text': r.get('error') or r.get('text', '')})
+        res = thor_updater.start_update_job(
+            games, rom_identity, roots=tandem.library.roots,
+            apply_updates=apply_upd, target_app=target_app,
+            self_update_fn=self_update, on_done=_done_upd,
+        )
+        tandem.publish('updater', updater_state(tandem))
+        return res
+    if act == 'sync_companions':
+        def _work_comp():
+            res_c = thor_updater.sync_all_companions(
+                games, rom_identity, roots=tandem.library.roots,
+                home=HOME, cfg_dir=CONFIG.parent, apply_updates=True, force_catalog=True,
+            )
+            tandem.publish('library')
+            tandem.publish('updater', updater_state(tandem))
+            changes = res_c.get('changes') or []
+            msg = ('Begleiter aktualisiert: ' + ', '.join(changes[:4]) + '.') if changes else 'Alle Spiel-Begleiter sind aktuell und eingerichtet.'
+            tandem.publish('toast', {'text': msg})
+        threading.Thread(target=_work_comp, daemon=True).start()
+        return {'ok': True, 'text': 'Prüfe & installiere Spiel-Begleiter …'}
+    if act == 'rollback':
+        res = thor_updater.rollback_appimage(str(data.get('id') or ''))
+        tandem.publish('updater', updater_state(tandem))
+        return res
+    if act == 'add_feed':
+        res = thor_updater.save_custom_feed(data.get('repo', ''), data.get('name', ''), data.get('asset', ''), data.get('file', ''))
+        tandem.publish('updater', updater_state(tandem))
+        return res
+    if act == 'remove_feed':
+        res = thor_updater.remove_custom_feed(data.get('id', ''))
+        tandem.publish('updater', updater_state(tandem))
+        return res
+    return {'error': 'unbekannt'}
+
+
+def handle_sysbackup(tandem, data):
+    act = str(data.get('action') or 'backup')
+    if act == 'backup':
+        mode = 'full' if data.get('mode') == 'full' else 'profile'
+        ssh_target = str(data.get('ssh') or load_config().get('save_target') or '')
+        def _done_bk(r):
+            tandem.publish('sysbackup', sysbackup_state())
+            tandem.publish('toast', {'text': r.get('error') or r.get('text', '')})
+        res = thor_storage.start_backup_async(mode=mode, ssh_target=ssh_target, on_done=_done_bk)
+        tandem.publish('sysbackup', sysbackup_state())
+        return res
+    if act == 'restore':
+        try: saves.backup(run_rsync=False)
+        except Exception: pass
+        res = thor_storage.restore_system_backup(data.get('file'))
+        if res.get('ok'):
+            tandem.library.scan()
+            tandem.publish('library')
+            tandem.publish('sysbackup', sysbackup_state())
+        return res
+    if act == 'check_sudo':
+        return thor_storage.check_sudo(data.get('password') or None)
+    if act == 'prompt_shrink':
+        gib = int(data.get('gib') or 8)
+        tandem.ui = {'tab': 4, 'sys': None, 'i': 3, 'page': 'library>storage', 'pane': 1, 'dev': ''}
+        tandem.publish('state', tandem.snapshot())
+        tandem.publish('open_shrink', {'gib': gib})
+        return {'ok': True}
+    if act == 'shrink_android':
+        try: gib = int(data.get('gib') or 24)
+        except (TypeError, ValueError): return {'error': 'Ungültige Größe.'}
+        def _done_sh(r):
+            tandem.publish('sysbackup', sysbackup_state())
+            tandem.publish('toast', {'text': r.get('error') or r.get('text', '')})
+        res = thor_storage.start_shrink_async(gib, sudo_password=data.get('password') or None, on_done=_done_sh)
+        tandem.publish('sysbackup', sysbackup_state())
+        return res
+    return {'error': 'unbekannt'}
+
+
 def handler(tandem):
     class Handler(BaseHTTPRequestHandler):
         protocol_version = 'HTTP/1.1'
@@ -2846,6 +3523,8 @@ def handler(tandem):
             if path == '/api/controls': return self.send(200, controls_info())
             if path == '/api/bluetooth': return self.send(200, bluetooth.state())
             if path == '/api/saves': return self.send(200, saves.status())
+            if path == '/api/sysbackup': return self.send(200, sysbackup_state())
+            if path == '/api/updater': return self.send(200, updater_state(tandem))
             if path == '/api/stats': return self.send(200, tandem.stats_payload())
             if path == '/api/hud': return self.send(200, {'level': public_config()['hud_level']})
             if path == '/api/telemetry': return self.send(200, telemetry.snapshot())
@@ -2867,6 +3546,15 @@ def handler(tandem):
                 qs = parse_qs(urlparse(self.path).query)
                 gid = (qs.get('id') or [(tandem.run or {}).get('id', '')])[0]
                 return self.send(200, companion.notes_get(gid))
+            if path == '/api/cstate':
+                from urllib.parse import parse_qs
+                qs = parse_qs(urlparse(self.path).query)
+                ckey = (qs.get('key') or [(tandem.run or {}).get('companion') or (tandem.run or {}).get('id', '')])[0]
+                return self.send(200, companion.cstate_get(ckey))
+            if path == '/api/packs':
+                return self.send(200, companion.gba_shelf_status(
+                    list(tandem.library.games.values()), rom_identity,
+                    saved_assign=tandem.saved.get('pack_assign'), cfg_dir=CONFIG.parent))
             if path == '/api/sketch':
                 from urllib.parse import parse_qs
                 qs = parse_qs(urlparse(self.path).query)
@@ -2941,6 +3629,13 @@ def handler(tandem):
                              **({'q': q} if q else {})}  # the Bluetooth device a settings page shows; q = library search
                 tandem.publish('state', {**tandem.snapshot(), 'from': data.get('from')})  # the sender skips its own echo
                 return self.send(200, {'ok': True})
+            if path == '/api/uikey':
+                a = str(data.get('a') or '')
+                if a == 'quick':
+                    tandem.publish('quick', {})
+                elif a in ('ok', 'back', 'left', 'right', 'up', 'down', 'prev', 'next', 'fav', 'close', 'menu', 'search', 'home'):
+                    tandem.publish('key', {'a': a})
+                return self.send(200, {'ok': True})
             if path == '/api/launch':
                 result = tandem.launch(str(data.get('id', '')))
                 if 'error' in result: tandem.publish('toast', {'text': result['error']})
@@ -2954,6 +3649,11 @@ def handler(tandem):
                 tandem.prompt_open = bool(data.get('open'))
                 tandem.publish('prompt', {'open': tandem.prompt_open, 'from': data.get('from')})
                 return self.send(200, {'ok': True})
+            if path == '/api/swkbd':  # native Switch game software keyboard: blocks until bottom screen confirms or cancels
+                return self.send(200, tandem.ask_swkbd(data))
+            if path == '/api/swkbd_done':
+                rid = int(data['id']) if isinstance(data.get('id'), (int, float)) else None
+                return self.send(200, tandem.finish_swkbd(rid, bool(data.get('ok')), str(data.get('text') or '')))
             if path == '/api/ytlogin':
                 act = data.get('a') if data.get('a') in ('qr', 'qr_new', 'start', 'open', 'done', 'cancel', 'logout') else 'done'
                 return self.send(200, yt_login(tandem, act))
@@ -2998,16 +3698,41 @@ def handler(tandem):
                     if data['seq'] == '@' and is_wine:
                         return self.send(200, paste('@'))
                     if not tandem.dry and x_type_seq(data['seq']):
+                        if data.get('enter'):
+                            x_press_code(28) or KEYBOARD.press(28, [])
                         return self.send(200, {'ok': True})
                     layout = (tandem.run or {}).get('layout') or region_layout()
-                    return self.send(200, KEYBOARD.type_text(data['seq'], layout))
+                    res_k = KEYBOARD.type_text(data['seq'], layout)
+                    if data.get('enter') and not tandem.dry:
+                        x_press_code(28) or KEYBOARD.press(28, [])
+                    return self.send(200, res_k)
                 code = data.get('code')
                 mods, text = [m for m in data.get('mods', []) if isinstance(m, str)], data.get('text')
                 if 'altgr' in mods and isinstance(text, str) and len(text) == 1 and is_wine:
                     return self.send(200, paste(text))
                 if not tandem.dry and not ({'ctrl', 'alt'} & set(mods)) and isinstance(text, str) and len(text) == 1 and text != ' ' and x_type_char(text):
                     return self.send(200, {'ok': True})
+                if not tandem.dry and isinstance(code, int) and x_press_code(code, mods):
+                    return self.send(200, {'ok': True})
                 return self.send(200, KEYBOARD.press(code if isinstance(code, int) else 0, mods))
+            if path == '/api/ai_window':
+                return self.send(200, ai_window_act(tandem, str(data.get('action') or 'toggle')))
+            if path == '/api/ai_auth':
+                if data.get('url'):
+                    return self.send(200, ai_auth_register(tandem, data.get('url'), open_ui=True))
+                act = str(data.get('action') or '')
+                if act == 'open':
+                    return self.send(200, ai_auth_register(tandem, '', open_ui=True))
+                if act == 'close':
+                    AI_AUTH['open'] = False
+                    st = ai_auth_state()
+                    tandem.publish('ai_auth', st)
+                    return self.send(200, {'ok': True, **st})
+                if act == 'browser':
+                    return self.send(200, ai_auth_open_browser(tandem))
+                if data.get('code'):
+                    return self.send(200, ai_auth_submit(tandem, data.get('code')))
+                return self.send(200, ai_auth_state())
             if path == '/api/layout':  # switch the on-screen keyboard's layout while the terminal is open
                 result = save_config({'kb_layout': data.get('layout')})
                 layout = region_layout()
@@ -3026,12 +3751,63 @@ def handler(tandem):
                 res = saves.restore(data.get('file'), data.get('only'))
                 if res.get('ok'): tandem.publish('saves', {'saves': saves.status()})
                 return self.send(200, res)
+            if path == '/api/sysbackup':
+                return self.send(200, handle_sysbackup(tandem, data))
             if path == '/api/collection': return self.send(200, tandem.collection_act(data))
             if path == '/api/savestates':
                 return self.send(200, retroarch_slot_act(tandem, data.get('slot', 0), str(data.get('mode', 'load'))))
             if path == '/api/notes':
                 gid = str(data.get('id') or (tandem.run or {}).get('id', ''))
                 return self.send(200, companion.notes_save(gid, data))
+            if path == '/api/cstate':
+                ckey = str(data.get('key') or (tandem.run or {}).get('companion') or (tandem.run or {}).get('id', ''))
+                return self.send(200, companion.cstate_save(ckey, data))
+            if path == '/api/npad':
+                return self.send(200, companion.send_native_pad(data.get('seq', '')))
+            if path == '/api/packs':
+                act = str(data.get('action') or 'sync')
+                if act == 'sync':
+                    res = companion.sync_owned_gba_packs(list(tandem.library.games.values()), rom_identity,
+                                                         cfg_dir=CONFIG.parent, force_catalog=True)
+                    if res.get('installed') or res.get('updated'):
+                        tandem.publish('library')
+                    return self.send(200, res)
+                if act == 'install':
+                    pid = str(data.get('id') or '').strip().lower()
+                    cat = companion.fetch_gbaduo_catalog(force=False)
+                    hit = next((c for c in cat if c['id'] == pid), None)
+                    if not hit:
+                        return self.send(404, {'error': 'nicht gefunden'})
+                    res = companion.download_catalog_pack(hit, cfg_dir=CONFIG.parent)
+                    if res.get('ok'):
+                        tandem.publish('library')
+                    return self.send(200, res)
+                if act == 'assign':
+                    gid = str(data.get('gid') or (tandem.run or {}).get('id') or '')
+                    val = str(data.get('pack') or '').strip()
+                    if not gid:
+                        return self.send(400, {'error': 'ungültige ID'})
+                    pa = tandem.saved.setdefault('pack_assign', {})
+                    if not val or val == 'auto':
+                        pa.pop(gid, None)
+                    else:
+                        pa[gid] = val
+                    tandem.save()
+                    if tandem.run and tandem.run.get('id') == gid:
+                        gm = tandem.library.games.get(gid) or {}
+                        pk, pk_other, pk_cands = find_pack_info(gm, assigned=pa.get(gid))
+                        tandem.run.update(pack=pk, pack_other_region=pk_other, pack_candidates=pk_cands,
+                                          pack_mode='art' if val == '__art__' else 'pack')
+                        tandem.publish('run', {'run': tandem.run})
+                    return self.send(200, {'ok': True, 'gid': gid, 'assigned': pa.get(gid)})
+                if act == 'remove':
+                    pid = str(data.get('id') or '').strip().lower()
+                    if not companion.PACK_ID_RE.fullmatch(pid):
+                        return self.send(400, {'error': 'ungültige ID'})
+                    shutil.rmtree(companion.packs_dir(CONFIG.parent) / pid, ignore_errors=True)
+                    tandem.publish('library')
+                    return self.send(200, {'ok': True, 'removed': pid})
+                return self.send(400, {'error': 'unbekannt'})
             if path == '/api/guides':
                 gid = str(data.get('id') or (tandem.run or {}).get('id', ''))
                 return self.send(200, companion.guide_fetch_wiki(gid, data.get('q', ''), public_config()['lang']))
@@ -3069,6 +3845,7 @@ def handler(tandem):
                     tandem.publish('toast', {'text': res['text']})
                 return self.send(200, res)
             if path == '/api/selfupdate': return self.send(200, self_update(bool(data.get('apply'))))
+            if path == '/api/updater': return self.send(200, handle_updater(tandem, data))
             if path == '/api/wide': return self.send(200, tandem.wide(str(data.get('on', ''))))
             if path == '/api/retroarch': return self.send(200, retroarch(str(data.get('name', ''))))
             if path == '/api/action': return self.send(200, tandem.act(str(data.get('name', ''))))
@@ -3154,15 +3931,23 @@ def pair_handler(tandem):
             return ('Set-Cookie', f'tandem={token}; Max-Age={age}; HttpOnly; SameSite=Strict; Path=/{secure}')
 
         def do_GET(self):
+            import hmac
             path = urlparse(self.path).path
+            if path.startswith('/ai-login/'):
+                tok = path.split('/ai-login/', 1)[1].strip('/')
+                if tok and AI_AUTH['token'] and (time.time() - AI_AUTH['ts'] <= AI_AUTH_TTL) and hmac.compare_digest(tok, AI_AUTH['token']):
+                    return self.reply(200, ai_login_page(tok))
+                return self.reply(403, ai_login_page('', 'Dieser QR-Link ist abgelaufen. Bitte am Thor erneut QR-Login öffnen.', ok=False))
             if path == '/api/all':
                 if not self.allowed(): return self.reply(401, {'error': 'nicht angemeldet'}, 'application/json')
                 run = tandem.run and tandem.library.games.get(tandem.run['id'])
                 sys_opts = [{'id': s, 'name': SYSTEMS[s][0]} for s in sorted(SYSTEMS, key=lambda k: SYSTEMS[k][0].lower()) if s != 'port']
                 game_opts = [{'id': g['id'], 't': f"{g['t']} ({SYSTEMS.get(g['s'], ('Steam',))[0]})"} for g in sorted(tandem.library.games.values(), key=lambda x: x['t'].lower())[:500]]
                 return self.reply(200, {'settings': settings(), 'config': public_config(), 'layout': region_layout(), 'battery': battery(),
-                                        'battery_detail': telemetry.battery_detail(), 'thor': thor.state(), 'controls': controls_info(),
+                                        'battery_detail': telemetry.battery_detail(), 'charger': telemetry.charger_detail(),
+                                        'thor': thor.state(), 'controls': controls_info(),
                                         'system': system_info(tandem.library.roots), 'games': len(tandem.library.games), 'saves': saves.status(),
+                                        'sysbackup': sysbackup_state(), 'updater': updater_state(tandem),
                                         'stats': tandem.stats_payload(), 'systems_list': sys_opts, 'games_list': game_opts, 'dock': telemetry.dock_state(),
                                         'switch_native': companion.switch_native_info(tandem.library.games, tandem.library.roots, HOME),
                                         'run': (tandem.run or {}).get('t') or (run or {}).get('t') or (tandem.run or {}).get('id')}, 'application/json')
@@ -3184,6 +3969,15 @@ def pair_handler(tandem):
                     tandem.publish('toast', {'text': res['text']})
                 return self.reply(200, res, 'application/json')
             raw = self.rfile.read(min(int(self.headers.get('Content-Length') or 0), 262144))
+            if path.startswith('/ai-login/'):
+                tok = path.split('/ai-login/', 1)[1].strip('/')
+                if not (tok and AI_AUTH['token'] and (time.time() - AI_AUTH['ts'] <= AI_AUTH_TTL) and hmac.compare_digest(tok, AI_AUTH['token'])):
+                    return self.reply(403, ai_login_page('', 'Dieser QR-Link ist abgelaufen. Bitte am Thor erneut QR-Login öffnen.', ok=False))
+                form = {k: v[0] for k, v in urllib.parse.parse_qs(raw.decode(errors='replace')).items()}
+                res = ai_auth_submit(tandem, form.get('code', ''))
+                if res.get('ok'):
+                    return self.reply(200, ai_login_page(tok, '✓ ' + (res.get('text') or 'An Thor gesendet – du kannst dieses Fenster schließen.'), ok=True))
+                return self.reply(400, ai_login_page(tok, res.get('error') or 'Senden fehlgeschlagen.', ok=False))
             if not path.startswith('/api/'):  # the PIN form
                 form = {k: v[0] for k, v in urllib.parse.parse_qs(raw.decode(errors='replace')).items()}
                 if not hmac.compare_digest(form.get('pin', ''), PAIR['pin']):
@@ -3219,6 +4013,7 @@ def pair_handler(tandem):
             elif what == 'rescan':
                 tandem.library.scan()
                 if scrape(list(tandem.library.games.values())): tandem.library.scan()
+                tandem.sync_gba_packs_bg(force=False)
                 tandem.publish('library'); result = {'text': f'{len(tandem.library.games)} Spiele gefunden.'}
             elif what == 'update':
                 result = {'text': update_extra(data.get('id') if data.get('id') in EXTRAS else 'eden', tandem.library.roots)}; tandem.publish('library')
@@ -3231,6 +4026,12 @@ def pair_handler(tandem):
             elif what == 'saves_restore':
                 result = saves.restore(data.get('file'), data.get('only'))
                 if result.get('ok'): tandem.publish('saves', {'saves': saves.status()})
+            elif what == 'sysbackup':
+                if data.get('password') and not (PAIR['tls'] or self.headers.get('X-Forwarded-Proto') == 'https'):
+                    return self.reply(403, {'error': 'Zugangsdaten und Cookies nur über die https-Adresse übertragen.'}, 'application/json')
+                result = handle_sysbackup(tandem, data)
+            elif what == 'updater':
+                result = handle_updater(tandem, data)
             elif what == 'wol':
                 mac = str(data.get('mac') or load_config().get('wol_mac') or '')
                 result = telemetry.wake_on_lan(mac)
@@ -3498,11 +4299,12 @@ def main():
     library = Library(rom_roots(args.roms + os.environ.get('TANDEM_ROMS', '').split(os.pathsep)), Path(args.steam))
     library.scan()
     tandem = Tandem(library, args.dry_run)
+    tandem.sync_gba_packs_bg(force=False)
     if DOZE and not args.dry_run: doze(False, tandem)  # restarted during a doze: bring the panels back right away
     server = QuietHTTPServer(('127.0.0.1', args.port), handler(tandem))
     threading.Thread(target=watch_buttons, args=(tandem,), daemon=True).start()
     def watch_dock():
-        prev, dimmed, charge_notified, tick = False, {}, False, 0
+        prev, dimmed, charge_notified, prev_on_bat, tick = False, {}, False, None, 0
         while True:
             time.sleep(4)
             tick += 1
@@ -3522,6 +4324,19 @@ def main():
                     elif dimmed:
                         for k, v in dimmed.items(): set_raw(k, lit(k, v))
                         dimmed.clear()
+            if tick % 3 == 0:
+                cfg_w = load_config()
+                b = battery()
+                if b and cfg_w.get('auto_travel'):
+                    on_bat = not b.get('charging')
+                    if prev_on_bat is not None and on_bat != prev_on_bat:
+                        save_config({'travel_mode': on_bat})
+                        tandem.publish('config', {'config': public_config()})
+                        tandem.publish('thor', {'thor': thor.state()})
+                        tandem.publish('toast', {'text': 'Unterwegs-Sparmodus automatisch aktiv (Akkubetrieb).' if on_bat else 'Netzteil erkannt – volle Leistung (120 Hz) aktiv.'})
+                    prev_on_bat = on_bat
+                else:
+                    prev_on_bat = (not b.get('charging')) if b else None
             if tick % 5 == 0:
                 limit = int(load_config().get('charge_alert') or 0)
                 if limit in (80, 90):
@@ -3534,12 +4349,39 @@ def main():
                     elif not b or not b.get('charging') or b.get('level', 0) < limit - 3:
                         charge_notified = False
     if not args.dry_run: threading.Thread(target=watch_dock, daemon=True).start()
-    def look_for_update():  # once a day, and only where the owner entered a source: says so, installs nothing by itself
+    init_hz = base_panel_hz()
+    if init_hz and not args.dry_run:
+        threading.Thread(target=apply_fps_limit, args=(init_hz,), daemon=True).start()
+    def look_for_update():  # Integrated idle update & auto-companion daemon (runs 90s after boot, then every 6h while idle)
+        first = True
         while True:
-            time.sleep(120)
-            found = self_update()
-            if found.get('new'): tandem.publish('toast', {'text': found['text'] + ' Installieren: Einstellungsseite › Gerät.'})
-            time.sleep(86400)
+            time.sleep(90 if first else 21600)
+            first = False
+            if args.dry_run or tandem.run or DOZE:
+                continue
+            cfg = load_config()
+            b = battery()
+            power_ok = (b is None) or b.get('charging') or b.get('level', 100) >= 25
+            if cfg.get('auto_update', True) and power_ok:
+                def _on_auto(r):
+                    if r.get('updated'):
+                        tandem.library.scan()
+                        tandem.publish('library')
+                        tandem.publish('toast', {'text': r['text']})
+                    elif (r.get('tandem') or {}).get('new'):
+                        tandem.publish('toast', {'text': r['tandem']['text'] + ' Installieren: Einstellungsseite › Gerät.'})
+                    tandem.publish('updater', updater_state(tandem))
+                thor_updater.start_update_job(
+                    list(tandem.library.games.values()), rom_identity,
+                    roots=tandem.library.roots, apply_updates=True,
+                    self_update_fn=self_update, on_done=_on_auto,
+                )
+            else:
+                if cfg.get('auto_companions', True):
+                    tandem.sync_gba_packs_bg(force=False)
+                found = self_update()
+                if found.get('new'):
+                    tandem.publish('toast', {'text': found['text'] + ' Installieren: Einstellungsseite › Gerät.'})
     threading.Thread(target=look_for_update, daemon=True).start()
     profile = load_config().get('perf_profile')  # armada-powerd forgets it over a restart
     if profile and not args.dry_run: threading.Thread(target=thor.change, args=('profile', profile), daemon=True).start()

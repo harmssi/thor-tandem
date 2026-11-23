@@ -1,0 +1,13 @@
+[Unit]
+Description=Toravo Tandem OS first-boot setup (installs bundled Tandem into user home)
+After=local-fs.target systemd-user-sessions.service
+Before=display-manager.service sddm.service
+ConditionPathExists=!/var/home/armada/.config/tandem/.provisioned
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/toravo-tandem-firstboot
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

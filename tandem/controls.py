@@ -44,10 +44,13 @@ def _faces(style=None):
 
 def retroarch(style=None):
     ok, back, north, west = _faces(style)
+    # AYN Thor recessed Hall-effect sticks reach ~70-75% at the circular shell gate:
+    # sensitivity 1.42 + 8% deadzone unlocks 100% run speed in OoT, Link's Awakening, Mario 64, etc. without drift.
     k = {'input_autodetect_enable': q('false'), 'input_enable_hotkey_btn': q(6), 'input_exit_emulator_btn': q(7),
          'input_save_state_btn': q(5), 'input_load_state_btn': q(4), 'input_menu_toggle_btn': q(IDX[TOP]),
          'input_menu_toggle_gamepad_combo': q(2), 'menu_swap_ok_cancel_buttons': q('false'),
-         'savestate_thumbnail_enable': q('true')}
+         'savestate_thumbnail_enable': q('true'),
+         'input_analog_deadzone': q('0.080000'), 'input_analog_sensitivity': q('1.420000')}
     for n, v in {'a': IDX[ok], 'b': IDX[back], 'x': IDX[north], 'y': IDX[west], 'l': 4, 'r': 5, 'select': 6, 'start': 7, 'l3': 9, 'r3': 10}.items():
         k[f'input_player1_{n}_btn'] = q(v)
     for n in ('up', 'down', 'left', 'right'): k[f'input_player1_{n}_btn'] = q('h0' + n)
@@ -55,6 +58,10 @@ def retroarch(style=None):
                  'r_x_plus': '+3', 'r_x_minus': '-3', 'r_y_plus': '+4', 'r_y_minus': '-4'}.items():
         k[f'input_player1_{n}_axis'] = q(v)
     return {None: k}
+
+
+def mupen64_opt(_style=None):
+    return {None: {'mupen64plus-astick-deadzone': q('8'), 'mupen64plus-astick-sensitivity': q('130')}}
 
 
 def sdl_pad(style=None, prefix='SDL-0/'):  # Unified: PlayStation Cross = Confirm, Circle = Back, Triangle = North, Square = West
@@ -65,7 +72,8 @@ def sdl_pad(style=None, prefix='SDL-0/'):  # Unified: PlayStation Cross = Confir
            'Select': s('Back'), 'Start': s('Start'), 'L1': s('LeftShoulder'), 'R1': s('RightShoulder'),
            'L2': s('+LeftTrigger'), 'R2': s('+RightTrigger'), 'L3': s('LeftStick'), 'R3': s('RightStick'),
            'LUp': s('-LeftY'), 'LDown': s('+LeftY'), 'LLeft': s('-LeftX'), 'LRight': s('+LeftX'),
-           'RUp': s('-RightY'), 'RDown': s('+RightY'), 'RLeft': s('-RightX'), 'RRight': s('+RightX')}
+           'RUp': s('-RightY'), 'RDown': s('+RightY'), 'RLeft': s('-RightX'), 'RRight': s('+RightX'),
+           'AxisScale': '1.40', 'Deadzone': '0.08'}
     chord = lambda a, b: f'{s(a)} & {s(b)}'
     return pad, chord
 
@@ -90,7 +98,9 @@ def dolphin_pad(style=None):
     return {'GCPad1': {'Device': 'SDL/0/Xbox 360 Controller', 'Buttons/A': b(ok), 'Buttons/B': b(back), 'Buttons/X': b(north),
                        'Buttons/Y': b(west), 'Buttons/Z': '`Shoulder R`', 'Buttons/Start': '`Start`',
                        'Main Stick/Up': '`Left Y+`', 'Main Stick/Down': '`Left Y-`', 'Main Stick/Left': '`Left X-`', 'Main Stick/Right': '`Left X+`',
+                       'Main Stick/Dead Zone': '8.0', 'Main Stick/GateRadius': '70.0',
                        'C-Stick/Up': '`Right Y+`', 'C-Stick/Down': '`Right Y-`', 'C-Stick/Left': '`Right X-`', 'C-Stick/Right': '`Right X+`',
+                       'C-Stick/Dead Zone': '8.0', 'C-Stick/GateRadius': '70.0',
                        'Triggers/L': '`Trigger L`', 'Triggers/R': '`Trigger R`', 'Triggers/L-Analog': '`Trigger L`', 'Triggers/R-Analog': '`Trigger R`',
                        'D-Pad/Up': '`Pad N`', 'D-Pad/Down': '`Pad S`', 'D-Pad/Left': '`Pad W`', 'D-Pad/Right': '`Pad E`'}}
 
@@ -106,7 +116,8 @@ def dolphin_wii(style=None):  # Wii + Nunchuk unified on the built-in controller
                          'Shake/X': '`Shoulder R`', 'Shake/Y': '`Shoulder R`', 'Shake/Z': '`Shoulder R`',
                          'Nunchuk/Buttons/C': '`Shoulder L`', 'Nunchuk/Buttons/Z': '`Trigger L`',
                          'Nunchuk/Stick/Up': '`Left Y+`', 'Nunchuk/Stick/Down': '`Left Y-`',
-                         'Nunchuk/Stick/Left': '`Left X-`', 'Nunchuk/Stick/Right': '`Left X+`'}}
+                         'Nunchuk/Stick/Left': '`Left X-`', 'Nunchuk/Stick/Right': '`Left X+`',
+                         'Nunchuk/Stick/Dead Zone': '8.0', 'Nunchuk/Stick/GateRadius': '70.0'}}
 
 
 def dolphin_keys(style=None):
@@ -130,7 +141,7 @@ def azahar(style=None):
     ok, back, north, west = _faces(style)
     def btn(n, name): return q(f'api:controller,button:{n},engine:sdl,guid:{GUID},maptype:guid+port,name:{name},port:0')
     def trig(n, name): return q(f'api:controller,axis:{n},direction:+,engine:sdl,guid:{GUID},maptype:guid+port,name:{name},port:0,threshold:0.500000')
-    def stick(x, nx, ny): return q(f'api:controller,axis_x:{x},axis_y:{x + 1},deadzone:0.050000,engine:sdl,guid:{GUID},maptype:guid+port,name_x:{nx} X,name_y:{ny} Y,port:0')
+    def stick(x, nx, ny): return q(f'api:controller,axis_x:{x},axis_y:{x + 1},deadzone:0.080000,engine:sdl,guid:{GUID},maptype:guid+port,name_x:{nx} X,name_y:{ny} Y,port:0,range:0.700000')
     face = {304: 'A / ✖', 305: 'B / ●', 307: 'X / ■', 308: 'Y / ▲'}
     keys = {'button_a': btn(IDX[ok], face[ok]), 'button_b': btn(IDX[back], face[back]),
             'button_x': btn(IDX[north], face[north]), 'button_y': btn(IDX[west], face[west]),
@@ -150,7 +161,7 @@ def eden(style=None):
     def btn(n): return q(f'button:{n},engine:sdl,guid:{GUID},port:0')
     def hat(d): return q(f'direction:{d},engine:sdl,guid:{GUID},hat:0,port:0')
     def trig(n): return q(f'axis:{n},engine:sdl,guid:{GUID},invert:+,port:0,threshold:0.500000')
-    def stick(x): return q(f'axis_x:{x},axis_y:{x + 1},deadzone:0.150000,engine:sdl,guid:{GUID},invert_x:+,invert_y:-,offset_x:0.000000,offset_y:0.000000,port:0,range:1.000000')
+    def stick(x): return q(f'axis_x:{x},axis_y:{x + 1},deadzone:0.090000,engine:sdl,guid:{GUID},invert_x:+,invert_y:-,offset_x:0.000000,offset_y:0.000000,port:0,range:0.700000')
     keys = {'button_a': btn(IDX[ok]), 'button_b': btn(IDX[back]), 'button_x': btn(IDX[north]), 'button_y': btn(IDX[west]),
             'button_lstick': btn(9), 'button_rstick': btn(10), 'button_l': btn(4), 'button_r': btn(5),
             'button_zl': trig(2), 'button_zr': trig(5), 'button_plus': btn(7), 'button_minus': btn(6),
@@ -202,15 +213,15 @@ def _cemu_xml(style=None):
         <uuid>0_{GUID}</uuid>
         <display_name>Xbox 360 Controller</display_name>
         <axis>
-            <deadzone>0.15</deadzone>
-            <range>1</range>
+            <deadzone>0.09</deadzone>
+            <range>1.40</range>
         </axis>
         <rotation>
-            <deadzone>0.15</deadzone>
-            <range>1</range>
+            <deadzone>0.09</deadzone>
+            <range>1.40</range>
         </rotation>
         <trigger>
-            <deadzone>0.15</deadzone>
+            <deadzone>0.12</deadzone>
             <range>1</range>
         </trigger>
         <mappings>
@@ -224,6 +235,7 @@ def _cemu_xml(style=None):
 # emulator, file below HOME, check_dir below HOME, separator, sections
 SPECS = [
     ('RetroArch', '.var/app/org.libretro.RetroArch/config/retroarch/retroarch.cfg', '.var/app/org.libretro.RetroArch/config/retroarch', ' = ', retroarch),
+    ('RetroArch', '.var/app/org.libretro.RetroArch/config/retroarch/config/Mupen64Plus-Next/Mupen64Plus-Next.opt', '.var/app/org.libretro.RetroArch/config/retroarch/config/Mupen64Plus-Next', ' = ', mupen64_opt),
     ('DuckStation', '.local/share/duckstation/settings.ini', '.local/share/duckstation', ' = ', duckstation),
     ('ARMSX2', '.config/ARMSX2/inis/PCSX2.ini', '.config/ARMSX2/inis', ' = ', armsx2),
     ('Dolphin', '.var/app/org.DolphinEmu.dolphin-emu/config/dolphin-emu/GCPadNew.ini', '.var/app/org.DolphinEmu.dolphin-emu/config/dolphin-emu', ' = ', dolphin_pad),

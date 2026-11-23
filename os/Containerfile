@@ -1,0 +1,21 @@
+# Toravo Tandem OS — ArmadaOS-based bootc image for the AYN Thor (ARM64)
+# Keeps full upstream ArmadaOS kernel, Mesa/Turnip, gamescope & OpenABL compatibility
+# while booting straight into Toravo Tandem on first start.
+FROM ghcr.io/armada-os/armada:beta
+
+LABEL org.opencontainers.image.title="Toravo Tandem OS" \
+      org.opencontainers.image.description="Dual-screen OLED gaming OS for AYN Thor based on ArmadaOS + Toravo Tandem" \
+      org.opencontainers.image.source="https://github.com/harmssi/thor-tandem"
+
+# Bundle Toravo Tandem (backend, PySide6 dual-screen UI, decks, themes, updater, storage tools)
+COPY tandem/ /usr/share/toravo-tandem/
+COPY os/gamescope-steam-hook /usr/share/toravo-tandem/gamescope-steam-hook
+COPY os/toravo-tandem-firstboot /usr/libexec/toravo-tandem-firstboot
+COPY os/toravo-tandem-firstboot.service /usr/lib/systemd/system/toravo-tandem-firstboot.service
+
+RUN chmod 755 /usr/libexec/toravo-tandem-firstboot \
+              /usr/share/toravo-tandem/tandem-launch \
+              /usr/share/toravo-tandem/gamescope-own \
+              /usr/share/toravo-tandem/thor-record \
+    && chmod 644 /usr/lib/systemd/system/toravo-tandem-firstboot.service \
+    && systemctl enable toravo-tandem-firstboot.service

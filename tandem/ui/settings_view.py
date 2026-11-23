@@ -28,12 +28,12 @@ CATS = [  # id, title, icon, icon colour, what the top screen says while the lis
     ('look', 'Aussehen', 'look', '#ff375f', 'Farben, Stil und Sprache der Oberfläche.'),
     ('library', 'Bibliothek', 'stack', '#64d2ff', 'Spiele, Spieleordner, Speicherplatz und Cover.'),
     None,
-    ('updates', 'Updates', 'scan', '#5e5ce6', 'Tandem und die Switch-Emulatoren auf den neuesten Stand bringen.'),
+    ('updates', 'Updates', 'scan', '#5e5ce6', 'Spiel-Begleiter, Emulatoren, Kerne und Tandem automatisch aktuell halten.'),
     ('about', 'Über den Thor', 'info', '#8e8e93', 'Gerät, Versionen und der Einrichtungsassistent.'),
     ('onoff', 'Ein / Aus', 'off', '#ff453a', 'Standby, Neustart, Ausschalten und der Desktop.'),
 ]
 AREAS = [c for c in CATS if c]
-TITLES = {c[0]: c[1] for c in AREAS} | {'controls>map': 'Tastenbelegung', 'network>wifi': 'WLAN', 'bluetooth>dev': 'Gerät', 'library>restore': 'Wiederherstellen', 'library>stats': 'Spielzeit & Statistik', 'updates>native': 'Switch-Spiele nativ'}
+TITLES = {c[0]: c[1] for c in AREAS} | {'controls>map': 'Tastenbelegung', 'network>wifi': 'WLAN', 'bluetooth>dev': 'Gerät', 'library>restore': 'Wiederherstellen', 'library>stats': 'Spielzeit & Statistik', 'library>sysbackup': 'Linux- & Tandem-Backup', 'library>storage': 'Android- & Linux-Speicher', 'updates>companions': 'Spiel-Begleiter', 'updates>apps': 'Emulatoren & Quellen', 'updates>native': 'Switch-Spiele nativ'}
 ICONS = {
     'screens': '<rect x="5" y="3" width="14" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="5" y="13" width="14" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/>',
     'light': '<circle cx="12" cy="12" r="4.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 2.5v2.6M12 18.9v2.6M2.5 12h2.6M18.9 12h2.6M5.3 5.3l1.8 1.8M16.9 16.9l1.8 1.8M5.3 18.7l1.8-1.8M16.9 7.1l1.8-1.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
@@ -88,12 +88,24 @@ def need(win):
     if win.SAVES is None and page_of(win) == 'library':
         win.SAVES = {}
         win.call('api/saves', then=lambda s: setattr(win, 'SAVES', s or {}))
+    if page_of(win).startswith('library'):
+        sb = getattr(win, 'SYSBK', None)
+        sb_running = bool(((sb or {}).get('backups') or {}).get('job', {}).get('running') or ((sb or {}).get('storage') or {}).get('job', {}).get('running'))
+        if sb is None or time.time() - getattr(win, 'sysbk_at', 0) > (3 if sb_running else 20):
+            win.sysbk_at = time.time()
+            win.call('api/sysbackup', then=lambda r: r and (setattr(win, 'SYSBK', r), win.update()))
     if page_of(win) == 'perf' and time.time() - getattr(win, 'ptele_at', 0) > 15:
         win.ptele_at = time.time()
         win.call('api/telemetry', then=lambda r: r and setattr(win, 'QTELE', r))
-    if page_of(win).startswith('updates') and time.time() - getattr(win, 'swnat_at', 0) > 5:
-        win.swnat_at = time.time()
-        win.call('api/switch_native', then=lambda r: r and setattr(win, 'SWNAT', r))
+    if page_of(win).startswith('updates'):
+        uc = getattr(win, 'UPDC', None)
+        uc_running = bool(((uc or {}).get('job') or {}).get('running'))
+        if uc is None or time.time() - getattr(win, 'updc_at', 0) > (2.5 if uc_running else 18):
+            win.updc_at = time.time()
+            win.call('api/updater', then=lambda r: r and (setattr(win, 'UPDC', r), win.update()))
+        if time.time() - getattr(win, 'swnat_at', 0) > 10:
+            win.swnat_at = time.time()
+            win.call('api/switch_native', then=lambda r: r and setattr(win, 'SWNAT', r))
     if page_of(win) == 'accounts' and win.__dict__.get('YT_QR'):
         if win.CFG.get('yt_set'):
             win.YT_QR = None
@@ -244,20 +256,59 @@ def groups(win, page):
     if page == 'perf':
         if T is None: return loading
         pw, B = T.get('power'), win.BATT
-        bd = ((getattr(win, 'QTELE', None) or {}).get('battery')) or {}
+        qt = getattr(win, 'QTELE', None) or {}
+        bd = qt.get('battery') or {}
+        chg = qt.get('charger') or {}
         rows = []
         if pw:
             labels = dict(pw.get('profiles') or [])
             rows.append(choice('Leistungsprofil', list(labels.items()), pw.get('profile'), lambda v: thor_set(win, 'profile', v),
                                'Sparsam: länger spielen, leiser. Ausgewogen: für fast alles. Leistung: volle Kraft für PS2, Switch und PC-Spiele – wärmer und lauter.'))
-        rows.append(choice('Akku-Schutz (Lade-Hinweis)', [(0, 'Aus'), (80, 'Bei 80 %'), (90, 'Bei 90 %')],
-                           int(CFG.get('charge_alert') or 0), lambda v: config_set(win, charge_alert=v),
-                           'Meldet sich wie auf der Switch 2 mit Hinweis und Ton, sobald der Akku beim Laden 80 % bzw. 90 % erreicht – schont die Akkuzellen auf Dauer.'))
-        info = ([{'k': 'info', 't': 'Akku', 'v': f'{B["level"]} %' + (' · lädt' if B.get('charging') else ''), 'help': 'Ladestand des Akkus.'}] if B else []) + \
+        rows.append(toggle('Unterwegs-Modus (Akku-Sparpaket)', CFG.get('travel_mode', False),
+                           lambda v: config_set(win, travel_mode=v),
+                           'Schaltet mit einem Tipp auf Profil Sparsam, senkt das obere OLED-Panel auf 60 Hz, schaltet die Stick-LEDs aus und beendet Hintergrund-Steam – bringt unterwegs spürbar längere Laufzeit.'))
+        rows.append(toggle('Unterwegs automatisch bei Akkubetrieb', CFG.get('auto_travel', False),
+                           lambda v: config_set(win, auto_travel=v),
+                           'Aktiviert den Unterwegs-Modus automatisch beim Abziehen des Ladekabels und gibt am Netzteil sofort wieder 120 Hz & volle Leistung frei.'))
+        cur_hz = 60 if (CFG.get('travel_mode') or int(CFG.get('panel_hz') or 120) == 60) else 120
+        rows.append(choice('Bildwiederholrate (Oben)', [(120, '120 Hz'), (60, '60 Hz (Akku+)')],
+                           cur_hz, lambda v: config_set(win, panel_hz=v, **({'travel_mode': False} if v == 120 and CFG.get('travel_mode') else {})),
+                           '60 Hz spart unterwegs rund 1,2–1,8 W Display- und GPU-Energie; Retro- und 60-FPS-Spiele laufen damit genauso flüssig.'))
+        if T.get('sleep_mode') in ('s2idle', 'fake'):
+            rows.append(choice('Standby-Modus', [('s2idle', 'Nativ (Tiefschlaf)'), ('fake', 'Schnell-Ruhe')],
+                               T['sleep_mode'], lambda v: thor_set(win, 'sleep_mode', v),
+                               'Nativ (s2idle) versetzt den Snapdragon-Chip in echten Kernel-Tiefschlaf für minimalen Standby-Verbrauch in der Tasche.'))
+
+        chg_rows = []
+        if chg:
+            chg_rows.append({'k': 'info', 't': 'Schnelllade-Status', 'v': chg.get('label') or '–',
+                             'help': chg.get('hint') or 'USB-Power-Delivery- und PPS-Status des Ladeanschlusses.'})
+            if chg.get('online') and (chg.get('voltage_v') or chg.get('current_limit_a')):
+                va_parts = []
+                if chg.get('voltage_v'): va_parts.append(f'{chg["voltage_v"]:g} V')
+                if chg.get('current_limit_a'): va_parts.append(f'{chg["current_limit_a"]:g} A Limit')
+                if chg.get('live_input_w'): va_parts.append(f'{chg["live_input_w"]:g} W aktuell')
+                chg_rows.append({'k': 'info', 't': 'Netzteil-Aushandlung', 'v': ' · '.join(va_parts),
+                                 'help': 'Ausgehandelte USB-C-Spannung und maximaler Eingangsstrom. Für volles Schnellladen (9 V / PPS) ein USB-PD-Netzteil ab 27 W direkt anschließen.'})
+            if chg.get('cell_max_a'):
+                cur_a = f'{chg["cell_charge_a"]:g} A aktiv · ' if chg.get('cell_charge_a') else ''
+                chg_rows.append({'k': 'info', 't': 'Zell-Ladestrom', 'v': f'{cur_a}bis {chg["cell_max_a"]:g} A PD/PPS',
+                                 'help': 'Maximal zulässiger Ladestrom des 6000-mAh-Akkus über Qualcomm PMIC.'})
+            if chg.get('mins_to_full'):
+                chg_rows.append({'k': 'info', 't': 'Restladezeit', 'v': f'~{chg["mins_to_full"]} Min.',
+                                 'help': 'Geschätzte Zeit bis zur Vollladung.'})
+        chg_rows.append(choice('Akku-Schutz (Lade-Hinweis)', [(0, 'Aus'), (80, 'Bei 80 %'), (90, 'Bei 90 %')],
+                               int(CFG.get('charge_alert') or 0), lambda v: config_set(win, charge_alert=v),
+                               'Meldet sich mit Hinweis und Ton, sobald der Akku beim Laden 80 % bzw. 90 % erreicht – schont die Akkuzellen auf Dauer.'))
+
+        w_live = f' · {bd["watts"]:g} W' if (bd.get('watts') and not (B or {}).get('charging')) else ''
+        info = ([{'k': 'info', 't': 'Akku', 'v': f'{B["level"]} %' + (' · lädt' if B.get('charging') else w_live), 'help': 'Aktueller Ladestand und Entladeleistung des Akkus.'}] if B else []) + \
                ([{'k': 'info', 't': 'Akku-Zustand', 'v': f'{bd["health"]} %' + (f' · {bd["cycles"]} Zyklen' if bd.get('cycles') is not None else ''), 'help': 'Gesundheitszustand und bisherige Ladezyklen des Akkus.'}] if bd.get('health') is not None else []) + \
                ([{'k': 'info', 't': 'Temperatur', 'v': f'{pw["temp"]} °C', 'help': 'Temperatur im Gerät. Bis etwa 80 °C ist alles in Ordnung.'},
                  {'k': 'info', 't': 'Lüfter', 'v': f'{pw["fan"]} U/min', 'help': 'Der Lüfter regelt sich selbst nach der Temperatur und dem Profil.'}] if pw else [])
-        return [(None, rows, 'Gilt sofort und bleibt bis zur nächsten Änderung.' if rows else 'Das Leistungsprofil ist hier nicht erreichbar.'), ('Zustand', info, None)]
+        return [('Leistung & Unterwegs', rows, 'Gilt sofort und bleibt bis zur nächsten Änderung.' if rows else 'Das Leistungsprofil ist hier nicht erreichbar.'),
+                ('Schnellladen & Akku-Pflege', chg_rows, None),
+                ('Zustand', info, None)]
     if page == 'network':
         own = P.get('own') or P.get('url')
         wol_rows = [{'k': 'link', 't': 'PC-MAC-Adresse', 'v': CFG.get('wol_mac') or 'nicht gesetzt', 'fn': win.ask_wol_mac, 'bottom': True,
@@ -387,8 +438,112 @@ def groups(win, page):
                           'Sichert Spielstände im Hintergrund nach jedem beendeten Spiel.'),
                    {'k': 'link', 't': 'Sicherungsziel', 'v': CFG.get('save_target') or 'nur Karte', 'fn': win.ask_save_target, 'bottom': True,
                     'help': 'SSH-Ziel im Heimnetz (z. B. benutzer@server:~/backups/thor-saves). Leer lassen für reine Kartensicherung.'}]
+        SB = getattr(win, 'SYSBK', None) or {}
+        BK = SB.get('backups') or {}
+        ST = SB.get('storage') or {}
+        bk_job = BK.get('job') or {}
+        bk_val = (bk_job.get('step') if bk_job.get('running')
+                  else f'{ui.ago(BK["last"])} ({BK.get("last_where") or "lokal"})' if BK.get('last')
+                  else f'{len(BK.get("archives") or [])} Archive' if BK.get('archives') else 'bereit')
+        st_val = (f'{round(ST["linux_total_gib"])} / {round(ST["android_gib"])} GiB'
+                  if ST.get('supported') else 'prüfe …')
+        sys_rows = [
+            {'k': 'link', 't': 'Linux- & Tandem-Backup', 'v': bk_val,
+             'fn': lambda: go_page(win, 'library>sysbackup'),
+             'help': 'Integriertes System-Backup für Tandem, Emulatoren, Begleiter-Pakete, Ports und das komplette Linux-Home auf SD-Karte und SSH-Server.'},
+            {'k': 'link', 't': 'Android- & Linux-Speicher', 'v': st_val,
+             'fn': lambda: go_page(win, 'library>storage'),
+             'help': 'Interne UFS-Aufteilung ansehen und die Android-Partition nachträglich verkleinern, um live mehr internen Speicher für Tandem und Linux zu gewinnen.'},
+        ]
         store = [{'k': 'info', 't': s['name'], 'v': f'{round(s["free"] / 1e9)} von {round(s["total"] / 1e9)} GB frei', 'help': 'Freier Platz.'} for s in SYS.get('storage') or []]
-        return [(None, rows, None), ('Spielstände', sv_rows, None), ('Speicher', store, None)]
+        return [(None, rows, None), ('System & interner Speicher', sys_rows, None), ('Spielstände', sv_rows, None), ('Speicher', store, None)]
+    if page == 'library>sysbackup':
+        SB = getattr(win, 'SYSBK', None) or {}
+        BK = SB.get('backups') or {}
+        job = BK.get('job') or {}
+        arcs = BK.get('archives') or []
+        dest_lbl = ('SD-Karte' if BK.get('dest_on_card') else 'Intern') + (f' ({BK.get("dest_free_gib", 0):g} GiB frei)' if BK.get('dest_free_gib') else '')
+        ssh_lbl = CFG.get('save_target') or 'aus (unter Bibliothek › Sicherungsziel)'
+        def _start_bk(mode):
+            win.post('api/sysbackup', {'action': 'backup', 'mode': mode},
+                     then=lambda r: (setattr(win, 'sysbk_at', 0),
+                                     win.toast('Keine Antwort.' if r is None else r.get('error') or r.get('text', '')),
+                                     win.update()))
+        top_rows = [
+            {'k': 'info', 't': 'Lokales Ziel', 'v': dest_lbl, 'sub': BK.get('dest') or '',
+             'help': 'Archive werden mit zstd gepackt (.tar.zst), sodass Linux-Rechte und Symlinks auch auf exFAT-SD-Karten 100 % erhalten bleiben.'},
+            {'k': 'info', 't': 'SSH-Spiegelziel', 'v': ssh_lbl,
+             'help': 'Ist ein SSH-Ziel eingetragen, überträgt Tandem das Backup zusätzlich per rsync auf deinen Server.'},
+        ]
+        if job.get('running'):
+            top_rows.append({'k': 'info', 't': 'Aktiver Vorgang', 'v': job.get('step') or 'läuft …',
+                             'help': 'Die Sicherung läuft im Hintergrund weiter.'})
+        elif job.get('error'):
+            top_rows.append({'k': 'info', 't': 'Letzter Status', 'v': 'Fehler', 'sub': job['error'][:90], 'help': job['error']})
+        act_rows = [
+            {'k': 'button', 't': 'System-Profil jetzt sichern', 'v': 'empfohlen (~1–4 GB)',
+             'fn': lambda: _start_bk('profile'),
+             'help': 'Sichert Tandem, alle GBA-Begleiter, Ports, BananaNative/Peanuts, Emulatoren, BIOS, Switch-Keys, Steam-Shortcuts, SSH und alle Spielstände.'},
+            {'k': 'button', 't': 'Komplett-Backup 1:1 starten', 'v': 'ganzes Linux-Home',
+             'fn': lambda: _start_bk('full'),
+             'help': 'Sichert dein gesamtes /var/home/armada inklusive installierter Spiele (ohne regenerierbare Shader-Caches) auf SD-Karte bzw. SSH-Server.'},
+        ]
+        arc_rows = [{
+            'k': 'button',
+            't': ('Komplett · ' if a.get('kind') == 'full' else 'Profil · ') + time.strftime('%d.%m.%Y · %H:%M', time.localtime(a['at'])),
+            'v': f'{a.get("size_gb", 0):g} GB',
+            'sub': a.get('file', ''),
+            'bottom': True,
+            'fn': lambda fn=a['file']: win.ask_restore_sysbackup(fn),
+            'help': 'Spielt dieses Linux- & Tandem-Backup zurück (bestätigt durch „JA“ unten; aktuelle Spielstände werden vorher automatisch gesichert).',
+        } for a in arcs]
+        return [('Übersicht', top_rows, None),
+                ('Neue Sicherung anlegen', act_rows, None),
+                ('Vorhandene System-Archive', arc_rows or [{'k': 'info', 't': 'Noch kein System-Archiv vorhanden', 'v': '', 'help': 'Starte oben ein System-Profil- oder Komplett-Backup.'}],
+                 'Vor jedem Zurückspielen sichert Tandem automatisch alle aktuellen Spielstände.')]
+    if page == 'library>storage':
+        SB = getattr(win, 'SYSBK', None) or {}
+        ST = SB.get('storage') or {}
+        if not ST:
+            return loading
+        if not ST.get('supported'):
+            return [(None, [{'k': 'info', 't': 'Nicht verfügbar', 'v': '', 'sub': ST.get('reason', ''), 'help': ST.get('reason', '')}], None)]
+        job = ST.get('job') or {}
+        cur_and = ST.get('android_gib', 0)
+        lin_tot = ST.get('linux_total_gib', 0)
+        lin_free = ST.get('linux_free_gib', 0)
+        ov_rows = [
+            {'k': 'info', 't': 'Interner UFS-Speicher', 'v': f'{ST.get("total_gib", 0):g} GiB',
+             'sub': f'{ST.get("disk", "")} · Sektorgröße {ST.get("sector_size", 4096)} B',
+             'help': 'Gesamter interner UFS-4.0-Speicher des AYN Thor.'},
+            {'k': 'info', 't': 'Linux & Tandem (Btrfs)', 'v': f'{lin_free:g} von {lin_tot:g} GiB frei',
+             'sub': ('Erweitert: ' + ', '.join(ST['extra_chunks'])) if ST.get('extra_chunks') else 'Standard-Partition ARMADA_ROOT',
+             'help': 'Dein interner Speicher für ArmadaOS Linux, Tandem, native Ports und Spiele (/var/home).'},
+            {'k': 'info', 't': 'Android (userdata)', 'v': f'{cur_and:g} GiB',
+             'sub': f'{ST.get("userdata_node", "")} · bis auf {ST.get("android_min_gib", 8)} GiB verkleinerbar',
+             'help': 'Die Android-Nutzerpartition ist unter Linux ausgehängt und kann nachträglich im laufenden Betrieb verkleinert werden.'},
+        ]
+        if job.get('running'):
+            ov_rows.append({'k': 'info', 't': 'Aktiver Vorgang', 'v': job.get('step') or 'läuft …',
+                            'help': 'Partitionierung und Btrfs-Erweiterung laufen im Hintergrund.'})
+        elif job.get('error'):
+            ov_rows.append({'k': 'info', 't': 'Letzter Status', 'v': 'Fehler', 'sub': job['error'][:90], 'help': job['error']})
+        presets = ST.get('presets_gib') or []
+        p_rows = [{
+            'k': 'button',
+            't': f'Android auf {g} GiB verkleinern',
+            'v': f'+{max(1, round(cur_and - g))} GiB für Linux',
+            'sub': f'Linux wächst live auf ~{round(lin_tot + max(0, cur_and - g))} GiB',
+            'warn': True,
+            'bottom': True,
+            'fn': lambda g=g: win.ask_shrink_android(g),
+            'help': 'Sichert zuerst automatisch GPT & Spielstände, verkleinert Android userdata ohne Neuinstallation und bindet den freien Platz sofort live per Btrfs in /var/home ein. ACHTUNG: Android-Nutzerdaten (Apps/Daten unter Android) werden dabei zurückgesetzt!',
+        } for g in presets]
+        return [('Aktuelle Aufteilung', ov_rows, None),
+                ('Android nachträglich verkleinern (live)',
+                 p_rows or [{'k': 'info', 't': 'Android ist bereits minimal', 'v': f'{cur_and:g} GiB',
+                             'help': 'Die Android-Partition ist bereits auf dem Minimum.'}],
+                 'Wichtig: Deine Linux-Installation, Tandem und alle Spiele bleiben komplett erhalten; nur die Android-Nutzerdaten werden auf Werkseinstellung gesetzt.')]
     if page == 'library>stats':
         played_map = win.L.get('played') or {}
         sessions = win.L.get('sessions') or {}
@@ -434,25 +589,147 @@ def groups(win, page):
         return [('Sicherungsarchive (neueste zuerst)', r_rows, 'Vor dem Zurückspielen legt Tandem automatisch eine Sicherheitskopie deiner aktuellen Stände an.')]
     if page == 'updates':
         U = win.UPD or {}
+        UC = getattr(win, 'UPDC', None) or {}
         SN = getattr(win, 'SWNAT', None) or {}
-        rows = [{'k': 'info', 't': 'Tandem', 'v': 'Version ' + str(CFG.get('version', '')), 'help': 'Die installierte Version.'},
-                {'k': 'button', 't': 'Nach Update suchen', 'fn': lambda: self_update(win, False), 'v': U.get('text', ''), 'help': 'Fragt die Update-Quelle nach einer neuen Version. Installiert wird erst auf Wunsch.'}]
-        if U.get('new'): rows.append({'k': 'button', 't': f'Version {U["new"]} installieren', 'fn': lambda: self_update(win, True), 'help': 'Installiert die neue Version; sie gilt ab dem nächsten Start von Tandem. Geht etwas schief, bleibt die bisherige.'})
-        extras = [{'k': 'button', 't': e['name'] + (' aktualisieren' if e.get('installed') else ' installieren'), 'fn': lambda e=e: win.start({'id': 'upd:' + e['id'], 's': 'app'}),
-                   'help': 'Lädt die neueste Fassung aus dem Netz. Das kann eine Minute dauern.'} for e in win.L.get('extras') or []]
-        nat_rows = [
-            {'k': 'info', 't': 'BananaNative (Switch 2)', 'v': SN.get('banana_version') or 'nicht installiert',
-             'help': 'Führt unterstützte Switch-2-Titel nativ auf ARM64 + Vulkan aus.'},
-            {'k': 'info', 't': 'Peanuts Native (Switch 1)', 'v': SN.get('peanuts_version') or 'nicht installiert',
-             'help': 'Wandelt unterstützte Switch-1-Spiele in native ARM64-Pakete mit Vulkan-Shadern um.'},
-            {'k': 'link', 't': 'Switch-Spiele nativ umwandeln',
-             'v': (SN.get('job') or {}).get('step') if (SN.get('job') or {}).get('running') else f'{sum(1 for g in (SN.get("games") or []) if g.get("supported"))} kompatibel',
-             'fn': lambda: go_page(win, 'updates>native'),
-             'help': 'Zeigt deine kompatiblen Switch-Spiele auf der Karte und wandelt sie direkt auf dem Thor in native Pakete um.'},
+        job = UC.get('job') or {}
+        comp = UC.get('companions') or {}
+        apps = UC.get('appimages') or []
+        fps = (UC.get('flatpaks') or {}).get('installed') or []
+        pend = int(UC.get('pending_count') or 0)
+        upd_status = (job.get('step') if job.get('running')
+                      else f'{pend} verfügbar' if pend
+                      else f'geprüft {ui.ago(UC["last_check"])}' if UC.get('last_check') else 'bereit')
+        rows = [
+            {'k': 'info', 't': 'Toravo Tandem', 'v': 'Version ' + str(CFG.get('version', '')),
+             'help': 'Installierte Version von Toravo Tandem mit integriertem Update- und Begleiter-Dienst.'},
+            {'k': 'button', 't': 'Alles prüfen & aktualisieren', 'v': upd_status,
+             'fn': lambda: (win.toast('Starte Voll-Update …'),
+                            win.post('api/updater', {'action': 'update_all'},
+                                     then=lambda r: (setattr(win, 'updc_at', 0), r and win.toast(r.get('error') or r.get('text', ''))))),
+             'help': 'Aktualisiert Spiel-Begleiter (Steam & GBA), ARM64-Emulatoren, fehlende RetroArch-Kerne und Flatpaks in einem Durchgang.'},
+            toggle('Automatisch aktuell halten', CFG.get('auto_update', True), lambda v: config_set(win, auto_update=v),
+                   'Hält Emulatoren, Kerne und Spiel-Begleiter im Leerlauf vollautomatisch per SHA-256-Prüfung aktuell – mit 1-Tipp-Rollback.'),
+            toggle('Begleiter automatisch installieren', CFG.get('auto_companions', True), lambda v: config_set(win, auto_companions=v),
+                   'Erkennt installierte Steam-, GBA-, Port- und Dual-Screen-Spiele und richtet passende Begleiter für den unteren Bildschirm automatisch ein.'),
+            {'k': 'button', 't': 'Nach Update suchen',
+             'fn': lambda: (self_update(win, False),
+                            win.post('api/updater', {'action': 'check'}, then=lambda _r: setattr(win, 'updc_at', 0))),
+             'v': U.get('text', ''),
+             'help': 'Prüft alle Release-Quellen ohne Änderungen auf dem Gerät vorzunehmen.'},
         ]
-        return [(None, rows, 'Quelle: ' + (CFG.get('update_url') or 'keine') if CFG.get('update_url') is not None else None),
-                ('Switch Nativ', nat_rows, None),
-                ('Emulatoren', extras, None)]
+        if U.get('new'):
+            rows.append({'k': 'button', 't': f'Version {U["new"]} installieren', 'fn': lambda: self_update(win, True),
+                         'help': 'Installiert die neue Tandem-Version; bei Fehlern greift automatisch das Backup der bisherigen Version.'})
+        n_steam = sum(1 for c in (comp.get('steam') or []) if c.get('installed'))
+        n_gba = int(comp.get('gba_installed_packs') or 0)
+        comp_val = f'{n_steam} Steam · {n_gba} GBA aktiv' if (n_steam or n_gba) else 'bereit'
+        inst_apps = sum(1 for a in apps if a.get('installed'))
+        pend_apps = sum(1 for a in apps if a.get('update_available')) + len((UC.get('flatpaks') or {}).get('updates') or [])
+        apps_val = f'{pend_apps} Update offen' if pend_apps else f'{inst_apps} ARM64 · {len(fps)} Flatpak'
+        hub_rows = [
+            {'k': 'link', 't': 'Spiel-Begleiter', 'v': comp_val, 'fn': lambda: go_page(win, 'updates>companions'),
+             'help': 'Automatisch erkannte und installierte Begleiter für deine Steam-Spiele, Game-Boy-/GBA-Klassiker und nativen PC-Ports.'},
+            {'k': 'link', 't': 'Emulatoren & Quellen', 'v': apps_val, 'fn': lambda: go_page(win, 'updates>apps'),
+             'help': 'Direkte GitHub-/Forgejo-Quellen für ARM64-AppImages (mit SHA-256-Abgleich & 1-Tipp-Rollback), Flatpaks und eigene Paketquellen.'},
+        ]
+        out = [(None, rows, 'Quelle: ' + (CFG.get('update_url') or 'keine') if CFG.get('update_url') is not None else None),
+               ('Begleiter & Paketquellen', hub_rows, None)]
+        if SN.get('banana_version') or SN.get('peanuts_version') or any(g.get('supported') for g in (SN.get('games') or [])):
+            nat_rows = [
+                {'k': 'link', 't': 'Switch-Spiele nativ umwandeln',
+                 'v': (SN.get('job') or {}).get('step') if (SN.get('job') or {}).get('running') else f'{sum(1 for g in (SN.get("games") or []) if g.get("supported"))} kompatibel',
+                 'fn': lambda: go_page(win, 'updates>native'),
+                 'help': 'Zeigt kompatible Switch-Spiele auf der Karte und wandelt sie direkt auf dem Thor in native Pakete um.'},
+            ]
+            out.append(('Erweitert', nat_rows, None))
+        return out
+    if page == 'updates>companions':
+        UC = getattr(win, 'UPDC', None) or {}
+        comp = UC.get('companions') or {}
+        steam_items = comp.get('steam') or []
+        ports = comp.get('ports_ready') or []
+        top_act = [
+            {'k': 'button', 't': 'Alle Begleiter jetzt abgleichen',
+             'v': 'läuft …' if (UC.get('job') or {}).get('running') else '',
+             'fn': lambda: (win.toast('Prüfe & installiere Spiel-Begleiter …'),
+                            win.post('api/updater', {'action': 'sync_companions'},
+                                     then=lambda r: (setattr(win, 'updc_at', 0), r and win.toast(r.get('error') or r.get('text', ''))))),
+             'help': 'Sucht nach allen installierten Spielen mit Begleiter-Unterstützung und installiert oder aktualisiert deren Plugins & Pakete.'},
+        ]
+        st_rows = [{
+            'k': 'info',
+            't': s['title'],
+            'v': ('Update ' + s['latest_version']) if s.get('update_available') else (('✓ ' + s['version']) if s.get('installed') else s.get('status', 'bereit')),
+            'help': 'Wird direkt im Steam-Spielverzeichnis installiert (mit SHA-256-Prüfung und Backup der Originaldatei).',
+        } for s in steam_items] or [{
+            'k': 'info', 't': 'Automatische Steam-Erkennung aktiv', 'v': 'bereit',
+            'help': 'Sobald FINAL FANTASY IX (Memoria), Fallout 4 oder Persona 5 Royal in Steam installiert sind, lädt Tandem das passende Begleiter-Plugin automatisch.',
+        }]
+        gba_rows = [
+            {'k': 'info', 't': 'GB / GBC / GBA Begleiter-Pakete', 'v': f'{comp.get("gba_installed_packs", 0)} installiert',
+             'help': 'Interaktive Zweitbildschirm-Pakete (Karten, Inventar, Team, Breitbild) – werden für deine ROMs automatisch geladen.'},
+            {'k': 'info', 't': 'Erkannte Spiele deiner Sammlung', 'v': f'{comp.get("gba_matched_games", 0)} Spiele',
+             'help': 'Spiele deiner Bibliothek (inkl. deutscher/europäischer Versionen und ROM-Hacks) mit passendem Begleiter-Paket.'},
+            {'k': 'info', 't': 'RetroArch Live-Speicherbrücke', 'v': '✓ UDP 55355 aktiv',
+             'help': 'Tandem schaltet den lokalen RetroArch-Netzwerkkanal automatisch frei, damit Begleiter Live-Spieldaten lesen können.'},
+        ]
+        port_rows = [
+            {'k': 'info', 't': 'Native PC-Klassiker (Ports)', 'v': f'{len(ports)} aktiv' if ports else '7 unterstützt',
+             'sub': ', '.join(ports[:5]) if ports else 'Half-Life, Age of Kings, Red Alert 2, Heroes III, Diablo II …',
+             'help': 'Maßgeschneiderte Touch-Begleiter für native Linux-Ports auf dem unteren Bildschirm.'},
+            {'k': 'info', 't': 'Universal-Begleiter', 'v': '✓ Für jedes Spiel',
+             'help': 'Visuelle Spielstände, Notiz- & Zeichenblock, Offline-Guides, Musik-Mixer, Maus-Trackpad und Live-Telemetrie in jedem Spiel.'},
+        ]
+        return [(None, top_act, None), ('Steam-Begleiter', st_rows, None), ('Handheld- & Retro-Begleiter', gba_rows, None), ('PC-Ports & Universal-Deck', port_rows, None)]
+    if page == 'updates>apps':
+        UC = getattr(win, 'UPDC', None) or {}
+        apps = UC.get('appimages') or []
+        fp = UC.get('flatpaks') or {}
+        app_rows = []
+        for a in apps:
+            ver_lbl = (f'Update → {a["latest_version"]}' if a.get('update_available')
+                       else f'✓ {a["current_version"]}' if a.get('installed')
+                       else 'Installieren')
+            app_rows.append({
+                'k': 'button',
+                't': a['name'],
+                'v': ver_lbl,
+                'sub': a['file'] + (' · Eigene Quelle' if a.get('custom') else ''),
+                'fn': lambda aid=a['id'], nm=a['name']: (
+                    win.toast(f'Lade {nm} …'),
+                    win.post('api/updater', {'action': 'update_app', 'id': aid},
+                             then=lambda r: (setattr(win, 'updc_at', 0), r and win.toast(r.get('error') or r.get('text', ''))))),
+                'help': 'Direkter ARM64-AppImage-Bezug von der Originalquelle mit SHA-256-Prüfung und Erhalt deiner Controller-Belegung.',
+            })
+            if a.get('has_rollback'):
+                short_nm = a['name'].split(' (')[0]
+                app_rows.append({
+                    'k': 'button',
+                    't': f'↺ Vorherige Version ({short_nm})',
+                    'v': 'Rollback',
+                    'fn': lambda aid=a['id']: win.post('api/updater', {'action': 'rollback', 'id': aid},
+                                                       then=lambda r: (setattr(win, 'updc_at', 0), r and win.toast(r.get('error') or r.get('text', '')))),
+                    'help': 'Stellt mit einem Tipp sofort die vorherige funktionierende AppImage-Version (.prev) wieder her.',
+                })
+            if a.get('custom'):
+                app_rows.append({
+                    'k': 'button', 't': f'Quelle entfernen: {a["name"]}', 'warn': True,
+                    'fn': lambda aid=a['id']: win.post('api/updater', {'action': 'remove_feed', 'id': aid},
+                                                       then=lambda r: (setattr(win, 'updc_at', 0), r and win.toast(r.get('error') or r.get('text', '')))),
+                    'help': 'Entfernt diese benutzerdefinierte GitHub-Quelle aus dem Update-Dienst.',
+                })
+        app_rows.append({
+            'k': 'link', 't': '+ Eigene GitHub-Quelle hinzufügen', 'v': 'AppImage', 'fn': win.ask_custom_feed, 'bottom': True,
+            'help': 'Beliebiges GitHub-Projekt (Besitzer/Projekt) eintragen – Tandem findet ARM64-AppImages automatisch ohne Regex-Bastelei.',
+        })
+        fp_rows = [{
+            'k': 'info', 't': f['name'],
+            'v': 'Update verfügbar' if f.get('update_available') else ('✓ ' + (f.get('version') or 'installiert')),
+            'sub': f['ref'],
+            'help': 'Wird beim Voll-Update automatisch über Flatpak aktualisiert.',
+        } for f in (fp.get('installed') or [])]
+        return [('ARM64 AppImages (Direkt-Quellen)', app_rows, 'Vor jedem Update wird die bisherige Datei als .prev für einen 1-Tipp-Rollback aufgehoben.'),
+                ('Flatpak-Emulatoren', fp_rows or [{'k': 'info', 't': 'Keine Flatpak-Emulatoren erkannt', 'v': '', 'help': ''}], None)]
     if page == 'updates>native':
         SN = getattr(win, 'SWNAT', None) or {}
         job = SN.get('job') or {}
@@ -476,10 +753,21 @@ def groups(win, page):
              'Updates (.nsp) kannst du optional im Web-Dashboard unter Bibliothek › Switch-Update hochladen.')]
     if page == 'about':
         B = win.BATT
+        ai_rows = [
+            {'k': 'button', 't': 'Claude Code starten (Skip Permissions)', 'v': 'Autonom',
+             'fn': lambda: win.start({'id': 'ai:claude', 's': 'app'}),
+             'help': 'Startet Claude Code direkt mit --dangerously-skip-permissions oben und der KI-Schnellleiste + Tastatur unten.'},
+            {'k': 'button', 't': 'Google Antigravity (agy) starten (Skip Permissions)', 'v': 'Autonom',
+             'fn': lambda: win.start({'id': 'ai:agy', 's': 'app'}),
+             'help': 'Startet Google Antigravity CLI (agy) direkt mit --dangerously-skip-permissions oben und der KI-Tastatur unten.'},
+            {'k': 'link', 't': 'KI-Arbeitsordner', 'v': CFG.get('ai_workdir') or 'Home (~)', 'fn': win.ask_ai_workdir, 'bottom': True,
+             'help': 'Standard-Projektverzeichnis, in dem Claude Code und Google Antigravity (agy) beim Start geöffnet werden.'},
+        ]
         return [(None, [{'k': 'info', 't': 'Gerät', 'v': 'AYN Thor', 'help': 'Zwei Bildschirme, oben das Spiel, unten die Bedienung.'},
                         {'k': 'info', 't': 'ArmadaOS', 'v': (T or {}).get('os') or '–', 'help': 'Das Betriebssystem. Updates dafür kommen über Steam oder den Desktop.'},
                         {'k': 'info', 't': 'Tandem', 'v': 'Version ' + str(CFG.get('version', '')), 'help': 'Toravo Tandem, die Oberfläche für beide Bildschirme.'}] +
                  ([{'k': 'info', 't': 'Akku', 'v': f'{B["level"]} %', 'help': 'Ladestand des Akkus.'}] if B else []), None),
+                ('KI-Agenten auf dem Thor', ai_rows, 'Beide Agenten laufen nativ unter ARM64-Linux ohne Rückfrage-Sperren (--dangerously-skip-permissions).'),
                 (None, [{'k': 'button', 't': 'Einrichtung erneut zeigen', 'fn': lambda: win.post('api/setup', {'open': True}), 'help': 'Zeigt die vier Schritte vom ersten Start: Spiele, Emulatoren, Netz und Konto.'}], None)]
     if page == 'onoff':
         texts = {'suspend': 'Der Thor schläft und wacht mit der Ein-Taste sofort wieder auf.',
@@ -723,7 +1011,7 @@ def draw_row(win, p, r, rect, n, on):
         for k, (oid, label) in enumerate(opts):
             sr = ui.QRectF(box.x() + .3 * u + k * seg, box.y() + .3 * u, seg, box.height() - .6 * u)
             sel = oid == r['cur']
-            if sel: win.box(p, sr, .9 * u, ui.FOCUS if on else ui.faded(ui.TEXT, .2))
+            if sel: win.box(p, sr, .9 * u, ui.FOCUS if on else ui.faded(ui.FOCUS, .32), None if on else ui.faded(ui.FOCUS, .55))
             win.text(p, label, sr.x(), sr.y(), fs, ui.INK if sel and on else ui.TEXT if sel else ui.MUTED, sr.width(), 1, sr.height() / (fs[1] * u))
             win.hit(sr, lambda oid=oid: (win.S.update(pane=1, i=n), r['set'](oid), win.push()), name=f'{r["t"]}:{label}')
         right = box.x() - 1.4 * u
@@ -748,6 +1036,8 @@ def draw_row(win, p, r, rect, n, on):
         p.setPen(ui.Qt.PenStyle.NoPen); p.setBrush(ui.rgba(0, 0, 0, .35)); p.drawEllipse(ui.QPointF(left + width * part, mid + .15 * u), 1.45 * u, 1.45 * u)
         p.setBrush(ui.QColor('#ffffff')); p.drawEllipse(ui.QPointF(left + width * part, mid), 1.35 * u, 1.35 * u)
         win.text(p, f'{val} %', right - 7 * u, y, vf, ui.MUTED, 7 * u, 2, h / (vf[1] * u))
+        if r.get('adj'):
+            win.hit(ui.QRectF(right - 7.4 * u, y, 7.6 * u, h), lambda r=r: (win.S.update(pane=1, i=n), r['adj'](1 if (r.get('val') or 0) < 100 else -19), win.push()), name=f'{r["t"]}:step')
         if r.get('key'): drag = lambda px, key=r['key']: win.set_value(key, px, left, width)
         else:
             def drag(px):
@@ -821,4 +1111,5 @@ def draw_top(win, p):
     if value: y += win.text(p, value, x, y, ('u', 3.2, 500), ui.FOCUS, 64 * u, lh=1.2)
     y += 1.6 * u
     for line in rows: y += win.text(p, line, x, y, hf, ui.MUTED, lh=1.45)
-    win.pads(p, x, y + 2.6 * u, hints)
+    pad_acts = {'↔': (lambda: (row['adj'](1), win.push()))} if (row and row.get('adj')) else None
+    win.pads(p, x, y + 2.6 * u, hints, actions=pad_acts)

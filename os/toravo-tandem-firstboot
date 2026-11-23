@@ -1,0 +1,60 @@
+#!/bin/bash
+# First-boot provisioner for Toravo Tandem OS (runs once before SDDM/gamescope starts).
+# Copies the bundled Toravo Tandem release into ~armada/.local/share/tandem so Tandem's
+# built-in updater can self-update cleanly, and activates the dual-screen session hook.
+set -euo pipefail
+
+SRC="/usr/share/toravo-tandem"
+USER_NAME="${TANDEM_USER:-armada}"
+HOME_DIR="$(getent passwd "$USER_NAME" | cut -d: -f6 || true)"
+[ -n "$HOME_DIR" ] && [ -d "$HOME_DIR" ] || HOME_DIR="/var/home/$USER_NAME"
+[ -d "$HOME_DIR" ] || exit 0
+
+MARK="$HOME_DIR/.config/tandem/.provisioned"
+[ -f "$MARK" ] && exit 0
+
+DEST="$HOME_DIR/.local/share/tandem"
+CFG="$HOME_DIR/.config/tandem"
+SESS="$HOME_DIR/.config/gamescope-session-plus/sessions.d"
+APPS="$HOME_DIR/.local/share/applications"
+ICONS="$HOME_DIR/.local/share/icons/hicolor/scalable/apps"
+
+mkdir -p "$DEST" "$CFG" "$SESS" "$APPS" "$ICONS" "$HOME_DIR/Desktop"
+
+# Copy Tandem files without clobbering existing user state/saves
+cp -a "$SRC/." "$DEST/"
+rm -f "$DEST/gamescope-steam-hook"
+chmod 755 "$DEST/tandem-launch" "$DEST/gamescope-own" "$DEST/thor-record"
+
+# Activate Tandem as default gamescope session client
+install -m 644 "$SRC/gamescope-steam-hook" "$SESS/steam"
+touch "$CFG/own-session"
+
+# Desktop & App icons
+[ -f "$DEST/tandem.svg" ] && install -m 644 "$DEST/tandem.svg" "$ICONS/tandem.svg"
+cat > "$APPS/tandem.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Toravo Tandem
+Comment=Dual-Screen-Oberfläche für den AYN Thor
+Exec=$DEST/tandem-launch
+Icon=tandem
+Terminal=false
+Categories=Game;
+EOF
+
+cat > "$HOME_DIR/Desktop/tandem-zurueck.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Zurück zu Tandem
+Name[en]=Back to Tandem
+Comment=Zurück in den Spielmodus
+Icon=tandem
+Exec=steamos-session-select gamescope
+Terminal=false
+Categories=System;
+EOF
+chmod 755 "$HOME_DIR/Desktop/tandem-zurueck.desktop"
+
+touch "$MARK"
+chown -R "$USER_NAME:$USER_NAME" "$HOME_DIR/.local" "$HOME_DIR/.config" "$HOME_DIR/Desktop" 2>/dev/null || true

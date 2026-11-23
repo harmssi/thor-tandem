@@ -253,6 +253,10 @@ if('__LANG__'=='en'){const E=__EN__,R=E.rules.map(([p,t])=>[new RegExp('^(?:'+p+
     <label for="prof">Leistungsprofil</label><select id="prof"></select>
     <label>Akku-Schutz (Lade-Hinweis wie Switch 2)</label>
     <div class="seg" id="chgseg"><button type="button" data-v="0">Aus</button><button type="button" data-v="80">Bei 80 %</button><button type="button" data-v="90">Bei 90 %</button></div>
+    <label>Unterwegs-Sparmodus &amp; Display-Frequenz</label>
+    <div class="row"><button type="button" id="travelbtn">Unterwegs-Modus: Aus</button><button type="button" id="hzbtn">Oben: 120 Hz</button></div>
+    <label class="check"><input type="checkbox" id="autotravel"> Unterwegs-Modus bei Akkubetrieb automatisch aktivieren</label>
+    <p id="chginfo" style="font-size:12px;color:var(--text3);margin-top:8px">–</p>
     <div class="kpis" id="pstats" style="grid-template-columns:repeat(2,1fr);margin-top:14px;margin-bottom:0"></div>
    </section>
 
@@ -371,11 +375,19 @@ if('__LANG__'=='en'){const E=__EN__,R=E.rules.map(([p,t])=>[new RegExp('^(?:'+p+
     <label for="wolmac">Gaming-PC MAC-Adresse (Wake-on-LAN für Moonlight)</label>
     <input id="wolmac" autocomplete="off" autocapitalize="off" placeholder="AA:BB:CC:DD:EE:FF">
     <div class="row"><button id="wolsave">MAC speichern</button><button class="go" id="wolgo">PC aufwecken</button></div>
-    <h3>Updates</h3><p id="ver" style="font-size:13px">–</p>
-    <label for="src">Update-Quelle (leer = GitHub-Standard)</label><input id="src" type="url" autocomplete="off" autocapitalize="off" placeholder="https://">
-    <div class="row"><button id="srcgo">Quelle speichern</button><button id="upcheck">Update prüfen</button><button class="go" id="upgo" hidden>Jetzt installieren</button></div>
-    <label for="eden">Switch-Emulator (Eden)</label><select id="eden"><option value="eden">Stabile Fassung</option><option value="eden-nightly">Nightly (Tagesstand)</option></select>
-    <button class="full" id="edengo" style="margin-top:10px">Eden installieren / aktualisieren</button>
+    <h3>Integrierter Update- &amp; Begleiter-Dienst</h3><p id="ver" style="font-size:13px">–</p>
+    <p id="updmeta" style="font-size:13px;color:var(--text2)">–</p>
+    <div class="row"><button class="go" id="updall">Alles aktualisieren</button><button id="updcomp">Begleiter abgleichen</button><button id="upcheck">Nur prüfen</button><button class="go" id="upgo" hidden>Tandem installieren</button></div>
+    <label class="chk" style="margin-top:10px"><input id="autoupd" type="checkbox"><span>Im Leerlauf automatisch aktuell halten (Emulatoren, Kerne &amp; Begleiter)</span></label>
+    <label class="chk"><input id="autocomp" type="checkbox"><span>Begleiter für neue Spiele automatisch installieren</span></label>
+    <details><summary>Eigene GitHub-AppImage-Quellen &amp; Update-Server</summary>
+     <label for="feedrepo">Zusätzliche GitHub-Quelle (Besitzer/Projekt)</label>
+     <div class="row"><input id="feedrepo" autocomplete="off" autocapitalize="off" placeholder="z. B. stenzek/duckstation"><button id="feedadd">Quelle hinzufügen</button></div>
+     <label for="src">Tandem Update-Quelle (leer = GitHub-Standard)</label><input id="src" type="url" autocomplete="off" autocapitalize="off" placeholder="https://">
+     <div class="row"><button id="srcgo">Quelle speichern</button></div>
+     <label for="eden">Switch-Emulator (Eden)</label><select id="eden"><option value="eden">Stabile Fassung</option><option value="eden-nightly">Nightly (Tagesstand)</option></select>
+     <button class="full" id="edengo" style="margin-top:10px">Eden installieren / aktualisieren</button>
+    </details>
    </section>
 
    <section class="card"><h2>Gerät &amp; Ein/Aus</h2>
@@ -458,6 +470,13 @@ function load(){fetch('api/all').then(r=>r.status==401?location.reload():r.json(
  setSeg('nightseg',d.config.night_mode||'off');
  setSeg('hudseg',d.config.hud_level||0);
  setSeg('chgseg',d.config.charge_alert||0);
+ const trOn=!!d.config.travel_mode,hzCur=(trOn||d.config.panel_hz===60)?60:120;
+ $('travelbtn').textContent='Unterwegs-Modus: '+(trOn?'Aktiv (Eco · 60 Hz)':'Aus');
+ $('travelbtn').className=trOn?'go':'';$('travelbtn').dataset.on=trOn?'1':'0';
+ $('hzbtn').textContent='Oben: '+hzCur+' Hz';$('hzbtn').dataset.hz=String(hzCur);
+ $('autotravel').checked=!!d.config.auto_travel;
+ const CHG=d.charger||{};
+ $('chginfo').textContent=CHG.label?('Ladestatus: '+CHG.label+(CHG.voltage_v?' · '+CHG.voltage_v+' V':'')+(CHG.current_limit_a?' · '+CHG.current_limit_a+' A Limit':'')):'';
  if(document.activeElement!=$('sstyle'))$('sstyle').value=d.config.saver_style||'kosmos';
  if(document.activeElement!=$('rest'))$('rest').value=d.config.rest_min;
  const sndOn=d.config.ui_sounds==='subtle';
@@ -512,6 +531,10 @@ function load(){fetch('api/all').then(r=>r.status==401?location.reload():r.json(
  if(document.activeElement!=$('own'))$('own').value=d.config.remote_url||'';
  if(document.activeElement!=$('wolmac'))$('wolmac').value=d.config.wol_mac||'';
  $('ver').textContent='Installiert: Tandem '+d.config.version;if(document.activeElement!=$('src'))$('src').value=d.config.update_url||'';
+ const UP=d.updater||{},uj=UP.job||{},ucp=UP.companions||{};
+ const nSt=(ucp.steam||[]).filter(c=>c.installed).length,nAp=(UP.appimages||[]).filter(a=>a.installed).length;
+ $('updmeta').textContent=uj.running?('Aktiv: '+(uj.step||'läuft …')):(nAp+' ARM64-Emulatoren · '+nSt+' Steam-Begleiter · '+(ucp.gba_installed_packs||0)+' GBA-Pakete aktiv'+(UP.pending_count?(' · '+UP.pending_count+' Update verfügbar'):''));
+ $('autoupd').checked=d.config.auto_update!==false;$('autocomp').checked=d.config.auto_companions!==false;
  $('about').innerHTML=kpi('AYN Thor','Gerät')+kpi(T.os||'–','ArmadaOS')+kpi(d.config.version,'Tandem');
  $('wl').textContent=d.system.ssid?'Verbunden mit „'+d.system.ssid+'“.':'Nicht mit einem WLAN verbunden.';
  if(document.activeElement!=$('ssid')){const now=$('ssid').value;$('ssid').replaceChildren(...(d.system.networks||[]).map(n=>new Option(n.ssid+' · '+n.signal+' %'+(n.known?' · bekannt':''),n.ssid)));if(now)$('ssid').value=now}
@@ -525,6 +548,9 @@ for(const b of $('cstyleseg').children)b.onclick=()=>{setSeg('cstyleseg',b.datas
 $('sstyle').onchange=e=>post('config',{saver_style:e.target.value});
 $('saverbtn').onclick=$('savergo').onclick=()=>post('saver',{open:true});
 $('uisndbtn').onclick=()=>{const nxt=$('uisndbtn').dataset.on==='1'?'off':'subtle';post('config',{ui_sounds:nxt}).then(load)};
+$('travelbtn').onclick=()=>{const nxt=$('travelbtn').dataset.on!=='1';post('config',{travel_mode:nxt}).then(load)};
+$('hzbtn').onclick=()=>{const nxt=$('hzbtn').dataset.hz==='60'?120:60;post('config',{panel_hz:nxt,...(nxt===120?{travel_mode:false}:{})}).then(load)};
+$('autotravel').onchange=e=>post('config',{auto_travel:e.target.checked});
 
 const secure=()=>location.protocol=='https:'||['127.0.0.1','localhost'].includes(location.hostname);
 $('bnsave').onclick=()=>{if(!secure())return say('Nur über die HTTPS-Adresse des Thor übertragbar.');
@@ -589,7 +615,12 @@ $('drop').ondrop=e=>{e.preventDefault();$('drop').classList.remove('over');if(e.
 $('lang').onchange=e=>post('config',{lang:e.target.value}).then(()=>location.reload());
 $('srcgo').onclick=()=>post('config',{update_url:$('src').value}).then(load);
 const up=apply=>post('selfupdate',{apply}).then(d=>{say(d.error||d.text);$('upgo').hidden=apply||!d.new});
-$('upcheck').onclick=()=>up(false);$('upgo').onclick=()=>{say('Installiere …');up(true)};
+$('upcheck').onclick=()=>{post('updater',{action:'check'});up(false)};$('upgo').onclick=()=>{say('Installiere …');up(true)};
+$('updall').onclick=()=>{say('Starte Voll-Update …');post('updater',{action:'update_all'}).then(load)};
+$('updcomp').onclick=()=>{say('Gleiche Spiel-Begleiter ab …');post('updater',{action:'sync_companions'}).then(load)};
+$('autoupd').onchange=e=>post('config',{auto_update:e.target.checked});
+$('autocomp').onchange=e=>post('config',{auto_companions:e.target.checked});
+$('feedadd').onclick=()=>{if(!$('feedrepo').value.trim())return say('Bitte Besitzer/Projekt eintragen.');post('updater',{action:'add_feed',repo:$('feedrepo').value.trim()}).then(d=>{if(d&&d.ok)$('feedrepo').value='';load()})};
 $('owngo').onclick=()=>post('config',{remote_url:$('own').value}).then(load);
 $('edengo').onclick=()=>{say('Lade Eden … das kann eine Minute dauern.');post('update',{id:$('eden').value}).then(load)};
 for(const b of document.querySelectorAll('[data-post]'))b.onclick=()=>{if(b.dataset.ask&&!confirm(b.dataset.ask))return;post(b.dataset.post,{name:b.dataset.name}).then(load)};

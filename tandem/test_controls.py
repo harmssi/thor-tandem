@@ -79,6 +79,30 @@ class Controls(unittest.TestCase):
             controls.apply('xbox')
             self.assertEqual(controls.check('xbox'), [])
             self.assertIn('Cross = SDL-0/A', (sub / '.local/share/duckstation/settings.ini').read_text())
+            self.assertIn('AxisScale = 1.40', (sub / '.local/share/duckstation/settings.ini').read_text())
+            self.assertIn('<range>1.40</range>', (sub / '.config/Cemu/controllerProfiles/controller0.xml').read_text())
+            self.assertIn('GateRadius = 70.0', (sub / '.var/app/org.DolphinEmu.dolphin-emu/config/dolphin-emu/GCPadNew.ini').read_text())
+        finally:
+            os.environ['HOME'] = old_home
+
+    def test_mupen64_and_retroarch_stick_full_range(self):
+        sub = Path(tempfile.mkdtemp(dir=HOME))
+        old_home = os.environ['HOME']
+        os.environ['HOME'] = str(sub)
+        try:
+            (sub / '.var/app/org.libretro.RetroArch/config/retroarch/config/Mupen64Plus-Next').mkdir(parents=True, exist_ok=True)
+            (sub / '.config/eden').mkdir(parents=True, exist_ok=True)
+            (sub / '.config/azahar-emu').mkdir(parents=True, exist_ok=True)
+            changed = controls.apply('thor')
+            self.assertEqual(sorted(changed), ['Azahar', 'Eden', 'RetroArch'])
+            ra = (sub / '.var/app/org.libretro.RetroArch/config/retroarch/retroarch.cfg').read_text()
+            self.assertIn('input_analog_sensitivity = "1.420000"', ra)
+            m64 = (sub / '.var/app/org.libretro.RetroArch/config/retroarch/config/Mupen64Plus-Next/Mupen64Plus-Next.opt').read_text()
+            self.assertIn('mupen64plus-astick-sensitivity = "130"', m64)
+            ed = (sub / '.config/eden/qt-config.ini').read_text()
+            self.assertIn('range:0.700000', ed)
+            az = (sub / '.config/azahar-emu/qt-config.ini').read_text()
+            self.assertIn('range:0.700000', az)
         finally:
             os.environ['HOME'] = old_home
 

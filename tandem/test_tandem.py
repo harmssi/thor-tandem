@@ -8,6 +8,8 @@ os.environ['HOME'] = str(TMP / 'home')
 os.environ['XDG_STATE_HOME'] = str(TMP / 'state')
 os.environ['XDG_CONFIG_HOME'] = str(TMP / 'config')
 os.environ['XDG_RUNTIME_DIR'] = str(TMP / 'run')
+os.environ['TANDEM_SAVE_BACKUP_DIR'] = str(TMP / 'save-backups')
+os.environ['TANDEM_SYS_BACKUP_DIR'] = str(TMP / 'sys-backups')
 import tandem  # noqa: E402  (after HOME is redirected)
 
 HOME = TMP / 'home'
@@ -739,7 +741,7 @@ class English(unittest.TestCase):
     """The English interface: the setting persists, and every German text the screens can show has an English one."""
     GERMAN = __import__('re').compile(r'[äöüÄÖÜß„]|\b(der|die|das|und|nicht|ist|kein|keine|mit|für|von|auf|noch|wird|bitte|Spiel|Spiele|starten|beenden|'
                                       r'Einstellungen|Taste|Tasten|Akku|Bildschirm|fehlt|gefunden|installiert|läuft|Suche|Fehler|Passwort|Konto)\b')
-    FILES = ['tandem.py', 'thor.py', 'bluetooth.py', 'controls.py', 'saves.py', 'telemetry.py', 'companion.py', 'setup.py',
+    FILES = ['tandem.py', 'thor.py', 'bluetooth.py', 'controls.py', 'saves.py', 'thor_storage.py', 'thor_updater.py', 'telemetry.py', 'companion.py', 'setup.py',
              'ui/tandem_ui.py', 'ui/settings_view.py', 'ui/quick_view.py', 'ui/screensaver.py', 'ui/qr.py',
              'ui/decks/media.py', 'ui/decks/offline.py', 'ui/decks/youtube.py', 'ui/decks/plex.py', 'ui/decks/gallery.py',
              'ui/decks/pack.py', 'ui/decks/mpv.py', 'ui/decks/universal.py', 'ui/decks/dualscreen.py', 'ui/decks/pcstream.py']
@@ -1041,6 +1043,456 @@ class CompanionAndLibraryUpgradesTest(unittest.TestCase):
         self.assertIn('Chrono Trigger (USA)', cands)
         self.assertEqual(tandem._norm_box_title("Pokémon: Let’s Go, Evoli! (PeanutsNative)"),
                          tandem._norm_box_title("Pokémon: Let's Go, Eevee!"))
+
+        t_sw = tandem.Tandem(lambda: {'systems': {}, 'games': [], 'apps': []}, dry=True)
+        out_sw = {}
+        th_sw = threading.Thread(target=lambda: out_sw.update(t_sw.ask_swkbd({
+            'title': 'Wie lautet dein Name?', 'initial': 'Tobias', 'min': 1, 'max': 12
+        })))
+        th_sw.start()
+        for _ in range(50):
+            if t_sw.swkbd: break
+            time.sleep(0.01)
+        self.assertTrue(t_sw.prompt_open and t_sw.swkbd['title'] == 'Wie lautet dein Name?')
+        t_sw.finish_swkbd(t_sw.swkbd['id'], True, 'Tobias123456789')
+        th_sw.join(timeout=2)
+        self.assertEqual(out_sw, {'ok': True, 'text': 'Tobias123456'})
+        self.assertFalse(t_sw.prompt_open)
+
+        # Native companion matching for all 11 BananaNative / PeanutsNative titles + cstate persistence + UDP bridge
+        expected_companions = [
+            ({'id': 'native-01001b300b9be000', 'tid': '01001B300B9BE000', 't': 'Diablo III'}, 'd3'),
+            ({'id': 'native-01005ca01580e000', 'tid': '01005CA01580E000', 't': 'Persona 5 Royal'}, 'p5r'),
+            ({'id': 'native-01006bb00c6f0000', 'tid': '01006BB00C6F0000', 't': "Link's Awakening"}, 'zelda_la'),
+            ({'id': 'native-0400486024dec000', 'tid': '0400486024DEC000', 't': 'Ocarina of Time'}, 'oot'),
+            ({'id': 'native-0100000000010000', 'tid': '0100000000010000', 't': 'SUPER MARIO ODYSSEY'}, 'odyssey'),
+            ({'id': 'native-010015100b514000', 'tid': '010015100B514000', 't': 'Super Mario Bros. Wonder'}, 'wonder'),
+            ({'id': 'native-0400c3f00006e000', 'tid': '0400C3F00006E000', 't': 'Mario Kart World'}, 'mkworld'),
+            ({'id': 'native-0100187003a36000', 'tid': '0100187003A36000', 't': "Pokemon: Let's Go, Eevee!"}, 'letsgo'),
+            ({'id': 'native-01009aa000faa000', 'tid': '01009AA000FAA000', 't': 'Sonic Mania Plus'}, 'mania'),
+            ({'id': 'native-0100606026f12000', 'tid': '0100606026F12000', 't': 'FINAL FANTASY RESONANCE'}, 'ffres'),
+            ({'id': 'native-010051f0207b2000', 'tid': '010051F0207B2000', 't': 'Tomodachi Life'}, 'tomodachi'),
+            ({'id': 'n64-oot', 's': 'n64', 't': 'The Legend of Zelda: Ocarina of Time'}, 'oot'),
+        ]
+        for g_in, want_key in expected_companions:
+            self.assertEqual(companion.resolve_native_companion(g_in), want_key)
+        cs = companion.cstate_save('d3', {'toggle': 'd3_kanai', 'patch': {'gr_best': 95}})
+        self.assertTrue(cs['ok'] and cs['data']['done']['d3_kanai'] and cs['data']['gr_best'] == 95)
+        self.assertEqual(companion.cstate_get('d3')['data']['gr_best'], 95)
+        import socket as _sock
+        with _sock.socket(_sock.AF_INET, _sock.SOCK_DGRAM) as rx_s:
+            rx_s.bind(('127.0.0.1', 0))
+            port_u = rx_s.getsockname()[1]
+            rx_s.settimeout(1.0)
+            res_u = companion.send_native_pad('NOTE:CLeft,CUp,CRight', port=port_u)
+            self.assertTrue(res_u['ok'])
+            self.assertEqual(rx_s.recv(64), b'NOTE:CLeft,CUp,CRight')
+
+        # GBADuo v1.0.1 multi-region matching + automatic companion pack download for owned GBA games
+        self.assertTrue(companion.same_gba_game('BPRE', 'BPRD'))   # FireRed US <-> DE
+        self.assertTrue(companion.same_gba_game('AGSE', 'AGSP'))   # Golden Sun US <-> EU
+        self.assertFalse(companion.same_gba_game('CGB-AZ8E', 'CGB-AZ8P'))  # GB/GBC never cross-match
+        self.assertFalse(companion.same_gba_game('BPRE', 'BPGE'))  # FireRed != LeafGreen
+
+        gba_dir = TMP / 'gbaduo-test'
+        gba_dir.mkdir(parents=True, exist_ok=True)
+        rom_fr_de = bytearray(0x200)
+        rom_fr_de[0xAC:0xB0], rom_fr_de[0xB2] = b'BPRD', 0x96  # German FireRed (BPRD)
+        (gba_dir / 'Pokemon Feuerrot.gba').write_bytes(rom_fr_de)
+        rom_unb = bytearray(0x200)
+        rom_unb[0xAC:0xB0], rom_unb[0xB2] = b'BPRE', 0x96     # Pokemon Unbound hack (BPRE header)
+        (gba_dir / 'Pokemon Unbound v2.gba').write_bytes(rom_unb)
+
+        fake_cat_json = json.dumps({
+            'formatVersion': 1,
+            'companions': [
+                {'id': 'pokemon-firered-companion', 'title': 'FireRed', 'version': '3.1.0',
+                 'download': 'https://example.test/fr.zip', 'games': [{'gameCode': 'BPRE'}],
+                 'overview': 'overview/fr.png'},
+                {'id': 'pokemon-unbound-companion', 'title': 'Unbound', 'version': '0.2.0',
+                 'download': 'https://example.test/unb.zip', 'games': [{'gameCode': 'BPRE'}]},
+            ],
+        }).encode('utf-8')
+
+        def _make_pack_zip(pid, code):
+            zb = io.BytesIO()
+            with tandem.zipfile.ZipFile(zb, 'w') as zf:
+                zf.writestr(f'{pid}/manifest.json', json.dumps({
+                    'id': pid, 'name': pid, 'version': '3.1.0', 'formatVersion': 4,
+                    'match': {'gameCode': [code], 'crc32': []}, 'layout': 'layout.json',
+                }))
+                zf.writestr(f'{pid}/layout.json', json.dumps({'type': 'text', 'text': 'ok'}))
+            return zb.getvalue()
+
+        fr_zip = _make_pack_zip('pokemon-firered-companion', 'BPRE')
+        unb_zip = _make_pack_zip('pokemon-unbound-companion', 'BPRE')
+
+        class _FakeResp:
+            def __init__(self, payload): self.p = payload
+            def read(self, *_a): return self.p
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+
+        def _fake_open(req, timeout=10):
+            u = req.full_url if hasattr(req, 'full_url') else str(req)
+            if u.endswith('companions.json'): return _FakeResp(fake_cat_json)
+            if u.endswith('fr.zip'): return _FakeResp(fr_zip)
+            if u.endswith('unb.zip'): return _FakeResp(unb_zip)
+            raise OSError(u)
+
+        owned_games = [
+            {'id': 'gba-fr-de', 's': 'gba', 't': 'Pokémon Feuerrot', 'path': str(gba_dir / 'Pokemon Feuerrot.gba')},
+            {'id': 'gba-unb', 's': 'gba', 't': 'Pokémon Unbound', 'path': str(gba_dir / 'Pokemon Unbound v2.gba')},
+        ]
+        sync_res = companion.sync_owned_gba_packs(owned_games, tandem.rom_identity, cfg_dir=gba_dir / 'cfg',
+                                                  force_catalog=True, opener=_fake_open)
+        self.assertTrue(sync_res['ok'])
+        self.assertEqual(sorted(sync_res['installed']), ['pokemon-firered-companion', 'pokemon-unbound-companion'])
+        # German FireRed (BPRD) matches US FireRed pack (BPRE) via v1.0.1 multi-region (other_region=True), NOT Unbound!
+        m_fr = companion.match_packs_for_rom('BPRD', 0, 'Pokémon Feuerrot', installed=companion.list_installed_packs(gba_dir / 'cfg'))
+        self.assertEqual((m_fr['best_installed'], m_fr['best_other_region']), ('pokemon-firered-companion', True))
+        # Unbound ROM matches Unbound pack as exact preferred pack!
+        m_unb = companion.match_packs_for_rom('BPRE', 0, 'Pokémon Unbound', installed=companion.list_installed_packs(gba_dir / 'cfg'))
+        self.assertEqual((m_unb['best_installed'], m_unb['best_other_region']), ('pokemon-unbound-companion', False))
+
+
+class ThorStorageTests(unittest.TestCase):
+    def test_system_backup_and_restore_roundtrip(self):
+        import thor_storage
+        fake_home = TMP / 'sysbk-home'
+        dest_dir = TMP / 'sysbk-dest'
+        (fake_home / '.config/tandem/packs/pokemon-emerald-companion').mkdir(parents=True, exist_ok=True)
+        (fake_home / '.config/tandem/packs/pokemon-emerald-companion/manifest.json').write_text('{"id":"emerald"}')
+        (fake_home / '.ssh').mkdir(parents=True, exist_ok=True)
+        key_file = fake_home / '.ssh/id_ed25519'
+        key_file.write_text('secret-key-material')
+        os.chmod(key_file, 0o600)
+        link_file = fake_home / '.config/tandem/current-pack'
+        if link_file.exists() or link_file.is_symlink():
+            link_file.unlink()
+        link_file.symlink_to('packs/pokemon-emerald-companion')
+
+        res = thor_storage.run_system_backup(mode='profile', home=fake_home, dest_dir=dest_dir)
+        self.assertTrue(res.get('ok'), res)
+        arcs = thor_storage.list_system_backups(dest_dir)
+        self.assertEqual(len(arcs), 1)
+        self.assertEqual(arcs[0]['kind'], 'profile')
+
+        # Wipe files & restore into clean home, verifying symlinks and 0600 permissions survive!
+        restored = TMP / 'sysbk-restored'
+        restored.mkdir(parents=True, exist_ok=True)
+        r_res = thor_storage.restore_system_backup(arcs[0]['file'], home=restored, dest_dir=dest_dir)
+        self.assertTrue(r_res.get('ok'), r_res)
+        self.assertEqual((restored / '.config/tandem/packs/pokemon-emerald-companion/manifest.json').read_text(), '{"id":"emerald"}')
+        self.assertTrue((restored / '.config/tandem/current-pack').is_symlink())
+        self.assertEqual(os.stat(restored / '.ssh/id_ed25519').st_mode & 0o777, 0o600)
+
+        # Reject path traversal or unknown filenames
+        self.assertIn('error', thor_storage.restore_system_backup('../evil.tar.zst', home=restored, dest_dir=dest_dir))
+
+    def test_shrink_sfdisk_plan_4k_sectors_and_repeat_shrink(self):
+        import thor_storage
+        # Exact AYN Thor UFS 4.0 LUN 0 geometry (4096-byte logical sectors, sda17 userdata = 113 GiB, sda18..20 ArmadaOS)
+        sec = 4096
+        ud_start = 1916416       # ~7.31 GiB
+        ud_size = 29622016       # 113.0 GiB
+        armada_efi = 31538432    # right after userdata
+        sfdisk_doc = {
+            'partitiontable': {
+                'label': 'gpt',
+                'id': '98101b32-bbe2-4bf2-a06e-2bb33d000c20',
+                'device': '/dev/sda',
+                'unit': 'sectors',
+                'firstlba': 6,
+                'lastlba': 61388794,
+                'sectorsize': sec,
+                'table-length': 128,
+                'partitions': [
+                    {'node': '/dev/sda16', 'start': 1850880, 'size': 65536,
+                     'type': '0fc63daf-8483-4772-8e79-3d69d8477de4', 'uuid': '11111111-1111-1111-1111-111111111111', 'name': 'metadata'},
+                    {'node': '/dev/sda17', 'start': ud_start, 'size': ud_size,
+                     'type': '1b81e7e6-f50d-419b-a739-2eec8cfa3335', 'uuid': '22222222-2222-2222-2222-222222222222', 'name': 'userdata'},
+                    {'node': '/dev/sda18', 'start': armada_efi, 'size': 131072,
+                     'type': 'c12a7328-f81f-11d2-ba4b-00a0c93ec93b', 'uuid': '33333333-3333-3333-3333-333333333333', 'name': 'ARMADA'},
+                    {'node': '/dev/sda19', 'start': armada_efi + 131072, 'size': 262144,
+                     'type': 'bc13c2ff-59e6-4262-a352-b275fd6f7172', 'uuid': '44444444-4444-4444-4444-444444444444', 'name': 'ARMADA_BOOT'},
+                    {'node': '/dev/sda20', 'start': armada_efi + 393216, 'size': 29418496,
+                     'type': '0fc63daf-8483-4772-8e79-3d69d8477de4', 'uuid': '6c7d87a1-336c-4a78-8078-845910d52d27', 'name': 'ARMADA_ROOT'},
+                ],
+            }
+        }
+        plan = thor_storage.build_shrink_sfdisk_plan(sfdisk_doc, 16)
+        self.assertEqual(plan['new_node'], '/dev/sda21')
+        self.assertEqual(plan['new_label'], 'ARMADA_DATA')
+        self.assertEqual(plan['android_new_gib'], 16.0)
+        self.assertEqual(plan['gained_gib'], 97.0)
+        # 1 MiB alignment check (256 * 4096 = 1 MiB)
+        self.assertEqual((plan['new_start'] * sec) % (1024 * 1024), 0)
+        self.assertEqual(((plan['new_start'] + plan['new_size']) * sec) % (1024 * 1024), 0)
+        # Mounted ARMADA partitions remain 100% untouched byte-for-byte!
+        self.assertIn('/dev/sda20: start=31931648, size=29418496, type=0fc63daf-8483-4772-8e79-3d69d8477de4, name="ARMADA_ROOT", uuid=6c7d87a1-336c-4a78-8078-845910d52d27', plan['script'])
+
+        # Second subsequent shrink (16 GiB -> 8 GiB) must stop at sda21 ceiling and create sda22 ARMADA_DATA2!
+        doc2 = json.loads(json.dumps(sfdisk_doc))
+        doc2['partitiontable']['partitions'][1]['size'] = plan['userdata_new_size']
+        doc2['partitiontable']['partitions'].append({
+            'node': '/dev/sda21', 'start': plan['new_start'], 'size': plan['new_size'],
+            'type': thor_storage.LINUX_PART_TYPE, 'uuid': '55555555-5555-5555-5555-555555555555', 'name': 'ARMADA_DATA',
+        })
+        plan2 = thor_storage.build_shrink_sfdisk_plan(doc2, 8)
+        self.assertEqual((plan2['new_node'], plan2['new_label'], plan2['gained_gib']), ('/dev/sda22', 'ARMADA_DATA2', 8.0))
+        self.assertLessEqual(plan2['new_start'] + plan2['new_size'], plan['new_start'])
+        with self.assertRaises(ValueError):
+            thor_storage.build_shrink_sfdisk_plan(doc2, 6)  # below ANDROID_MIN_GIB=8
+
+    def test_moment_menu_filter_and_pre_quit_selection(self):
+        import companion, math
+        w, h = 160, 90
+        # 1) Final Fantasy-style dark-blue save menu: 4 stacked horizontal slot boxes with white borders & small text dots
+        ff_menu = bytearray(w * h * 3)
+        for y in range(h):
+            for x in range(w):
+                off = (y * w + x) * 3
+                in_box = 10 <= x < w - 10 and 8 <= y < h - 8
+                slot_border = in_box and (y in (8, 26, 44, 62, 80) or x in (10, w - 11))
+                fake_text = in_box and (y % 18 in (6, 7)) and (16 <= x < 62) and (x % 3 == 0)
+                if slot_border or fake_text:
+                    ff_menu[off:off + 3] = b'\xe8\xec\xf8'
+                elif in_box:
+                    ff_menu[off:off + 3] = b'\x12\x1e\x58'
+                else:
+                    ff_menu[off:off + 3] = b'\x06\x08\x14'
+        res_menu = companion.score_gameplay_frame_rgb(w, h, ff_menu)
+        self.assertTrue(res_menu['is_menu'], res_menu)
+
+        # 2) Rich gameplay world scene (sky gradient, textured terrain, varied colors & sprites, even with 4:3 pillarboxes!)
+        world = bytearray(w * h * 3)
+        for y in range(h):
+            for x in range(20, w - 20):  # 4:3 active viewport with black pillarbox bars on left/right
+                off = (y * w + x) * 3
+                if y < 34:
+                    r = 45 + (y * 3)
+                    g = 110 + (y * 2) + int(12 * math.sin(x * 0.25))
+                    b = 215 - y
+                else:
+                    n = ((x * 37 + y * 53) ^ (x * y)) & 31
+                    r = min(255, 40 + (x % 55) * 2 + n)
+                    g = min(255, 95 + ((y * 3 + x) % 70) + n)
+                    b = min(255, 35 + ((x * 5 - y * 2) % 60) + n)
+                world[off:off + 3] = bytes((max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b))))
+        res_world = companion.score_gameplay_frame_rgb(w, h, world)
+        self.assertFalse(res_world['is_menu'], res_world)
+        self.assertGreater(res_world['score'], 0.55)
+        self.assertGreater(res_world['score'], res_menu['score'] * 3)
+
+        # 3) Pre-quit selection skips final-seconds menu/borderline shots in favor of real world gameplay >=25s before quit
+        f_world = TMP / 'moment-world.png'
+        f_late = TMP / 'moment-late.png'
+        f_menu = TMP / 'moment-menu.png'
+        for fp in (f_world, f_late, f_menu):
+            fp.write_bytes(TINY_PNG)
+        entries = [
+            {'path': str(f_world), 'at': 1000.0, 'score': res_world['score'], 'is_menu': False, 'motion': 9.5},
+            {'path': str(f_late), 'at': 1032.0, 'score': 0.50, 'is_menu': False, 'motion': 1.0},  # 8s before quit (opening menu)
+            {'path': str(f_menu), 'at': 1038.0, 'score': res_menu['score'], 'is_menu': True, 'motion': 0.4},
+        ]
+        chosen = companion.pick_best_moment(entries, quit_at=1040.0, min_pre_quit_secs=25.0)
+        self.assertEqual(chosen['path'], str(f_world))
+
+    def test_steam_companion_provisioner_and_updater_rollback(self):
+        import hashlib, thor_updater
+        fake_home = TMP / 'upd-home'
+        ffix_dir = fake_home / '.local/share/Steam/steamapps/common/FINAL FANTASY IX'
+        fo4_dir = fake_home / '.local/share/Steam/steamapps/common/Fallout 4'
+        (ffix_dir / 'x64/FF9_Data/Managed').mkdir(parents=True, exist_ok=True)
+        (ffix_dir / 'Memoria.ini').write_text('[Graphics]\nEnabled = 1\n', encoding='utf-8')
+        (ffix_dir / 'x64/FF9_Data/Managed/Assembly-CSharp.dll').write_bytes(b'OLD_FFIX_DLL')
+        (fo4_dir / 'Data/F4SE/Plugins').mkdir(parents=True, exist_ok=True)
+        (fo4_dir / 'Data/F4SE/Plugins/ThorPipBoy.dll').write_bytes(b'OLD_PIPBOY_V010')
+
+        ffix_blob = b'MZ_NEW_FFIX_V030_COMPANION_DLL'
+        pip_blob = b'MZ_NEW_PIPBOY_V020_COMPANION_DLL'
+        pip_ini = b'[Server]\nPort = 27016\n'
+        ffix_sha = hashlib.sha256(ffix_blob).hexdigest()
+        pip_sha = hashlib.sha256(pip_blob).hexdigest()
+
+        elf_v1 = b'\x7fELF' + b'V1_ARM64_APPIMAGE_' + (b'\x90' * 5000)
+        elf_v2 = b'\x7fELF' + b'V2_ARM64_APPIMAGE_' + (b'\x90' * 5000)
+        elf_v2_sha = hashlib.sha256(elf_v2).hexdigest()
+        apps_dir = fake_home / 'Applications'
+        apps_dir.mkdir(parents=True, exist_ok=True)
+        (apps_dir / 'DuckStation.AppImage').write_bytes(elf_v1)
+
+        class _Resp:
+            def __init__(self, data): self.d = data
+            def read(self, *_a): return self.d
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+
+        def _opener(req, timeout=15):
+            u = req.full_url if hasattr(req, 'full_url') else str(req)
+            if 'harmssi/thor-ffix/releases/latest' in u:
+                return _Resp(json.dumps({
+                    'tag_name': 'v0.3.0',
+                    'assets': [
+                        {'name': 'Assembly-CSharp.dll', 'browser_download_url': 'https://example.test/ffix.dll'},
+                        {'name': 'SHA256SUMS', 'browser_download_url': 'https://example.test/ffix.sums'},
+                    ],
+                }).encode())
+            if u == 'https://example.test/ffix.sums':
+                return _Resp(f'{ffix_sha}  Assembly-CSharp.dll\n'.encode())
+            if u == 'https://example.test/ffix.dll':
+                return _Resp(ffix_blob)
+            if 'harmssi/thor-pipboy/releases/latest' in u:
+                return _Resp(json.dumps({
+                    'tag_name': 'v0.2.0',
+                    'assets': [
+                        {'name': 'ThorPipBoy.dll', 'browser_download_url': 'https://example.test/pipboy.dll'},
+                        {'name': 'ThorPipBoy.ini', 'browser_download_url': 'https://example.test/pipboy.ini'},
+                        {'name': 'SHA256SUMS', 'browser_download_url': 'https://example.test/pipboy.sums'},
+                    ],
+                }).encode())
+            if u == 'https://example.test/pipboy.sums':
+                return _Resp(f'{pip_sha}  ThorPipBoy.dll\n'.encode())
+            if u == 'https://example.test/pipboy.dll':
+                return _Resp(pip_blob)
+            if u == 'https://example.test/pipboy.ini':
+                return _Resp(pip_ini)
+            if 'stenzek/duckstation/releases' in u:
+                return _Resp(json.dumps([{
+                    'tag_name': 'v0.1-10950',
+                    'assets': [{
+                        'name': 'DuckStation-arm64.AppImage',
+                        'browser_download_url': 'https://example.test/duck-v2.AppImage',
+                        'size': len(elf_v2),
+                        'digest': f'sha256:{elf_v2_sha}',
+                        'updated_at': '2026-11-22T12:00:00Z',
+                    }],
+                }]).encode())
+            if u == 'https://example.test/duck-v2.AppImage':
+                return _Resp(elf_v2)
+            raise OSError(u)
+
+        # 1) Automatic Steam companion installation + SHA256SUMS check + .thor-bak backup + Memoria.ini [ThorStatus]
+        res_st = thor_updater.sync_steam_companions(home=fake_home, apply_updates=True, opener=_opener)
+        self.assertEqual(len(res_st['updated']), 2, res_st)
+        self.assertEqual((ffix_dir / 'x64/FF9_Data/Managed/Assembly-CSharp.dll').read_bytes(), ffix_blob)
+        self.assertEqual((ffix_dir / 'x64/FF9_Data/Managed/Assembly-CSharp.dll.thor-bak').read_bytes(), b'OLD_FFIX_DLL')
+        self.assertIn('[ThorStatus]\nEnabled = 1', (ffix_dir / 'Memoria.ini').read_text())
+        self.assertEqual((fo4_dir / 'Data/F4SE/Plugins/ThorPipBoy.dll').read_bytes(), pip_blob)
+        self.assertEqual((fo4_dir / 'Data/F4SE/Plugins/ThorPipBoy.ini').read_bytes(), pip_ini)
+
+        # Second sync is an instant idempotent no-op because local SHA-256 already matches SHA256SUMS!
+        res_st2 = thor_updater.sync_steam_companions(home=fake_home, apply_updates=True, opener=_opener)
+        self.assertEqual(res_st2['updated'], [])
+
+        # 2) AppImage SHA-256 digest update detection, atomic install, .prev backup & 1-tap rollback
+        chk = thor_updater.check_appimages(apps_dir=apps_dir, opener=_opener, network=True)
+        duck = next(a for a in chk if a['id'] == 'duckstation')
+        self.assertTrue(duck['update_available'])
+        upd = thor_updater.install_or_update_appimage('duckstation', apps_dir=apps_dir, opener=_opener)
+        self.assertTrue(upd.get('ok'), upd)
+        self.assertEqual((apps_dir / 'DuckStation.AppImage').read_bytes(), elf_v2)
+        self.assertEqual((apps_dir / 'DuckStation.AppImage.prev').read_bytes(), elf_v1)
+        rb = thor_updater.rollback_appimage('duckstation', apps_dir=apps_dir)
+        self.assertTrue(rb.get('ok'), rb)
+        self.assertEqual((apps_dir / 'DuckStation.AppImage').read_bytes(), elf_v1)
+
+        # 3) Custom Obtainium-style GitHub feed + RetroArch UDP memory bridge
+        ra_cfg = fake_home / '.var/app/org.libretro.RetroArch/config/retroarch/retroarch.cfg'
+        ra_cfg.parent.mkdir(parents=True, exist_ok=True)
+        ra_cfg.write_text('network_cmd_enable = "false"\n', encoding='utf-8')
+        self.assertTrue(thor_updater.ensure_retroarch_udp_companion(home=fake_home))
+        self.assertIn('network_cmd_enable = "true"', ra_cfg.read_text())
+        self.assertTrue(thor_updater.save_custom_feed('https://github.com/example/my-emu')['ok'])
+        self.assertTrue(any(f['id'] == 'custom-my-emu' for f in thor_updater.all_appimage_feeds()))
+        thor_updater.remove_custom_feed('custom-my-emu')
+        self.assertFalse(any(f['id'] == 'custom-my-emu' for f in thor_updater.all_appimage_feeds()))
+
+    def test_fast_charging_diagnostics_travel_mode_and_ai_launchers(self):
+        import telemetry
+        ps_root = TMP / 'fake-psy'
+        tc_root = TMP / 'fake-typec'
+        (ps_root / 'battery').mkdir(parents=True, exist_ok=True)
+        (ps_root / 'qcom-battmgr-usb').mkdir(parents=True, exist_ok=True)
+        (ps_root / 'ucsi-psy').mkdir(parents=True, exist_ok=True)
+        (tc_root / 'port0').mkdir(parents=True, exist_ok=True)
+        (tc_root / 'port0-partner').mkdir(parents=True, exist_ok=True)
+
+        touch(ps_root / 'battery/type', 'Battery\n')
+        touch(ps_root / 'battery/status', 'Charging\n')
+        touch(ps_root / 'battery/capacity', '42\n')
+        touch(ps_root / 'battery/constant_charge_current', '6000000\n')
+        touch(ps_root / 'battery/constant_charge_current_max', '9000000\n')
+        touch(ps_root / 'battery/time_to_full_avg', '2400\n')
+        touch(ps_root / 'qcom-battmgr-usb/type', 'USB\n')
+        touch(ps_root / 'qcom-battmgr-usb/online', '1\n')
+        touch(ps_root / 'qcom-battmgr-usb/voltage_now', '9000000\n')
+        touch(ps_root / 'qcom-battmgr-usb/input_current_limit', '3000000\n')
+        touch(ps_root / 'qcom-battmgr-usb/usb_type', 'Unknown SDP DCP [PD_PPS]\n')
+        touch(ps_root / 'ucsi-psy/type', 'USB\n')
+        touch(ps_root / 'ucsi-psy/online', '1\n')
+        touch(ps_root / 'ucsi-psy/usb_type', 'C [PD_PPS]\n')
+        touch(tc_root / 'port0/data_role', 'host [device]\n')
+        touch(tc_root / 'port0-partner/supports_usb_power_delivery', 'yes\n')
+
+        chg_fast = telemetry.charger_detail(root=ps_root, typec_root=tc_root)
+        self.assertTrue(chg_fast['fast_charging'], chg_fast)
+        self.assertEqual(chg_fast['protocol'], 'PD_PPS')
+        self.assertEqual((chg_fast['voltage_v'], chg_fast['current_limit_a'], chg_fast['max_input_w']), (9.0, 3.0, 27.0))
+        self.assertEqual(chg_fast['mins_to_full'], 40)
+
+        # Simulate 5V SDP computer port -> must flag pc_port=True and fast_charging=False
+        touch(ps_root / 'qcom-battmgr-usb/voltage_now', '5000000\n')
+        touch(ps_root / 'qcom-battmgr-usb/usb_type', 'Unknown [SDP] DCP PD\n')
+        touch(ps_root / 'ucsi-psy/usb_type', '[C] PD\n')
+        chg_pc = telemetry.charger_detail(root=ps_root, typec_root=tc_root)
+        self.assertFalse(chg_pc['fast_charging'])
+        self.assertTrue(chg_pc['pc_port'])
+
+        # AI direct launchers (--dangerously-skip-permissions for both Claude Code and Google Antigravity `agy`)
+        tandem.save_config({'ai_workdir': str(TMP), 'panel_hz': 60, 'auto_travel': True})
+        cfg_pub = tandem.public_config()
+        self.assertEqual(cfg_pub['panel_hz'], 60)
+        self.assertTrue(cfg_pub['auto_travel'])
+        self.assertEqual(tandem.base_panel_hz(), 60)
+        sc_claude = tandem.write_ai_launcher('claude')
+        sc_agy = tandem.write_ai_launcher('agy')
+        self.assertIn('claude --dangerously-skip-permissions', sc_claude.read_text())
+        self.assertIn('agy --dangerously-skip-permissions', sc_agy.read_text())
+        self.assertIn('BROWSER=', sc_agy.read_text())
+        self.assertTrue((tandem.STATE / 'ai-bin' / 'ai-browser.sh').is_file())
+        self.assertTrue(callable(tandem.x11))
+        self.assertTrue(callable(tandem.x_press_code))
+        from types import SimpleNamespace
+        r_aiw = tandem.ai_window_act(SimpleNamespace(dry=True), 'toggle')
+        self.assertTrue(r_aiw.get('ok'))
+        fake_t = SimpleNamespace(dry=True, run={'layout': 'de'}, publish=lambda *a, **kw: None)
+        st_qr = tandem.ai_auth_register(fake_t, 'https://accounts.google.com/o/oauth2/auth?test=1', open_ui=True)
+        self.assertTrue(st_qr.get('ok') and st_qr.get('open') and st_qr.get('has_url'))
+        if st_qr.get('qr'):
+            import sys as _sys
+            _sys.path.insert(0, str(Path(tandem.__file__).parent / 'ui'))
+            import qr
+            self.assertGreater(len(qr.matrix(st_qr['qr'])), 20)
+        page = tandem.ai_login_page(tandem.AI_AUTH['token'])
+        self.assertIn('accounts.google.com', page)
+        sub_code = tandem.ai_auth_submit(fake_t, '4/0A-sample-code')
+        self.assertTrue(sub_code.get('ok') and sub_code.get('mode') == 'code')
+        sub_cb = tandem.ai_auth_submit(fake_t, 'http://localhost:41234/callback?code=abc')
+        self.assertTrue(sub_cb.get('ok') and sub_cb.get('mode') == 'callback')
+        for title, expected in (
+            ('WoW Forever', 'wow'),
+            ('Super Mario Sunshine', 'sunshine'),
+            ("Luigi's Mansion", 'luigis_mansion'),
+            ('Paper Mario: The Thousand-Year Door', 'ttyd'),
+            ('Mario Kart: Double Dash!!', 'mkdd'),
+            ('Super Smash Bros. Melee', 'melee'),
+            ('Animal Crossing', 'ac_gc'),
+            ('Crash Bandicoot: The Wrath of Cortex', 'crash_woc'),
+        ):
+            self.assertEqual(tandem.companion.resolve_native_companion({'t': title, 's': 'gc'}), expected)
+        tandem.save_config({'panel_hz': 120, 'auto_travel': False, 'ai_workdir': ''})
 
 
 if __name__ == '__main__':
