@@ -137,6 +137,15 @@ TEOF
     echo "HyperDrive game-tweaks, LZ4 ZRAM, sysctl + udev rules installed into $ETC_ROOT"
 fi
 
+# Append mitigations=off to BLS kernel options in /boot/loader/entries (eliminates ARM64 Spectre-BHB syscall overhead)
+for bls in "$MNT"/boot/loader*/entries/*.conf "$MNT"/ostree/boot.*/default/*/*/boot/loader/entries/*.conf; do
+    [ -f "$bls" ] || continue
+    if grep -q '^options ' "$bls" && ! grep -q 'mitigations=off' "$bls"; then
+        sed -i 's/^options \(.*\)$/options \1 mitigations=off/' "$bls"
+        echo "Added mitigations=off to $bls"
+    fi
+done
+
 sync
 umount -R "$MNT"
 losetup -d "$LOOP"

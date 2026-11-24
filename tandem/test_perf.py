@@ -102,6 +102,20 @@ class PerfEngineTest(unittest.TestCase):
         self.assertEqual(t['ram_free_gib'], 8.3)
         self.assertEqual(t['ram_total_gib'], 11.5)
 
+    def test_smart_presets_and_banananative_ram_boost(self):
+        opt = thor_perf.smart_game_opt({'appid': '377160', 's': 'steam'}, {})
+        self.assertEqual(opt['res'], 720)
+        self.assertEqual(opt['scale'], 'sgsr')
+        # User override always wins
+        opt2 = thor_perf.smart_game_opt({'appid': '377160', 's': 'steam'}, {'res': 0})
+        self.assertEqual(opt2['res'], 0)
+        # 12 GB Thor disables Android fileback thrashing and enables 4 PSO threads
+        mem = self.root / 'meminfo12'
+        mem.write_text('MemTotal:       12058624 kB\nMemAvailable:    8500000 kB\n')
+        env = thor_perf.game_env({}, {}, 'steam', engine_label='BananaNative', meminfo=mem)
+        self.assertEqual(env['DM_MEM_FILEBACK'], '0')
+        self.assertEqual(env['DM_VK_PSO_SLOTS'], '4')
+
 
 if __name__ == '__main__':
     unittest.main()

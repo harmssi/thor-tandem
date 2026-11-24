@@ -58,3 +58,16 @@ chmod 755 "$HOME_DIR/Desktop/tandem-zurueck.desktop"
 
 touch "$MARK"
 chown -R "$USER_NAME:$USER_NAME" "$HOME_DIR/.local" "$HOME_DIR/.config" "$HOME_DIR/Desktop" 2>/dev/null || true
+
+# Apply mitigations=off to BLS entry and rebuild ESP /KERNEL atomically
+if [ -x /usr/libexec/armada/armada-bootimg-update ] && mountpoint -q /boot; then
+    mount -o remount,rw /boot 2>/dev/null || true
+    for bls in /boot/loader/entries/*.conf; do
+        [ -f "$bls" ] || continue
+        if grep -q '^options ' "$bls" && ! grep -q 'mitigations=off' "$bls"; then
+            sed -i 's/^options \(.*\)$/options \1 mitigations=off/' "$bls"
+        fi
+    done
+    /usr/libexec/armada/armada-bootimg-update >/dev/null 2>&1 || true
+    mount -o remount,ro /boot 2>/dev/null || true
+fi

@@ -1110,7 +1110,8 @@ class Tandem:
             wide = None
             if pack: cmd, wide = wide_core(cmd, pack, self.saved.get('wide', {}).get(gid, False))
             if not self.dry: self.home_window = focused_window()
-            opt = self.saved.get('gameopt', {}).get(gid) or {}
+            raw_opt = self.saved.get('gameopt', {}).get(gid) or {}
+            opt = thor_perf.smart_game_opt(game, raw_opt)
             cfg_now = load_config()
             prof = opt.get('profile') or ('Turbo' if label in ('BananaNative', 'PeanutsNative') else ('Eco' if cfg_now.get('travel_mode') else ''))
             fps = opt.get('fps') if opt.get('fps') in FPS_LIMITS and opt.get('fps') else base_panel_hz(cfg_now)
@@ -1133,7 +1134,7 @@ class Tandem:
                                'WAYLAND_DISPLAY': os.environ.get('WAYLAND_DISPLAY') or 'gamescope-0',
                                'XDG_RUNTIME_DIR': os.environ.get('XDG_RUNTIME_DIR') or f'/run/user/{os.getuid()}'}
                     if game.get('s') not in ('term', 'app'):
-                        env = thor_perf.game_env(env if env is not None else os.environ, opt, game.get('s', ''), low_latency=low_lat)
+                        env = thor_perf.game_env(env if env is not None else os.environ, opt, game.get('s', ''), low_latency=low_lat, engine_label=label)
                         if game.get('s') == 'steam' and not game.get('direct'):
                             threading.Thread(target=thor.sync_steam_compat, daemon=True).start()
                         elif ARMADA_LAUNCH.is_file() and cmd and cmd[0] != str(ARMADA_LAUNCH) and game.get('s') in ('port', 'steam', 'ps2', 'wiiu', 'n3ds', 'psp'):
@@ -3515,6 +3516,10 @@ def handle_updater(tandem, data):
         return {'ok': True, 'text': 'Prüfe & installiere Spiel-Begleiter …'}
     if act == 'rollback':
         res = thor_updater.rollback_appimage(str(data.get('id') or ''))
+        tandem.publish('updater', updater_state(tandem))
+        return res
+    if act == 'rollback_turnip':
+        res = thor_updater.rollback_turnip()
         tandem.publish('updater', updater_state(tandem))
         return res
     if act == 'add_feed':

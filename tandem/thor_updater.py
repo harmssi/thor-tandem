@@ -859,6 +859,139 @@ def sync_all_companions(games_list, rom_id_fn, roots=(), home=None, cfg_dir=None
     return summary
 
 
+# ---- Bleeding-Edge Adreno 740 Turnip Driver Updater (Linux ARM64 glibc) ------------------------------------------------
+TURNIP_FEED_API = 'https://api.github.com/repos/Droid-Deck/Drivers/releases?per_page=4'
+TURNIP_USER_DIR = HOME / '.local/share/armada/turnip/dd-turnip'
+
+
+def _valid_arm64_glibc_turnip(data):
+    return len(data) >= 64 and data[:5] == b'\x7fELF\x02' and data[18:20] == b'\xb7\x00' and b'libc.so.6\0' in data
+
+
+def check_turnip_driver(network=False):
+    """Inspect installed DD-Turnip (Mesa 27.0-devel ARM64 glibc) and optionally check upstream GitHub."""
+    st = load_state()
+    cached = dict(st.get('turnip_driver') or {})
+    so_path = TURNIP_USER_DIR / 'libvulkan_freedreno.so'
+    meta_path = TURNIP_USER_DIR / 'meta.json'
+    installed = so_path.is_file()
+    cur_ver = ''
+    cur_sha = ''
+    if installed:
+        try:
+            meta = json.loads(meta_path.read_text()) if meta_path.is_file() else {}
+            cur_ver = str(meta.get('driverVersion') or meta.get('name') or 'installiert')
+        except (OSError, ValueError):
+            cur_ver = 'installiert'
+        cur_sha = sha256_file(so_path)
+
+    latest_ver = cached.get('latest_version', '')
+    latest_sha = cached.get('latest_sha', '')
+    zip_url = cached.get('zip_url', '')
+    if network:
+        try:
+            req = urllib.request.Request(TURNIP_FEED_API, headers={'User-Agent': UA})
+            rels = json.loads(urllib.request.urlopen(req, timeout=12).read().decode('utf-8'))
+            for r in (rels or ()):
+                assets = r.get('assets') or []
+                z = next((a for a in assets if str(a.get('name', '')).endswith('.zip')), None)
+                if z:
+                    latest_ver = str(r.get('tag_name') or r.get('name') or '')
+                    zip_url = str(z.get('browser_download_url') or '')
+                    # GitHub API provides sha256:<hex> on zip asset; compare zip digest for zero-download polling
+                    dig = str(z.get('digest') or '')
+                    latest_sha = dig.split(':', 1)[1].lower() if dig.startswith('sha256:') else ''
+                    cached.update(latest_version=latest_ver, latest_sha=latest_sha, zip_url=zip_url, checked_at=int(time.time()))
+                    st['turnip_driver'] = cached
+                    save_state(st)
+                    break
+        except Exception:
+            pass
+
+    installed_zip_sha = cached.get('installed_zip_sha', '')
+    upd_avail = bool(latest_ver and ((not installed) or (latest_sha and installed_zip_sha and latest_sha != installed_zip_sha) or (latest_ver != cur_ver and not installed_zip_sha)))
+    return {
+        'id': 'dd-turnip',
+        'armada_id': 'user:dd-turnip',
+        'name': 'Turnip Adreno 740 (Mesa-Git · DroidDeck)',
+        'installed': installed,
+        'current_version': cur_ver,
+        'latest_version': latest_ver,
+        'update_available': upd_avail if installed else False,
+        'can_install': bool(not installed and (zip_url or True)),
+        'has_rollback': (TURNIP_USER_DIR / 'libvulkan_freedreno.so.prev').is_file(),
+        'sha256': cur_sha[:12] if cur_sha else '',
+    }
+
+
+def install_or_update_turnip():
+    """Download latest Linux ARM64 glibc Turnip bundle, verify SHA-256 + ELF64 glibc, keep .prev backup & install."""
+    info = check_turnip_driver(network=True)
+    st = load_state()
+    cached = dict(st.get('turnip_driver') or {})
+    zip_url = cached.get('zip_url', '')
+    if not zip_url:
+        return {'error': 'Keine Turnip-Quelle auf GitHub erreichbar.'}
+    try:
+        req = urllib.request.Request(zip_url, headers={'User-Agent': UA})
+        raw = urllib.request.urlopen(req, timeout=60).read()
+    except Exception as exc:
+        return {'error': f'Download fehlgeschlagen: {exc}'}
+
+    zip_sha = hashlib.sha256(raw).hexdigest()
+    if cached.get('latest_sha') and zip_sha != cached['latest_sha']:
+        return {'error': 'SHA-256-Prüfsumme des Turnip-Archivs stimmt nicht überein.'}
+
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(raw))
+        manifest = json.loads(zf.read('manifest.json').decode('utf-8'))
+        lin_spec = (manifest.get('drivers') or {}).get('linux') or {}
+        so_bytes = zf.read(lin_spec.get('library') or 'linux/libvulkan_freedreno.so')
+        meta_bytes = zf.read(lin_spec.get('meta') or 'linux/meta.json')
+    except Exception as exc:
+        return {'error': f'Ungültiges Turnip-Paket: {exc}'}
+
+    expected_so_sha = str(lin_spec.get('sha256') or '').lower()
+    actual_so_sha = hashlib.sha256(so_bytes).hexdigest()
+    if expected_so_sha and actual_so_sha != expected_so_sha:
+        return {'error': 'SHA-256 von libvulkan_freedreno.so fehlerhaft.'}
+    if not _valid_arm64_glibc_turnip(so_bytes):
+        return {'error': 'Abgelehnt: keine gültige ARM64-glibc-Bibliothek (Android/Bionic ausgeschlossen).'}
+
+    TURNIP_USER_DIR.mkdir(parents=True, exist_ok=True)
+    so_dst = TURNIP_USER_DIR / 'libvulkan_freedreno.so'
+    prev_dst = TURNIP_USER_DIR / 'libvulkan_freedreno.so.prev'
+    if so_dst.is_file():
+        if sha256_file(so_dst) == actual_so_sha:
+            cached['installed_zip_sha'] = zip_sha
+            st['turnip_driver'] = cached
+            save_state(st)
+            return {'ok': True, 'unchanged': True, 'version': info.get('latest_version', ''), 'text': 'Turnip-Treiber ist bereits aktuell.'}
+        shutil.copy2(so_dst, prev_dst)
+
+    tmp_so = TURNIP_USER_DIR / '.libvulkan_freedreno.so.tmp'
+    tmp_so.write_bytes(so_bytes)
+    os.chmod(tmp_so, 0o755)
+    os.replace(tmp_so, so_dst)
+    (TURNIP_USER_DIR / 'meta.json').write_bytes(meta_bytes)
+
+    ver = str(manifest.get('tag') or info.get('latest_version') or 'DD-Turnip')
+    cached['installed_zip_sha'] = zip_sha
+    cached['installed_version'] = ver
+    st['turnip_driver'] = cached
+    save_state(st)
+    return {'ok': True, 'version': ver, 'text': f'{ver} installiert (wählbar unter Leistung › Turnip).'}
+
+
+def rollback_turnip():
+    so_dst = TURNIP_USER_DIR / 'libvulkan_freedreno.so'
+    prev_dst = TURNIP_USER_DIR / 'libvulkan_freedreno.so.prev'
+    if not prev_dst.is_file():
+        return {'error': 'Keine vorherige Turnip-Version (.prev) vorhanden.'}
+    os.replace(prev_dst, so_dst)
+    return {'ok': True, 'text': 'Vorheriger Turnip-Treiber wiederhergestellt.'}
+
+
 # ---- Unified Overview & One-Click "Update Everything" Job Runner -------------------------------------------------------
 def overview(games_list=(), rom_id_fn=None, roots=(), self_version='0', self_new=''):
     st = load_state()
@@ -882,13 +1015,15 @@ def overview(games_list=(), rom_id_fn=None, roots=(), self_version='0', self_new
     pending_apps = sum(1 for a in apps if a.get('update_available'))
     pending_fp = len(fp.get('updates') or [])
     pending_comp = sum(1 for c in ((comp or {}).get('steam') or ()) if c.get('update_available'))
-    total_pending = pending_apps + pending_fp + pending_comp + (1 if self_new else 0)
+    turnip = check_turnip_driver(network=False)
+    total_pending = pending_apps + pending_fp + pending_comp + (1 if turnip.get('update_available') else 0) + (1 if self_new else 0)
     return {
         'tandem_version': self_version,
         'tandem_new': self_new or '',
         'last_check': st.get('last_check', 0),
         'pending_count': total_pending,
         'appimages': apps,
+        'turnip': turnip,
         'flatpaks': fp,
         'companions': comp or {},
         'job': job_state(),
@@ -929,6 +1064,14 @@ def run_full_update(games_list, rom_id_fn, roots=(), apply_updates=True, self_up
                 r = install_or_update_appimage(a['id'])
                 if r.get('ok') and not r.get('unchanged'):
                     done_items.append(f'{a["name"]} {r.get("version", "")}'.strip())
+
+    step('Prüfe Adreno-740-Turnip-Treiber (GitHub) …')
+    tp = check_turnip_driver(network=True)
+    if apply_updates and tp.get('update_available'):
+        step('Aktualisiere Turnip-Grafiktreiber …')
+        tr = install_or_update_turnip()
+        if tr.get('ok') and not tr.get('unchanged'):
+            done_items.append(f'Turnip {tr.get("version", "")}'.strip())
 
     step('Prüfe Flatpak-Emulatoren …')
     fp = flatpak_status(check_remote=True)
@@ -979,7 +1122,10 @@ def start_update_job(games_list, rom_id_fn, roots=(), apply_updates=True, target
 
     def worker():
         try:
-            if target_app:
+            if target_app == 'turnip:dd':
+                _JOB['step'] = 'Lade Turnip Adreno-740-Treiber …'
+                res = install_or_update_turnip()
+            elif target_app:
                 _JOB['step'] = f'Lade {target_app} …'
                 res = install_or_update_appimage(target_app)
             else:

@@ -21,7 +21,49 @@ BATT_BASE = Path('/sys/class/power_supply/battery')
 SCX_OPS = Path('/sys/kernel/sched_ext/root/ops')
 MEMINFO = Path('/proc/meminfo')
 TURNIP_DIR = Path('/usr/share/armada/turnip')
+USER_TURNIP_DIR = Path.home() / '.local/share/armada/turnip'
 HOST_TURNIP_ICD = Path('/usr/share/vulkan/icd.d/freedreno_icd.aarch64.json')
+
+# Zero-config per-game Smart Presets (only applied when the user has not set a manual override for that game):
+# Heavy DX11/DX12/UE4/UE5 3D Steam titles get 720p SGSR Super-Resolution + Performance profile automatically.
+HEAVY_720P_APPIDS = frozenset((
+    '377160',   # Fallout 4
+    '1687950',  # Persona 5 Royal
+    '1091500',  # Cyberpunk 2077
+    '1245620',  # Elden Ring
+    '292030',   # The Witcher 3
+    '271590',   # Grand Theft Auto V
+    '1174180',  # Red Dead Redemption 2
+    '1086940',  # Baldur's Gate 3
+    '1593500',  # God of War
+    '814380',   # Sekiro
+    '1817070',  # Marvel's Spider-Man
+    '1446780',  # Monster Hunter Rise
+    '582010',   # Monster Hunter: World
+    '1151640',  # Horizon Zero Dawn
+    '2050650',  # Resident Evil 4
+    '374320',   # Dark Souls III
+))
+STRICT_TSO_APPIDS = frozenset((
+    '1966720',  # Lethal Company (Unity Mono race)
+    '892970',   # Valheim (Unity)
+))
+
+
+def smart_game_opt(game, user_opt=None):
+    """Merge zero-config Smart Presets underneath explicit user per-game options."""
+    base = {}
+    g = game or {}
+    appid = str(g.get('appid') or '')
+    if appid in HEAVY_720P_APPIDS and not g.get('direct'):
+        base['res'] = 720
+        base['scale'] = 'sgsr'
+        base['profile'] = 'Performance'
+    if appid in STRICT_TSO_APPIDS:
+        base['fex_tso'] = True
+    if user_opt:
+        base.update(user_opt)
+    return base
 
 # Snapdragon 8 Gen 2 (AYN Thor) asymmetric topology:
 # CPU 0-2 = 3x Cortex-A510 Silver (2.02 GHz), CPU 3-6 = 4x Cortex-A710/A715 Gold (2.80 GHz), CPU 7 = 1x Cortex-X3 Prime (2.96 GHz)
@@ -292,10 +334,35 @@ def pin_game_tree(root_pid=None, mode='big'):
     return pinned
 
 
-def resolve_turnip_icd(driver='winnative', turnip_dir=TURNIP_DIR, host_icd=HOST_TURNIP_ICD):
-    """Return explicit Vulkan ICD paths for Turnip (eliminating llvmpipe / LLVM 22 overhead)."""
+def _is_arm64_glibc(path):
+    try:
+        data = Path(path).read_bytes()
+        return len(data) >= 64 and data[:5] == b'\x7fELF\x02' and data[18:20] == b'\xb7\x00' and b'libc.so.6\0' in data
+    except OSError:
+        return False
+
+
+def resolve_turnip_icd(driver='winnative', turnip_dir=TURNIP_DIR, host_icd=HOST_TURNIP_ICD, user_dir=USER_TURNIP_DIR):
+    """Return explicit Vulkan ICD paths for Turnip (supporting user:<name> custom drivers & eliminating llvmpipe)."""
+    guest = ('/usr/share/vulkan/icd.d/freedreno_icd.x86_64.json', '/usr/share/vulkan/icd.d/freedreno_icd.i686.json')
+    if isinstance(driver, str) and driver.startswith('user:'):
+        uname = driver[5:]
+        so = Path(user_dir) / uname / 'libvulkan_freedreno.so'
+        if _is_arm64_glibc(so):
+            cdir = Path(os.environ.get('XDG_CACHE_HOME') or (Path.home() / '.cache')) / 'tandem/turnip-icd'
+            try:
+                cdir.mkdir(parents=True, exist_ok=True)
+                manifest = cdir / f'{uname}.json'
+                import json as _json
+                manifest.write_text(_json.dumps({
+                    'file_format_version': '1.0.1',
+                    'ICD': {'library_path': str(so), 'api_version': '1.4.0'},
+                }) + '\n')
+                return ':'.join([str(manifest), *guest])
+            except OSError:
+                pass
     for cand in (driver, 'winnative', 'devel', 'stable'):
-        if not cand:
+        if not cand or str(cand).startswith('user:'):
             continue
         manifests = [Path(turnip_dir) / cand / f'icd.{arch}.json' for arch in ('aarch64', 'x86_64', 'i686')]
         if manifests[0].is_file():
@@ -305,8 +372,9 @@ def resolve_turnip_icd(driver='winnative', turnip_dir=TURNIP_DIR, host_icd=HOST_
     return ''
 
 
-def game_env(base_env=None, opt=None, system='', fex_mode='fast', turnip_driver='winnative', low_latency=True):
-    """Build an optimized Vulkan / Turnip / DXVK / Proton / FEX HyperDrive environment for a game launch."""
+def game_env(base_env=None, opt=None, system='', fex_mode='fast', turnip_driver='winnative',
+             low_latency=True, engine_label='', meminfo=MEMINFO):
+    """Build an optimized Vulkan / Turnip / DXVK / Proton / FEX / BananaNative HyperDrive environment."""
     env = dict(base_env or {})
     opt = opt or {}
 
@@ -365,7 +433,26 @@ def game_env(base_env=None, opt=None, system='', fex_mode='fast', turnip_driver=
         env['WINE_FULLSCREEN_FSR_CUSTOM_MODE'] = res_str
         env['PROTON_FSR_CUSTOM_MODE'] = res_str
 
-    # 7. Big-Core topology hint for Wine/Proton when pinned to cores 3-7
+    # 7. BananaNative / PeanutsNative Linux-RAM & Cortex-X3 Replay-Thread Boost:
+    # On 12 GB+ Thor with ZRAM swap, disable Android's file-backed pool eviction (eliminates major page faults per frame!),
+    # parallelize background Vulkan PSO compiles across 4 threads, and pin vk-replay to Cortex-X3 Prime Core 7 (0x80).
+    if engine_label in ('BananaNative', 'PeanutsNative') or system == 'banananative':
+        mtxt = _read(meminfo) or ''
+        mt_kb = 0
+        for line in mtxt.splitlines():
+            if line.startswith('MemTotal:'):
+                parts = line.split()
+                if len(parts) >= 2 and parts[1].isdigit():
+                    mt_kb = int(parts[1])
+                break
+        if mt_kb >= 10_000_000 and not opt.get('force_fileback'):
+            env.setdefault('DM_MEM_FILEBACK', '0')
+        env.setdefault('DM_VK_PSO_SLOTS', '4')
+        if (os.cpu_count() or 0) >= 8:
+            env.setdefault('DM_VK_AFF_ALL', '0xf8')
+            env.setdefault('DM_VK_AFF_REPLAY', '0x80')
+
+    # 8. Big-Core topology hint for Wine/Proton when pinned to cores 3-7
     if opt.get('cores', 'big') == 'big' and (os.cpu_count() or 0) >= 8:
         env.setdefault('WINE_CPU_TOPOLOGY', '5:3,4,5,6,7')
         env.setdefault('PROTON_CPU_TOPOLOGY', '5:3,4,5,6,7')

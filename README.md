@@ -8,10 +8,10 @@ screens on the bottom one. A lean native program (Python + Qt), no browser, Stea
 ### Option 1 — Ready-to-Flash OS Image (No Terminal Needed · Based on ArmadaOS)
 Download the complete, bootable **Toravo Tandem OS** image (based on ArmadaOS / Fedora 44 `bootc` with Toravo Tandem pre-installed):
 
-- **Direct download (`.img.xz`, 5.2 GB):** [toravo-tandem-os-1.0.0-arm64.img.xz](https://toravo.de/_downloads/toravo-tandem-os-1.0.0-arm64.img.xz) ([SHA-256](https://toravo.de/_downloads/toravo-tandem-os-1.0.0-arm64.img.xz.sha256))
+- **Direct download (`.img.xz`, 5.2 GB):** [toravo-tandem-os-1.1.0-arm64.img.xz](https://toravo.de/_downloads/toravo-tandem-os-1.1.0-arm64.img.xz) ([SHA-256](https://toravo.de/_downloads/toravo-tandem-os-1.1.0-arm64.img.xz.sha256))
 - **Why `.img.xz` instead of `.iso`?** The AYN Thor boots via **OpenABL (ARM64 UEFI)** directly from GPT disk images on microSD or USB drives rather than legacy x86 CD ISOs. Standard flashers (**Balena Etcher**, **Raspberry Pi Imager**, **Rufus**) write `.img.xz` directly without unpacking.
 - **3 steps:**
-  1. Flash `toravo-tandem-os-1.0.0-arm64.img.xz` onto a microSD card or USB drive (≥ 16 GB) using Balena Etcher, Raspberry Pi Imager, Rufus, or `sudo ./os/flash-thor.sh`.
+  1. Flash `toravo-tandem-os-1.1.0-arm64.img.xz` onto a microSD card or USB drive (≥ 16 GB) using Balena Etcher, Raspberry Pi Imager, Rufus, or `sudo ./os/flash-thor.sh`.
   2. Insert into your AYN Thor and boot via OpenABL — it launches straight into **Toravo Tandem** and the first-run wizard (Wi-Fi, keyboard, game folders).
   3. Full upstream **ArmadaOS updates (`bootc upgrade`)** and **Toravo Tandem auto-updates** keep working normally. You can also build the image yourself with [`os/`](os/README.md).
 
@@ -26,7 +26,18 @@ The interface speaks English or German (Settings › Look › Language; the inst
 
 ![Dual-Screen PC & Retro Library on AYN Thor](docs/screenshots/steam-library-dual.png)
 
-## New in 1.0.0 — HyperDrive Edition
+## New in 1.1.0 — HyperDrive Ultra Edition
+
+- **1-Click Mesa-Git Turnip Driver Updater (`thor_updater.py`, `ui/settings_view.py`, `thor_perf.py`):**
+  - Integrated upstream **Adreno 740 Linux ARM64 `glibc` Turnip feed** (`Droid-Deck/Drivers`, Wayland + X11 WSI) directly into `Settings › Updates › Emulators & Sources` and the full auto-updater, with dual SHA-256 verification, strict `ELF64 aarch64 glibc` validation (automatically rejects Android/Bionic `.so` builds), **1-Tap `.prev` Rollback**, and instant live selection in Quick Menu Pro & `Performance › Turnip`.
+- **Zero-Config Per-Game Smart Presets (`thor_perf.py`, `tandem.py`):**
+  - Automatically applies optimal `720p SGSR` Super-Resolution + `Performance` profiles for demanding DX11/DX12/UE4/UE5 Steam titles and automatic `Strict TSO` for sensitive Unity engines whenever no manual per-game override is set.
+- **Native Runtime RAM-Pinning, 4-Core PSO & Cortex-X3 Replay Thread Affinity (`thor_perf.py`):**
+  - On 12 GB+ Thors with ZRAM swap, automatically disables legacy storage-backed texture/shader eviction (`DM_MEM_FILEBACK=0`, eliminating per-frame major page faults while >7 GiB RAM is free), parallelizes background Vulkan shader compilation across 4 threads (`DM_VK_PSO_SLOTS=4`), and pins the critical `vk-replay` thread directly to the 2.96 GHz Cortex-X3 Prime core (`DM_VK_AFF_REPLAY=0x80`).
+- **ARM64 Syscall Overhead Reduction (`os/patch-armada-img.sh`):**
+  - Appends `mitigations=off` to kernel boot options, removing ARM64 Spectre-v2/BHB loop overhead across high-frequency `ntsync`/`fsync`, FEX `mtrack`, and Vulkan `VM_BIND` syscalls.
+
+Earlier in 1.0.0 — HyperDrive Edition:
 
 Engineered from bare-metal profiling on the **AYN Thor (Snapdragon 8 Gen 2 / Adreno 740)** to beat Android in input latency (~20–35 ms faster), available game memory (~8.7 GiB free on a 12 GB Thor), 1%-low frame pacing, and DirectX 11 draw-call throughput:
 

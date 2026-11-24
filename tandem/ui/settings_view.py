@@ -735,7 +735,32 @@ def groups(win, page):
     if page == 'updates>apps':
         UC = getattr(win, 'UPDC', None) or {}
         apps = UC.get('appimages') or []
+        tp = UC.get('turnip') or {}
         fp = UC.get('flatpaks') or {}
+        tp_rows = []
+        if tp:
+            tp_ver = (f'Update → {tp["latest_version"]}' if tp.get('update_available')
+                      else f'✓ {tp["current_version"]}' if tp.get('installed')
+                      else ('Installieren (' + tp['latest_version'] + ')' if tp.get('latest_version') else 'Installieren'))
+            tp_rows.append({
+                'k': 'button',
+                't': tp.get('name') or 'Turnip Adreno 740 (Mesa-Git)',
+                'v': tp_ver,
+                'sub': '~/.local/share/armada/turnip/dd-turnip (ARM64 glibc)',
+                'fn': lambda: (win.toast('Lade neuesten Adreno-740-Turnip-Treiber …'),
+                               win.post('api/updater', {'action': 'update_app', 'id': 'turnip:dd'},
+                                        then=lambda r: (setattr(win, 'updc_at', 0), r and win.toast(r.get('error') or r.get('text', ''))))),
+                'help': 'Lädt den aktuellen Mesa-Git-Turnip-Treiber (ARM64 Linux glibc, geprüft per SHA-256 & ELF-Check) für Auswahl unter Leistung › Turnip.',
+            })
+            if tp.get('has_rollback'):
+                tp_rows.append({
+                    'k': 'button',
+                    't': '↺ Vorheriger Turnip-Treiber',
+                    'v': 'Rollback',
+                    'fn': lambda: win.post('api/updater', {'action': 'rollback_turnip'},
+                                           then=lambda r: (setattr(win, 'updc_at', 0), r and win.toast(r.get('error') or r.get('text', '')))),
+                    'help': 'Stellt die vorherige Version (.prev) des heruntergeladenen Turnip-Treibers sofort wieder her.',
+                })
         app_rows = []
         for a in apps:
             ver_lbl = (f'Update → {a["latest_version"]}' if a.get('update_available')
@@ -779,8 +804,14 @@ def groups(win, page):
             'sub': f['ref'],
             'help': 'Wird beim Voll-Update automatisch über Flatpak aktualisiert.',
         } for f in (fp.get('installed') or [])]
-        return [('ARM64 AppImages (Direkt-Quellen)', app_rows, 'Vor jedem Update wird die bisherige Datei als .prev für einen 1-Tipp-Rollback aufgehoben.'),
-                ('Flatpak-Emulatoren', fp_rows or [{'k': 'info', 't': 'Keine Flatpak-Emulatoren erkannt', 'v': '', 'help': ''}], None)]
+        secs_u = []
+        if tp_rows:
+            secs_u.append(('Adreno 740 Grafiktreiber (Turnip Mesa-Git)', tp_rows, 'Wird nach der Installation automatisch unter Leistung › Turnip & im Quick Menu wählbar.'))
+        secs_u.extend([
+            ('ARM64 AppImages (Direkt-Quellen)', app_rows, 'Vor jedem Update wird die bisherige Datei als .prev für einen 1-Tipp-Rollback aufgehoben.'),
+            ('Flatpak-Emulatoren', fp_rows or [{'k': 'info', 't': 'Keine Flatpak-Emulatoren erkannt', 'v': '', 'help': ''}], None),
+        ])
+        return secs_u
     if page == 'updates>native':
         SN = getattr(win, 'SWNAT', None) or {}
         job = SN.get('job') or {}

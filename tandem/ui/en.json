@@ -1346,7 +1346,24 @@
     "HyperDrive & Treiber-Engine": "HyperDrive & Driver Engine",
     "Holt auf dem Snapdragon 8 Gen 2 maximale PC- & Emulator-FPS bei minimaler Latenz heraus.": "Unlocks maximum PC and emulator FPS with minimal latency on Snapdragon 8 Gen 2.",
     "Render-Auflösung": "Render resolution",
-    "Strict TSO (Crash-Fix)": "Strict TSO (Crash-Fix)"
+    "Strict TSO (Crash-Fix)": "Strict TSO (Crash-Fix)",
+    "Turnip Adreno 740 (Mesa-Git)": "Turnip Adreno 740 (Mesa-Git)",
+    "Lade neuesten Adreno-740-Turnip-Treiber …": "Downloading latest Adreno 740 Turnip driver …",
+    "Lädt den aktuellen Mesa-Git-Turnip-Treiber (ARM64 Linux glibc, geprüft per SHA-256 & ELF-Check) für Auswahl unter Leistung › Turnip.": "Downloads the latest Mesa-Git Turnip driver (ARM64 Linux glibc, verified via SHA-256 & ELF check) for selection under Performance › Turnip.",
+    "↺ Vorheriger Turnip-Treiber": "↺ Previous Turnip driver",
+    "Stellt die vorherige Version (.prev) des heruntergeladenen Turnip-Treibers sofort wieder her.": "Restores the previous version (.prev) of the downloaded Turnip driver immediately.",
+    "Adreno 740 Grafiktreiber (Turnip Mesa-Git)": "Adreno 740 Graphics Driver (Turnip Mesa-Git)",
+    "Wird nach der Installation automatisch unter Leistung › Turnip & im Quick Menu wählbar.": "Automatically selectable under Performance › Turnip and in the Quick Menu once installed.",
+    "Prüfe Adreno-740-Turnip-Treiber (GitHub) …": "Checking Adreno 740 Turnip driver (GitHub) …",
+    "Aktualisiere Turnip-Grafiktreiber …": "Updating Turnip graphics driver …",
+    "Lade Turnip Adreno-740-Treiber …": "Downloading Turnip Adreno 740 driver …",
+    "Keine Turnip-Quelle auf GitHub erreichbar.": "No Turnip source reachable on GitHub.",
+    "SHA-256-Prüfsumme des Turnip-Archivs stimmt nicht überein.": "SHA-256 checksum of Turnip archive does not match.",
+    "SHA-256 von libvulkan_freedreno.so fehlerhaft.": "SHA-256 of libvulkan_freedreno.so mismatch.",
+    "Abgelehnt: keine gültige ARM64-glibc-Bibliothek (Android/Bionic ausgeschlossen).": "Rejected: not a valid ARM64 glibc library (Android/Bionic excluded).",
+    "Turnip-Treiber ist bereits aktuell.": "Turnip driver is already up to date.",
+    "Keine vorherige Turnip-Version (.prev) vorhanden.": "No previous Turnip version (.prev) available.",
+    "Vorheriger Turnip-Treiber wiederhergestellt.": "Previous Turnip driver restored."
   },
   "rules": [
     [
@@ -2340,6 +2357,14 @@
     [
       "(.+) …",
       "{1} …"
+    ],
+    [
+      "^(.+) installiert \\(wählbar unter Leistung › Turnip\\)\\.$",
+      "\\1 installed (selectable under Performance › Turnip)."
+    ],
+    [
+      "^Ungültiges Turnip-Paket: (.+)$",
+      "Invalid Turnip package: \\1"
     ]
   ]
 }
