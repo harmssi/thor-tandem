@@ -29,6 +29,15 @@ def _fmt_rem(mins):
     return f'~{h}:{m:02d} Std.' if h else f'~{m} Min.'
 
 
+def _fmt_play(secs):
+    secs = int(secs or 0)
+    if secs < 60:
+        return ''
+    if secs < 3600:
+        return f'{secs // 60} Min.'
+    return f'{secs / 3600:.1f} Std.'.replace('.', ',')
+
+
 def draw(win, p):
     u, W, H, T = win.u, win.width(), win.height(), win.THOR or {}
     if time.time() - win.QUICK > CLOSE_AFTER: win.QUICK = None; return
@@ -162,11 +171,12 @@ def draw(win, p):
                 LIVE if cur_cl < 100 else FOCUS)
         y += card_h1 + gap
 
-        # ---- 2. Brightness & Volume Bento Card ----
+        # ---- 2. Brightness, Volume & Thor Audio-DSP Bento Card ----
         s_rows = [(k, l) for k, l in (('bt', 'Oben'), ('bb', 'Unten'), ('vol', 'Lautstärke')) if win.SET.get(k) is not None]
         if s_rows:
             rh = 4.9 * u
-            scard_h = len(s_rows) * rh + 1.4 * u
+            dsp_extra = 5.4 * u
+            scard_h = len(s_rows) * rh + dsp_extra + 1.4 * u
             win.box(p, QRectF(x0, y, cw, scard_h), 1.8 * u, PANEL, LINE)
             sy = y + .7 * u
             muted = getattr(win, 'MUTED', False)
@@ -195,9 +205,16 @@ def draw(win, p):
                              INK if muted else TEXT, mr.width(), 1, mr.height() / (1.65 * u))
                     win.hit(mr, lambda: (touched(win), win.toggle_mute()), name='Ton an' if muted else 'Ton aus')
                 sy += rh
+            p.fillRect(QRectF(x0 + 1.8 * u, sy, cw - 3.6 * u, max(1.0, .08 * u)), ui.faded(TEXT, .07))
+            cur_dsp = win.CFG.get('speaker_dsp') or 'cinema'
+            win.text(p, 'Klang-DSP', x0 + 1.8 * u, sy + .2 * u, ('u', 1.82, 500), TEXT, 16.5 * u, 0, 5.0 / 1.82)
+            seg_row(x0 + 18.5 * u, sy + .5 * u, cw - 19.9 * u, 4.4 * u,
+                    [(lbl, lambda m=m: cfg_set(win, speaker_dsp=m), cur_dsp == m, f'dsp:{m}')
+                     for m, lbl in (('off', 'Aus'), ('cinema', 'Kino-Bass'), ('clear', 'Klar'), ('night', 'Nacht'))],
+                    LIVE if cur_dsp != 'off' else FOCUS)
             y += scard_h + gap
 
-        # ---- 3. Quick Game Switcher ("Schnellwechsel · Letzte Spiele") ----
+        # ---- 3. OnionOS-Style Visual Game Switcher ("Schnellwechsel · Letzte Spiele") ----
         played = win.L.get('played') or {}
         cur_gid = (win.RUN or {}).get('id')
         hidden = set(win.L.get('hidden') or [])
@@ -208,25 +225,40 @@ def draw(win, p):
             key=lambda g: -(played[g['id']].get('last') or 0)
         )[:4]
         if recents:
-            rc_h = 10.6 * u
+            rc_h = 14.8 * u
             rcard = QRectF(x0, y, cw, rc_h)
             win.box(p, rcard, 1.8 * u, PANEL, LINE)
             win.text(p, 'SCHNELLWECHSEL · LETZTE SPIELE', x0 + 1.6 * u, y + 1.0 * u, f_sec, MUTED, cw - 3.2 * u)
             rw_item = (cw - 2.4 * u - 3 * 1.0 * u) / 4
+            rh_item = 10.3 * u
             for ri, rg in enumerate(recents):
                 rx = x0 + 1.2 * u + ri * (rw_item + 1.0 * u)
-                rr = QRectF(rx, y + 3.3 * u, rw_item, 6.2 * u)
-                win.box(p, rr, 1.2 * u, RAISED, LINE)
-                cov = win.thumbs.get(rg['cover'], 48, 48) if rg.get('cover') else None
-                tx_off = 1.0 * u
-                if cov:
-                    cr = QRectF(rx + .7 * u, rr.y() + .7 * u, 4.8 * u, 4.8 * u)
-                    clip = ui.QPainterPath(); clip.addRoundedRect(cr, .8 * u, .8 * u)
-                    p.save(); p.setClipPath(clip); p.drawImage(cr, cov); p.restore()
-                    tx_off = 6.2 * u
-                win.text(p, rg['t'], rx + tx_off, rr.y() + .9 * u, ('u', 1.65, 600), TEXT, rw_item - tx_off - .8 * u)
-                win.text(p, win.sys_name(rg), rx + tx_off, rr.y() + 3.3 * u, ('u', 1.42, 400), MUTED, rw_item - tx_off - .8 * u)
-                win.hit(rr, lambda g=rg: (close(win), win.start(g)), name='qswitch:' + rg['id'])
+                rr = QRectF(rx, y + 3.3 * u, rw_item, rh_item)
+                win.box(p, rr, 1.3 * u, RAISED, LINE)
+                art_tok = rg.get('moment') or rg.get('hero') or rg.get('cover')
+                art = win.thumbs.get(art_tok, max(64, round(rw_item)), max(48, round(rh_item))) if art_tok else None
+                clip = ui.QPainterPath(); clip.addRoundedRect(rr, 1.3 * u, 1.3 * u)
+                p.save()
+                p.setClipPath(clip)
+                if art:
+                    p.drawImage(rr, art)
+                scrim = ui.QLinearGradient(0, rr.top(), 0, rr.bottom())
+                scrim.setColorAt(0.0, ui.rgba(8, 10, 16, .12 if art else 0.0))
+                scrim.setColorAt(0.42, ui.rgba(8, 10, 16, .48 if art else 0.0))
+                scrim.setColorAt(1.0, ui.rgba(8, 10, 16, .92 if art else .35))
+                p.fillRect(rr, ui.QBrush(scrim))
+                p.restore()
+                if rg.get('moment'):
+                    mb = QRectF(rr.right() - 8.2 * u, rr.y() + .65 * u, 7.5 * u, 2.1 * u)
+                    win.capsule(p, mb, ui.rgba(8, 12, 18, .78), ui.faded(LIVE, .55))
+                    win.text(p, '● Live-Bild', mb.x(), mb.y(), ('u', 1.15, 700), LIVE, mb.width(), 1, 2.1 / 1.15)
+                ptxt = _fmt_play((played.get(rg['id']) or {}).get('secs'))
+                sub_lbl = f'{win.sys_name(rg)} · {ptxt}' if ptxt else win.sys_name(rg)
+                win.text(p, rg['t'], rx + .95 * u, rr.bottom() - 4.3 * u, ('u', 1.62, 700),
+                         ui.QColor('#ffffff') if art else TEXT, rw_item - 1.9 * u)
+                win.text(p, sub_lbl, rx + .95 * u, rr.bottom() - 2.15 * u, ('u', 1.35, 500),
+                         ui.rgba(225, 232, 245, .86) if art else MUTED, rw_item - 1.9 * u)
+                win.hit(rr, lambda g=rg: (close(win), win.confirm_quit(g) if win.RUN else win.start(g)), name='qswitch:' + rg['id'])
             y += rc_h + gap
 
         # ---- 4. HyperDrive, Performance, Turnip, GPU Clock, Fan, Res, FPS Cap & Scaling Card ----
@@ -235,7 +267,8 @@ def draw(win, p):
         has_prof = bool(pw.get('profiles'))
         fg = getattr(win, 'FG', None)
         has_fg = bool(fg and fg.get('there'))
-        rows_n = (2 if has_eng else 0) + int(has_prof) + 2 + (3 if win.RUN else 0) + int(has_fg)
+        is_ra = bool((win.RUN or {}).get('emu') == 'RetroArch')
+        rows_n = (2 if has_eng else 0) + int(has_prof) + 2 + (3 if win.RUN else 0) + int(is_ra) + int(has_fg)
         if rows_n:
             pcard_h = 3.2 * u + rows_n * 5.4 * u + (.6 * u if not win.RUN else 0)
             pcard = QRectF(x0, y, cw, pcard_h)
@@ -290,6 +323,12 @@ def draw(win, p):
                         [(lbl, lambda m=m: win.set_gameopt(scale=m), cur_scale == m)
                          for m, lbl in (('linear', 'Standard'), ('sgsr', 'SGSR'), ('fsr', 'FSR'), ('pixel', 'Pixel'))])
                 py += 5.4 * u
+                if is_ra:
+                    cur_sh = (win.RUN or {}).get('shader') or ''
+                    seg_row(x0 + 1.2 * u, py, cw - 2.4 * u, 4.5 * u,
+                            [(lbl, lambda sh=sh: win.set_gameopt(shader=sh), cur_sh == sh, f'rsh:{sh or "global"}')
+                             for sh, lbl in (('', 'Shader Global'), ('sharp', 'Scharf'), ('crt', 'CRT-OLED'), ('lcd', 'Handheld-LCD'))])
+                    py += 5.4 * u
             if has_fg:
                 seg_row(x0 + 1.2 * u, py, cw - 2.4 * u, 4.5 * u,
                         [('Frame Gen: Aus', lambda: win.post('api/framegen', {'on': False}, then=lambda r: r and (setattr(win, 'FG', r), win.update())), not fg['on']),

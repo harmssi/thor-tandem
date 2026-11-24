@@ -1492,7 +1492,52 @@ class ThorStorageTests(unittest.TestCase):
             ('Crash Bandicoot: The Wrath of Cortex', 'crash_woc'),
         ):
             self.assertEqual(tandem.companion.resolve_native_companion({'t': title, 's': 'gc'}), expected)
-        tandem.save_config({'panel_hz': 120, 'auto_travel': False, 'ai_workdir': ''})
+
+        # v1.2.0: Thor Speaker Audio-DSP filter-chain, RetroArch Zero-Lag + offline OLED Slang shaders & Auto-Resume
+        dsp_conf = telemetry.build_speaker_dsp_conf('cinema')
+        self.assertIn('libpipewire-module-filter-chain', dsp_conf)
+        self.assertIn('alsa_output.platform-sound.HiFi__Speaker__sink', dsp_conf)
+        self.assertIn('toravo_speaker_dsp', dsp_conf)
+        self.assertEqual(telemetry.build_speaker_dsp_conf('off'), '')
+        sids = telemetry._parse_sink_ids(
+            'Audio\n ├─ Sinks:\n │      54. Built-in Audio Speaker playback     [vol: 0.55]\n'
+            ' ├─ Sources:\n ├─ Filters:\n │    - filter-chain-1\n'
+            ' │      83. toravo_speaker_dsp                  [Audio/Sink]\n'
+            ' │      89. toravo_speaker_dsp.output           [Stream/Output/Audio]\n └─ Streams:\n'
+        )
+        self.assertEqual(sids, {'speaker': 54, 'dsp': 83})
+
+        ra_home = TMP / 'ra-home'
+        ra_cfg = ra_home / '.var/app/org.libretro.RetroArch/config/retroarch/retroarch.cfg'
+        touch(ra_cfg, 'audio_latency = "64"\nvideo_max_swapchain_images = "3"\npreemptive_frames_enable = "false"\n')
+        res_gba = tandem.companion.configure_retroarch(
+            {'ra_zerolag': True, 'ra_autoresume': True, 'ra_shader': 'auto'},
+            game={'s': 'gba', 't': 'Golden Sun'}, opt={}, home=ra_home,
+        )
+        self.assertEqual(res_gba['shader_mode'], 'lcd')
+        self.assertTrue(res_gba['preemptive'] and res_gba['shader_path'].endswith('handheld-lcd.slangp'))
+        self.assertTrue(Path(res_gba['shader_path']).is_file())
+        cfg_txt = ra_cfg.read_text()
+        self.assertIn('video_max_swapchain_images = "2"', cfg_txt)
+        self.assertIn('audio_latency = "28"', cfg_txt)
+        self.assertIn('preemptive_frames_enable = "true"', cfg_txt)
+        self.assertIn('savestate_auto_save = "true"', cfg_txt)
+        self.assertIn('video_shader_enable = "true"', cfg_txt)
+
+        # 3D cores (N64) keep preemptive_frames off under Zero-Lag and pick CRT-OLED in 'auto' mode
+        res_n64 = tandem.companion.configure_retroarch(
+            {'ra_zerolag': True, 'ra_autoresume': False, 'ra_shader': 'auto'},
+            game={'s': 'n64', 't': 'Mario Kart 64'}, opt={}, home=ra_home,
+        )
+        self.assertEqual((res_n64['shader_mode'], res_n64['preemptive'], res_n64['autoresume']), ('crt', False, False))
+        cfg_txt2 = ra_cfg.read_text()
+        self.assertIn('preemptive_frames_enable = "false"', cfg_txt2)
+        self.assertIn('savestate_auto_save = "false"', cfg_txt2)
+
+        c12 = tandem.save_config({'speaker_dsp': 'clear', 'ra_zerolag': False, 'ra_autoresume': False, 'ra_shader': 'crt'})
+        self.assertEqual((c12['speaker_dsp'], c12['ra_zerolag'], c12['ra_autoresume'], c12['ra_shader']), ('clear', False, False, 'crt'))
+        tandem.save_config({'speaker_dsp': 'cinema', 'ra_zerolag': True, 'ra_autoresume': True, 'ra_shader': 'sharp',
+                            'panel_hz': 120, 'auto_travel': False, 'ai_workdir': ''})
 
 
 if __name__ == '__main__':

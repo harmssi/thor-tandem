@@ -1030,7 +1030,7 @@ class Tandem(QRasterWindow):
 
     def set_gameopt(self, **kw):
         if not self.RUN: return
-        for k in ('profile', 'fps', 'scale'):
+        for k in ('profile', 'fps', 'scale', 'res', 'shader'):
             if k in kw: self.RUN[k] = kw[k]
         self.post('api/gameopt', kw, then=lambda r: r and r.get('error') and self.toast(r['error']))
         self.update()

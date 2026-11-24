@@ -122,6 +122,18 @@ class PerfEngineTest(unittest.TestCase):
         mem16.write_text('MemTotal:       16000000 kB\nMemAvailable:   12000000 kB\n')
         env_b16 = thor_perf.game_env({}, {}, 'steam', engine_label='BananaNative', meminfo=mem16)
         self.assertEqual(env_b16['DM_MEM_FILEBACK'], '0')
+        self.assertEqual(env_b16['DXVK_STATE_CACHE'], '1')
+        self.assertEqual(env_b16['PROTON_FORCE_LARGE_ADDRESS_AWARE'], '1')
+
+    def test_ensure_mpv_hwdec(self):
+        mhome = self.root / 'mpv-home'
+        (mhome / '.var/app/io.mpv.Mpv/config/mpv').mkdir(parents=True)
+        written = thor_perf.ensure_mpv_hwdec(mhome)
+        self.assertEqual(len(written), 2)
+        self.assertIn('hwdec=auto-safe', (mhome / '.config/mpv/mpv.conf').read_text())
+        self.assertIn('hwdec=auto-safe', (mhome / '.var/app/io.mpv.Mpv/config/mpv/mpv.conf').read_text())
+        # Idempotent when hwdec is already configured
+        self.assertEqual(thor_perf.ensure_mpv_hwdec(mhome), [])
 
 
 if __name__ == '__main__':

@@ -1125,7 +1125,10 @@ class Tandem:
                 log.write(f'\n== {time.strftime("%F %T")} {game["t"]}: {cmd}\n'.encode()); log.flush()
                 if not self.dry:
                     env = None
-                    if label == 'RetroArch': companion.ensure_retroarch_thumbnails()
+                    if label == 'RetroArch':
+                        ra_res = companion.configure_retroarch(cfg_now, game=game, opt=opt)
+                        if '--set-shader' not in cmd:
+                            cmd = [*cmd[:-1], '--set-shader', ra_res.get('shader_path') or '', cmd[-1]]
                     if is_dual:
                         env = {**os.environ, 'DISABLE_GAMESCOPE_WSI': '1'}
                         if game['s'] == 'wiiu': cemu_pad_window()
@@ -1176,6 +1179,7 @@ class Tandem:
                             'pack': pack, 'pack_other_region': pack_other, 'pack_candidates': pack_cands,
                             'pack_mode': 'art' if assigned_pack == '__art__' else 'pack',
                             'wide': wide, 'dual': is_dual, 'profile': prof, 'fps': fps, 'scale': scale, 'res': res_h,
+                            'shader': opt.get('shader') or '',
                             **({'flatpak': fp_id} if fp_id else {}),
                             'port': game.get('media') or ({'deck': PORTS[game['port']][3], 'socket': str(DECK_SOCKET)} if game['s'] == 'port' else None)}
                 if not self.dry: threading.Thread(target=self.watch, args=(self.proc, gid, game.get('appid')), daemon=True).start()
@@ -1221,6 +1225,12 @@ class Tandem:
                 if res_h: opt['res'] = int(res_h)
                 else: opt.pop('res', None)
                 if run and run['id'] == gid: run['res'] = int(res_h)
+            shader = data.get('shader')
+            if shader is not None:
+                if shader not in ('', *companion.RA_SHADERS): return {'error': 'unbekannte Einstellung'}
+                if shader: opt['shader'] = shader
+                else: opt.pop('shader', None)
+                if run and run['id'] == gid: run['shader'] = shader or ''
             for flag in ('tu_deck_emu', 'tu_sysmem', 'fex_fast', 'fex_tso'):
                 if flag in data:
                     if data[flag]: opt[flag] = True
@@ -1243,6 +1253,7 @@ class Tandem:
             self.publish('library')
         out = {'ok': True, 'profile': opt.get('profile', ''), 'fps': opt.get('fps', 0), 'scale': opt.get('scale', 'linear')}
         if res_h is not None or opt.get('res'): out['res'] = opt.get('res', 0)
+        if shader is not None or opt.get('shader'): out['shader'] = opt.get('shader', '')
         if emu_id is not None or opt.get('emu'): out['emu'] = opt.get('emu', '')
         return out
 
@@ -1466,6 +1477,8 @@ class Tandem:
         proc, run = self.proc, self.run
         if self.swkbd: self.finish_swkbd(ok=False)
         if not run: return {'ok': True}
+        if not self.dry and run.get('s') not in ('app', 'term') and not run.get('paused'):
+            self.moments.snapshot_now(run['id'])
         if run.get('login'): yt_login(self, 'cancel')  # the sign-in window goes with the app
         run['quitting'] = True
         if self.dry or not proc:
@@ -2046,17 +2059,21 @@ def yt_login(tandem, action):
 
 
 def screenshot():
-    """Both screens as PNG into ~/Pictures/Tandem, the way gamescope takes them."""
+    """Both screens as PNG into ~/Pictures/Tandem (works via gamescopectl or ArmadaOS X11 x11grab)."""
     folder = HOME / 'Pictures/Tandem'
     folder.mkdir(parents=True, exist_ok=True)
     name = time.strftime('%Y%m%d-%H%M%S')
-    env = {**os.environ, 'XDG_RUNTIME_DIR': f'/run/user/{os.getuid()}'}
-    for cmd, path in ((['gamescopectl', 'screenshot'], folder / f'{name}-oben.png'), (['armada-run-bottom', '--', 'gamescopectl', 'screenshot'], folder / f'{name}-unten.png')):
-        try: subprocess.run(cmd + [str(path)], env={**env, 'WAYLAND_DISPLAY': 'gamescope-0'} if cmd[0] == 'gamescopectl' else env, capture_output=True, timeout=10)
+    top_png, bot_png = folder / f'{name}-oben.png', folder / f'{name}-unten.png'
+    dpys = _x11_displays()
+    companion.capture_screen_frame(top_png, display=dpys[0] if dpys else ':0')
+    if len(dpys) > 1:
+        companion.capture_screen_frame(bot_png, display=dpys[1])
+    elif shutil.which('armada-run-bottom') and shutil.which('gamescopectl'):
+        env = {**os.environ, 'XDG_RUNTIME_DIR': f'/run/user/{os.getuid()}'}
+        try: subprocess.run(['armada-run-bottom', '--', 'gamescopectl', 'screenshot', str(bot_png)], env=env, capture_output=True, timeout=8)
         except (OSError, subprocess.SubprocessError): pass
-    for _ in range(30):  # gamescope writes the file a moment later
-        if (folder / f'{name}-oben.png').exists(): return {'ok': True, 'name': name}
-        time.sleep(.1)
+    if top_png.is_file() and top_png.stat().st_size > 1024:
+        return {'ok': True, 'name': name}
     return {'error': 'Bildschirmfoto fehlgeschlagen'}
 
 
@@ -2483,6 +2500,7 @@ def doze(on, tandem=None, keep_audio=False):
             if not keep_audio and shutil.which('wpctl'):
                 SLEEP_STATE['muted'] = '[MUTED]' in run_quiet(['wpctl', 'get-volume', '@DEFAULT_AUDIO_SINK@'])
                 run_quiet(['wpctl', 'set-mute', '@DEFAULT_AUDIO_SINK@', '1'])
+                telemetry.stop_speaker_dsp()
             if shutil.which('armada-rgb'): run_quiet(['armada-rgb', 'sleep'])
             if shutil.which(thor.POWER[0]):
                 SLEEP_STATE['profile'] = ((thor.state().get('power') or {}).get('profile')) or load_config().get('perf_profile') or 'Balanced'
@@ -2507,6 +2525,9 @@ def doze(on, tandem=None, keep_audio=False):
             night = load_config().get('night_mode', 'off')
             if night in ('warm', 'night'):
                 threading.Thread(target=apply_night_mode, args=(night,), daemon=True).start()
+            dsp_m = load_config().get('speaker_dsp', 'cinema')
+            if dsp_m in telemetry.SPEAKER_DSP_MODES and dsp_m != 'off':
+                threading.Thread(target=telemetry.apply_speaker_dsp, args=(dsp_m,), daemon=True).start()
         SLEEP_STATE['muted'], SLEEP_STATE['profile'] = None, None
         sleep_game(tandem, False)
         if tandem:
@@ -2604,6 +2625,21 @@ def save_config(data):
     if isinstance(data.get('low_latency'), bool):
         config['low_latency'] = data['low_latency']
         threading.Thread(target=apply_low_latency, args=(data['low_latency'],), daemon=True).start()
+    if data.get('speaker_dsp') in telemetry.SPEAKER_DSP_MODES:
+        config['speaker_dsp'] = data['speaker_dsp']
+        threading.Thread(target=telemetry.apply_speaker_dsp, args=(data['speaker_dsp'],), daemon=True).start()
+    ra_changed = False
+    if isinstance(data.get('ra_zerolag'), bool):
+        config['ra_zerolag'] = data['ra_zerolag']
+        ra_changed = True
+    if isinstance(data.get('ra_autoresume'), bool):
+        config['ra_autoresume'] = data['ra_autoresume']
+        ra_changed = True
+    if data.get('ra_shader') in companion.RA_SHADERS:
+        config['ra_shader'] = data['ra_shader']
+        ra_changed = True
+    if ra_changed:
+        threading.Thread(target=companion.configure_retroarch, args=(dict(config),), daemon=True).start()
     if isinstance(data.get('save_auto'), bool): config['save_auto'] = data['save_auto']
     if isinstance(data.get('auto_update'), bool): config['auto_update'] = data['auto_update']
     if isinstance(data.get('auto_companions'), bool): config['auto_companions'] = data['auto_companions']
@@ -2791,6 +2827,10 @@ def public_config():
             'night_mode': config.get('night_mode') if config.get('night_mode') in NIGHT_MODES else 'off',
             'oled_vibrance': config.get('oled_vibrance') if config.get('oled_vibrance') in OLED_VIBRANCE else 'vibrant',
             'low_latency': config.get('low_latency', True),
+            'speaker_dsp': config.get('speaker_dsp') if config.get('speaker_dsp') in telemetry.SPEAKER_DSP_MODES else 'cinema',
+            'ra_zerolag': bool(config.get('ra_zerolag', True)),
+            'ra_autoresume': bool(config.get('ra_autoresume', True)),
+            'ra_shader': config.get('ra_shader') if config.get('ra_shader') in companion.RA_SHADERS else 'sharp',
             'save_auto': config.get('save_auto', True),
             'auto_update': config.get('auto_update', True),
             'auto_companions': config.get('auto_companions', True),
@@ -4495,6 +4535,12 @@ def main():
     if night in ('warm', 'night') and not args.dry_run: threading.Thread(target=apply_night_mode, args=(night,), daemon=True).start()
     hud_lvl = load_config().get('hud_level', 0)
     if hud_lvl in (1, 2, 3) and not args.dry_run: threading.Thread(target=telemetry.set_hud, args=(hud_lvl,), daemon=True).start()
+    if not args.dry_run:
+        threading.Thread(target=thor_perf.ensure_mpv_hwdec, daemon=True).start()
+        threading.Thread(target=companion.configure_retroarch, args=(load_config(),), daemon=True).start()
+        init_dsp = load_config().get('speaker_dsp', 'cinema')
+        if init_dsp in telemetry.SPEAKER_DSP_MODES and init_dsp != 'off':
+            threading.Thread(target=telemetry.apply_speaker_dsp, args=(init_dsp,), daemon=True).start()
     if not args.dry_run: threading.Thread(target=hide_steam, args=(tandem,), daemon=True).start()
     new_pin()
     if not args.dry_run: kill_stale()

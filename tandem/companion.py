@@ -370,21 +370,222 @@ def savestates_list(game, run, home=None):
     return {'emu': emu, 'slots': slots}
 
 
-# ---- Dual-screen emulator configuration & X11 window touch bridge (DS, 3DS, Wii U) -----------------------------------
+# ---- Dual-screen emulator configuration, Zero-Lag RetroArch & Offline OLED Shaders ----------------------------------
+RA_SHADERS = ('sharp', 'auto', 'crt', 'lcd')
+RA_ZEROLAG_2D = frozenset((
+    'nes', 'famicom', 'fds', 'snes', 'sfc', 'gb', 'gbc', 'gba', 'megadrive', 'genesis',
+    'mastersystem', 'sg-1000', 'gamegear', 'pcengine', 'supergrafx', 'atarilynx',
+    'ngp', 'ngpc', 'wonderswan', 'wonderswancolor', 'atari2600', 'atari7800',
+    'colecovision', 'pokemini', 'vectrex',
+))
+RA_LCD_SYSTEMS = frozenset((
+    'gb', 'gbc', 'gba', 'gamegear', 'atarilynx', 'ngp', 'ngpc', 'wonderswan', 'wonderswancolor', 'pokemini',
+))
+RA_CRT_SYSTEMS = frozenset((
+    'nes', 'famicom', 'fds', 'snes', 'sfc', 'megadrive', 'genesis', 'mastersystem', 'sg-1000',
+    'pcengine', 'supergrafx', 'pcenginecd', 'segacd', 'sega32x', 'neogeo', 'neogeocd',
+    'arcade', 'fbneo', 'fba', 'cps', 'cps1', 'cps2', 'cps3', 'mame', 'atari2600', 'atari7800',
+    'psx', 'n64', 'saturn', '3do', 'colecovision', 'intellivision',
+))
+
+CRT_OLED_SLANG = """#version 450
+layout(push_constant) uniform Push {
+    vec4 SourceSize;
+    vec4 OriginalSize;
+    vec4 OutputSize;
+    uint FrameCount;
+} params;
+layout(std140, set = 0, binding = 0) uniform UBO {
+    mat4 MVP;
+} global;
+
+#pragma stage vertex
+layout(location = 0) in vec4 Position;
+layout(location = 1) in vec2 TexCoord;
+layout(location = 0) out vec2 vTexCoord;
+void main() {
+    gl_Position = global.MVP * Position;
+    vTexCoord = TexCoord;
+}
+
+#pragma stage fragment
+layout(location = 0) in vec2 vTexCoord;
+layout(location = 0) out vec4 FragColor;
+layout(set = 0, binding = 2) uniform sampler2D Source;
+
+void main() {
+    // Crisp band-limited texel sampling (zero shimmer on non-integer 1080p scaling)
+    vec2 tex = vTexCoord * params.SourceSize.xy - 0.5;
+    vec2 idx = floor(tex);
+    vec2 f = fract(tex);
+    vec2 sharp_f = smoothstep(0.5 - 0.32, 0.5 + 0.32, f);
+    vec2 uv = (idx + sharp_f + 0.5) * params.SourceSize.zw;
+    vec3 col = texture(Source, uv).rgb;
+
+    // Luminance-adaptive Trinitron scanlines (bright highlights bloom naturally)
+    float luma = dot(col, vec3(0.299, 0.587, 0.114));
+    float wave = 0.5 + 0.5 * cos(6.2831853 * (vTexCoord.y * params.SourceSize.y - 0.5));
+    float strength = mix(0.28, 0.08, luma);
+    float scan = mix(1.0 - strength, 1.0 + 0.10 * strength, wave);
+
+    // Subtle 1080p OLED aperture grille triad
+    float triad = mod(floor(gl_FragCoord.x), 3.0);
+    vec3 mask = vec3(1.0);
+    if (triad < 0.5) mask = vec3(1.05, 0.96, 0.96);
+    else if (triad < 1.5) mask = vec3(0.96, 1.05, 0.96);
+    else mask = vec3(0.96, 0.96, 1.05);
+
+    FragColor = vec4(clamp(col * scan * mask * 1.06, 0.0, 1.0), 1.0);
+}
+"""
+
+HANDHELD_LCD_SLANG = """#version 450
+layout(push_constant) uniform Push {
+    vec4 SourceSize;
+    vec4 OriginalSize;
+    vec4 OutputSize;
+    uint FrameCount;
+} params;
+layout(std140, set = 0, binding = 0) uniform UBO {
+    mat4 MVP;
+} global;
+
+#pragma stage vertex
+layout(location = 0) in vec4 Position;
+layout(location = 1) in vec2 TexCoord;
+layout(location = 0) out vec2 vTexCoord;
+void main() {
+    gl_Position = global.MVP * Position;
+    vTexCoord = TexCoord;
+}
+
+#pragma stage fragment
+layout(location = 0) in vec2 vTexCoord;
+layout(location = 0) out vec4 FragColor;
+layout(set = 0, binding = 2) uniform sampler2D Source;
+
+void main() {
+    vec2 tex = vTexCoord * params.SourceSize.xy;
+    vec2 cell = fract(tex);
+    vec2 uv = (floor(tex) + 0.5) * params.SourceSize.zw;
+    vec3 raw = texture(Source, uv).rgb;
+
+    // Gentle handheld LCD gamma & warm color balance for wide-gamut OLED
+    vec3 lin = pow(max(raw, vec3(0.0)), vec3(2.2));
+    mat3 lcd_mat = mat3(
+        0.88, 0.09, 0.03,
+        0.06, 0.87, 0.07,
+        0.03, 0.11, 0.86
+    );
+    vec3 col = pow(clamp(lcd_mat * lin, 0.0, 1.0), vec3(1.0 / 2.2));
+
+    // Crisp subpixel LCD cell border
+    float gx = smoothstep(0.0, 0.11, cell.x) * (1.0 - smoothstep(0.89, 1.0, cell.x));
+    float gy = smoothstep(0.0, 0.11, cell.y) * (1.0 - smoothstep(0.89, 1.0, cell.y));
+    float grid = mix(0.80, 1.04, gx * gy);
+
+    FragColor = vec4(clamp(col * grid, 0.0, 1.0), 1.0);
+}
+"""
+
+
+def ensure_retroarch_shaders(home=None):
+    """Write self-contained offline Vulkan Slang presets ('crt-oled' & 'handheld-lcd') for RetroArch."""
+    h = Path(home) if home else HOME
+    roots = [h / '.var/app/org.libretro.RetroArch/config/retroarch']
+    if (h / '.config/retroarch').is_dir():
+        roots.append(h / '.config/retroarch')
+    primary = None
+    for base in roots:
+        sdir = base / 'shaders/toravo'
+        try:
+            sdir.mkdir(parents=True, exist_ok=True)
+            (sdir / 'crt-oled.slang').write_text(CRT_OLED_SLANG, encoding='utf-8')
+            (sdir / 'crt-oled.slangp').write_text(
+                'shaders = "1"\nshader0 = "crt-oled.slang"\nfilter_linear0 = "false"\nscale_type0 = "viewport"\n',
+                encoding='utf-8',
+            )
+            (sdir / 'handheld-lcd.slang').write_text(HANDHELD_LCD_SLANG, encoding='utf-8')
+            (sdir / 'handheld-lcd.slangp').write_text(
+                'shaders = "1"\nshader0 = "handheld-lcd.slang"\nfilter_linear0 = "false"\nscale_type0 = "viewport"\n',
+                encoding='utf-8',
+            )
+            if primary is None:
+                primary = sdir
+        except OSError:
+            continue
+    if primary is None:
+        return {}
+    return {'crt': str(primary / 'crt-oled.slangp'), 'lcd': str(primary / 'handheld-lcd.slangp')}
+
+
+def resolve_retroarch_shader(pref, system=''):
+    """Resolve ('sharp' | 'auto' | 'crt' | 'lcd') to the concrete preset ('sharp' | 'crt' | 'lcd')."""
+    p = str(pref or 'sharp').lower()
+    if p in ('crt', 'lcd', 'sharp'):
+        return p
+    if p == 'auto':
+        s = str(system or '').lower()
+        if s in RA_LCD_SYSTEMS:
+            return 'lcd'
+        if s in RA_CRT_SYSTEMS:
+            return 'crt'
+    return 'sharp'
+
+
+def _set_ra_kv(txt, key, val):
+    line = f'{key} = "{val}"'
+    pat = re.compile(r'(?m)^' + re.escape(key) + r'\s*=.*$')
+    return pat.sub(lambda _: line, txt, count=1) if pat.search(txt) else txt.rstrip('\n') + '\n' + line + '\n'
+
+
+def configure_retroarch(cfg=None, game=None, opt=None, home=None):
+    """Apply RetroArch Zero-Lag (~55 ms lower latency), Auto-Save/Auto-Resume, thumbnails & offline OLED shaders."""
+    h = Path(home) if home else HOME
+    c = cfg or {}
+    o = opt or {}
+    system = (game or {}).get('s') or ''
+    presets = ensure_retroarch_shaders(h)
+    raw_pref = o.get('shader') or c.get('ra_shader') or 'sharp'
+    smode = resolve_retroarch_shader(raw_pref, system)
+    spath = presets.get(smode, '') if smode in ('crt', 'lcd') else ''
+
+    zerolag = bool(c.get('ra_zerolag', True))
+    autoresume = bool(c.get('ra_autoresume', True))
+    preempt = bool(zerolag and system in RA_ZEROLAG_2D)
+
+    ra_cfg = h / '.var/app/org.libretro.RetroArch/config/retroarch/retroarch.cfg'
+    if not ra_cfg.is_file() and (h / '.config/retroarch/retroarch.cfg').is_file():
+        ra_cfg = h / '.config/retroarch/retroarch.cfg'
+    if ra_cfg.is_file():
+        try:
+            if not ra_cfg.with_name('retroarch.cfg.bak-tandem').exists():
+                shutil.copy2(ra_cfg, ra_cfg.with_name('retroarch.cfg.bak-tandem'))
+            txt = ra_cfg.read_text(errors='surrogateescape')
+            pairs = [
+                ('savestate_thumbnail_enable', 'true'),
+                ('network_cmd_enable', 'true'),
+                ('video_max_swapchain_images', '2' if zerolag else '3'),
+                ('audio_latency', '28' if zerolag else '64'),
+                ('video_frame_delay_auto', 'true' if zerolag else 'false'),
+                ('preemptive_frames_enable', 'true' if preempt else 'false'),
+                ('run_ahead_frames', '1'),
+                ('run_ahead_secondary_instance', 'true'),
+                ('savestate_auto_save', 'true' if autoresume else 'false'),
+                ('savestate_auto_load', 'true' if autoresume else 'false'),
+                ('video_shader_enable', 'true' if spath else 'false'),
+            ]
+            for k, v in pairs:
+                txt = _set_ra_kv(txt, k, v)
+            ra_cfg.write_text(txt, errors='surrogateescape')
+        except OSError:
+            pass
+    return {'shader_mode': smode, 'shader_path': spath, 'zerolag': zerolag, 'preemptive': preempt, 'autoresume': autoresume}
+
+
 def ensure_retroarch_thumbnails(home=None):
     """Enable RetroArch savestate_thumbnail_enable so visual save-state cards get automatic PNG previews."""
-    h = Path(home) if home else HOME
-    cfg = h / '.var/app/org.libretro.RetroArch/config/retroarch/retroarch.cfg'
-    if not cfg.is_file(): return
-    try:
-        txt = cfg.read_text(errors='surrogateescape')
-        if 'savestate_thumbnail_enable = "true"' in txt: return
-        if 'savestate_thumbnail_enable' in txt:
-            txt = re.sub(r'(?m)^savestate_thumbnail_enable\s*=.*$', 'savestate_thumbnail_enable = "true"', txt)
-        else:
-            txt = txt.rstrip('\n') + '\nsavestate_thumbnail_enable = "true"\n'
-        cfg.write_text(txt, errors='surrogateescape')
-    except OSError: pass
+    configure_retroarch({}, home=home)
 
 
 def setup_dual_emu(system, label, home=None):
@@ -1572,6 +1773,47 @@ class MomentTracker:
     """Captures rolling top-screen gameplay frames via `gamescopectl screenshot` while playing and commits
     the best non-menu pre-quit scene to `~/.local/state/tandem/moments/<gid>.jpg` when the game exits."""
 
+def capture_screen_frame(out_path, display=None, wayland='gamescope-0'):
+    """Capture one screenshot frame into `out_path` using gamescopectl, ArmadaOS X11 ffmpeg x11grab, or ImageMagick."""
+    out = Path(out_path)
+    out.unlink(missing_ok=True)
+    rt_dir = os.environ.get('XDG_RUNTIME_DIR') or f'/run/user/{os.getuid()}'
+    dpy = display or os.environ.get('DISPLAY') or ':0'
+    if shutil.which('gamescopectl') and (dpy == ':0' or not display):
+        env = {**os.environ, 'XDG_RUNTIME_DIR': rt_dir, 'WAYLAND_DISPLAY': wayland}
+        try:
+            subprocess.run(['gamescopectl', 'screenshot', str(out)], env=env,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=4)
+            for _ in range(12):
+                if out.is_file() and out.stat().st_size > 2048:
+                    return True
+                time.sleep(0.05)
+        except Exception:
+            pass
+    if shutil.which('ffmpeg'):
+        try:
+            subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'x11grab', '-i', dpy, '-frames:v', '1', str(out)],
+                           env={**os.environ, 'DISPLAY': dpy, 'XDG_RUNTIME_DIR': rt_dir},
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=4)
+            if out.is_file() and out.stat().st_size > 2048:
+                return True
+        except Exception:
+            pass
+    if shutil.which('import'):
+        try:
+            subprocess.run(['import', '-display', dpy, '-window', 'root', str(out)],
+                           env={**os.environ, 'DISPLAY': dpy, 'XDG_RUNTIME_DIR': rt_dir},
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=4)
+            if out.is_file() and out.stat().st_size > 2048:
+                return True
+        except Exception:
+            pass
+    return out.is_file() and out.stat().st_size > 2048
+
+
+class MomentTracker:
+    """Samples live gameplay frames on `:0` (`gamescopectl` or ArmadaOS `x11grab`) into a 6-frame tmpfs ring buffer
+    and commits only a real non-menu gameplay moment into `~/.local/state/tandem/moments/<gid>.jpg`."""
     def __init__(self, state_dir):
         self.moments_dir = Path(state_dir) / 'moments'
         self._lock = threading.Lock()
@@ -1582,7 +1824,7 @@ class MomentTracker:
         return str(p) if p.is_file() else None
 
     def start(self, tandem_obj, gid):
-        if getattr(tandem_obj, 'dry', False) or not shutil.which('gamescopectl'):
+        if getattr(tandem_obj, 'dry', False) or not (shutil.which('gamescopectl') or shutil.which('ffmpeg') or shutil.which('import')):
             return
         rt_dir = os.environ.get('XDG_RUNTIME_DIR') or f'/run/user/{os.getuid()}'
         work_dir = Path(rt_dir) / 'tandem-snaps' / re.sub(r'[^a-zA-Z0-9_-]', '_', gid)
@@ -1594,24 +1836,32 @@ class MomentTracker:
         threading.Thread(target=self._loop, args=(tandem_obj, sess), daemon=True).start()
 
     def _capture_once(self, out_png):
-        rt_dir = os.environ.get('XDG_RUNTIME_DIR') or f'/run/user/{os.getuid()}'
-        env = {**os.environ, 'XDG_RUNTIME_DIR': rt_dir, 'WAYLAND_DISPLAY': 'gamescope-0'}
-        out_png.unlink(missing_ok=True)
-        try:
-            subprocess.run(['gamescopectl', 'screenshot', str(out_png)], env=env,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=4)
-        except Exception:
-            return False
-        for _ in range(12):
-            if out_png.is_file() and out_png.stat().st_size > 8192:
+        return capture_screen_frame(out_png, display=os.environ.get('DISPLAY') or ':0')
+
+    def snapshot_now(self, gid):
+        """Grab one immediate frame right before pause/quit if the session has no non-menu frame yet (for Game Switcher)."""
+        with self._lock:
+            sess = self._sessions.get(gid)
+            if not sess or not sess.get('active'):
+                return False
+            if any(not e.get('is_menu') and e.get('score', 0) >= 0.40 for e in sess.get('entries', ())):
                 return True
-            time.sleep(0.05)
-        return out_png.is_file() and out_png.stat().st_size > 8192
+            raw_png = sess['work_dir'] / 'snap-switch.png'
+        if not self._capture_once(raw_png):
+            return False
+        info = score_gameplay_frame(raw_png)
+        if info['is_menu'] or info['score'] < 0.32:
+            return False
+        with self._lock:
+            if sess.get('active'):
+                sess['entries'].append({'path': str(raw_png), 'at': time.time() - 30.0,
+                                        'score': info['score'], 'is_menu': False, 'motion': 2.5})
+        return True
 
     def _loop(self, tandem_obj, sess):
         gid = sess['gid']
-        # Skip the first 22 seconds (boot logos, title screens, file-load screens)
-        for _ in range(22):
+        # Skip the first 14 seconds (boot logos / BIOS splash)
+        for _ in range(14):
             time.sleep(1.0)
             if not sess['active'] or not tandem_obj.run or tandem_obj.run.get('id') != gid:
                 return

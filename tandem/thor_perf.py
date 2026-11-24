@@ -378,12 +378,14 @@ def game_env(base_env=None, opt=None, system='', fex_mode='fast', turnip_driver=
     env = dict(base_env or {})
     opt = opt or {}
 
-    # 1. Shader cache, async GPL, and sync primitives
+    # 1. Shader cache vault (8 GB so Mesa never evicts shaders across games), DXVK state cache, async GPL & sync primitives
     env.setdefault('MESA_SHADER_CACHE_DISABLE', 'false')
     env.setdefault('MESA_SHADER_CACHE_MAX_SIZE', '8G')
     env.setdefault('MESA_GLTHREAD', 'true')
+    env.setdefault('DXVK_STATE_CACHE', '1')
     env.setdefault('DXVK_GPLASYNCCACHE', '1')
     env.setdefault('DXVK_HUD', 'none')
+    env.setdefault('PROTON_FORCE_LARGE_ADDRESS_AWARE', '1')
     env.setdefault('PROTON_USE_NTSYNC', '1')
     env.setdefault('WINEFSYNC', '1')
     env.setdefault('STAGING_SHARED_MEMORY', '1')
@@ -518,3 +520,28 @@ def telemetry(cpu_base=CPU_BASE, gpu_base=GPU_BASE, batt_base=BATT_BASE, hwmon_b
         if en == '1' and out['fan_pwm'] is not None:
             out['fan_mode'] = 'quiet' if out['fan_pwm'] <= 105 else ('cool' if out['fan_pwm'] <= 195 else 'max')
     return out
+
+
+def ensure_mpv_hwdec(home=None):
+    """Provision Qualcomm Iris V4L2 hardware-accelerated decoding (hwdec=auto-safe) for native & Flatpak mpv."""
+    h = Path(home) if home else Path.home()
+    targets = [h / '.config/mpv/mpv.conf']
+    fp_base = h / '.var/app/io.mpv.Mpv/config/mpv'
+    if fp_base.is_dir():
+        targets.append(fp_base / 'mpv.conf')
+    written = []
+    for conf in targets:
+        try:
+            if conf.is_file():
+                txt = conf.read_text(errors='ignore')
+                if re.search(r'(?m)^\s*hwdec\s*=', txt) if 're' in globals() else ('hwdec=' in txt or 'hwdec =' in txt):
+                    continue
+                conf.write_text(txt.rstrip('\n') + '\nhwdec=auto-safe\n')
+            else:
+                conf.parent.mkdir(parents=True, exist_ok=True)
+                conf.write_text('# Toravo Tandem — Snapdragon 8 Gen 2 hardware video decode\nhwdec=auto-safe\nvo=gpu-next\n')
+            written.append(str(conf))
+        except OSError:
+            continue
+    return written
+

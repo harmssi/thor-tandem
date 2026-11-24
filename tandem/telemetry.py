@@ -516,3 +516,242 @@ def locator_ping():
     return {'ok': True, 'text': 'Der Thor klingelt und vibriert jetzt.'}
 
 
+# ---- Thor Audio-DSP (Psychoacoustic Speaker Pipeline via PipeWire filter-chain) ---------------------------------------
+SPEAKER_SINK = 'alsa_output.platform-sound.HiFi__Speaker__sink'
+SPEAKER_DSP_MODES = ('off', 'cinema', 'clear', 'night')
+SPEAKER_DSP_BANDS = {
+    # Sub-105 Hz excursion high-pass + 168 Hz psychoacoustic upper-bass punch + de-boxiness @ 480 Hz + airy 5.2 kHz shelf
+    'cinema': (
+        ('pre', 'bq_highshelf', 20.0, 0.707, -3.0),
+        ('hpf', 'bq_highpass', 105.0, 0.707, 0.0),
+        ('warmth', 'bq_peaking', 168.0, 1.05, 4.2),
+        ('debox', 'bq_peaking', 480.0, 1.20, -2.2),
+        ('presence', 'bq_peaking', 2600.0, 1.10, 1.8),
+        ('air', 'bq_highshelf', 5200.0, 0.707, 2.6),
+    ),
+    # Crisp dialogue, RPG voices & podcast intelligibility
+    'clear': (
+        ('pre', 'bq_highshelf', 20.0, 0.707, -2.5),
+        ('hpf', 'bq_highpass', 120.0, 0.707, 0.0),
+        ('mud', 'bq_peaking', 360.0, 1.15, -2.8),
+        ('voice', 'bq_peaking', 2800.0, 1.00, 3.6),
+        ('air', 'bq_highshelf', 5800.0, 0.707, 1.8),
+    ),
+    # Late-night play: low-cut so sound never carries through walls + gentle treble roll-off
+    'night': (
+        ('pre', 'bq_highshelf', 20.0, 0.707, -3.0),
+        ('hpf', 'bq_highpass', 155.0, 0.707, 0.0),
+        ('mid', 'bq_peaking', 1800.0, 0.90, 2.2),
+        ('soft', 'bq_highshelf', 5000.0, 0.707, -2.5),
+    ),
+}
+_DSP_LOCK = threading.Lock()
+_DSP = {'proc': None, 'mode': 'off'}
+
+
+def _dsp_pidfile():
+    rt = Path(os.environ.get('XDG_RUNTIME_DIR') or '/tmp')
+    return rt / f'tandem-dsp-{os.getuid()}.pid'
+
+
+def build_speaker_dsp_conf(mode='cinema', target_sink=SPEAKER_SINK):
+    """Build a zero-dependency PipeWire filter-chain config targeting ONLY the internal stereo speakers."""
+    bands = SPEAKER_DSP_BANDS.get(mode)
+    if not bands:
+        return ''
+    nodes, links = [], []
+    for name, label, freq, q, gain in bands:
+        ctrl = f'"Freq" = {freq:.1f} "Q" = {q:.3f}' + (f' "Gain" = {gain:.2f}' if label != 'bq_highpass' else '')
+        nodes.append(f'{{ type = builtin name = {name} label = {label} control = {{ {ctrl} }} }}')
+    for i in range(len(bands) - 1):
+        links.append(f'{{ output = "{bands[i][0]}:Out" input = "{bands[i + 1][0]}:In" }}')
+    nl = '\n                    '
+    return f"""context.properties = {{
+    log.level = 0
+}}
+context.spa-libs = {{
+    audio.convert.* = audioconvert/libspa-audioconvert
+    support.*       = support/libspa-support
+}}
+context.modules = [
+    {{ name = libpipewire-module-rt flags = [ ifexists nofail ] }}
+    {{ name = libpipewire-module-protocol-native }}
+    {{ name = libpipewire-module-client-node }}
+    {{ name = libpipewire-module-adapter }}
+    {{ name = libpipewire-module-filter-chain
+        args = {{
+            node.description = "Thor Speaker Audio-DSP ({mode})"
+            media.name       = "Thor Speaker Audio-DSP ({mode})"
+            filter.graph = {{
+                nodes = [
+                    {nl.join(nodes)}
+                ]
+                links = [
+                    {nl.join(links)}
+                ]
+            }}
+            capture.props = {{
+                node.name      = "toravo_speaker_dsp"
+                media.class    = Audio/Sink
+                audio.channels = 2
+                audio.position = [ FL FR ]
+            }}
+            playback.props = {{
+                node.name      = "toravo_speaker_dsp.output"
+                target.object  = "{target_sink}"
+                node.passive   = true
+                stream.dont-remix = true
+                audio.channels = 2
+                audio.position = [ FL FR ]
+            }}
+        }}
+    }}
+]
+"""
+
+
+def _parse_sink_ids(status_text):
+    """Extract {'dsp': id, 'speaker': id} from `wpctl status` Audio Sinks & Filters sections."""
+    out, in_audio_nodes = {}, False
+    for line in (status_text or '').splitlines():
+        s = line.strip()
+        if s in ('Video', 'Settings'):
+            break
+        if 'Sinks:' in line or 'Filters:' in line:
+            in_audio_nodes = True
+            continue
+        if in_audio_nodes and ('Sources:' in line or 'Streams:' in line):
+            in_audio_nodes = False
+            continue
+        if not in_audio_nodes:
+            continue
+        m = re.search(r'(\d+)\.\s+(.+)$', line)
+        if not m:
+            continue
+        sid, rest = int(m[1]), m[2].strip().lower()
+        name_part = rest.split('[', 1)[0].strip()
+        if ('thor speaker audio-dsp' in name_part or name_part == 'toravo_speaker_dsp') and '.output' not in name_part:
+            if '[stream/' not in rest:
+                out['dsp'] = sid
+        elif 'built-in audio speaker' in name_part or 'hifi__speaker__sink' in name_part or ('speaker' in name_part and 'dsp' not in name_part and '.output' not in name_part):
+            out['speaker'] = sid
+    return out
+
+
+def _kill_dsp_pid(pid):
+    import signal
+    try:
+        cmd = Path(f'/proc/{int(pid)}/cmdline').read_bytes().decode('utf-8', 'ignore')
+        if 'thor-dsp.conf' not in cmd:
+            return
+        os.kill(int(pid), signal.SIGTERM)
+        for _ in range(15):
+            if not Path(f'/proc/{int(pid)}').exists():
+                return
+            time.sleep(0.05)
+        os.kill(int(pid), signal.SIGKILL)
+    except (OSError, ValueError):
+        pass
+
+
+def stop_speaker_dsp():
+    """Cleanly stop the PipeWire speaker DSP sidecar by exact PID and restore hardware speaker sink if active."""
+    with _DSP_LOCK:
+        proc, _DSP['proc'], _DSP['mode'] = _DSP['proc'], None, 'off'
+        pf = _dsp_pidfile()
+        if proc is not None:
+            try:
+                proc.terminate()
+                proc.wait(timeout=1.5)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+        if pf.is_file():
+            try:
+                _kill_dsp_pid(int(pf.read_text().strip()))
+            except (OSError, ValueError):
+                pass
+            pf.unlink(missing_ok=True)
+        if shutil.which('wpctl') and os.environ.get('QT_QPA_PLATFORM') != 'offscreen':
+            try:
+                st = subprocess.run(['wpctl', 'status'], capture_output=True, text=True, timeout=2).stdout
+                sids = _parse_sink_ids(st)
+                if sids.get('speaker') and not headphones_active():
+                    subprocess.run(['wpctl', 'set-default', str(sids['speaker'])], capture_output=True, timeout=2)
+            except (OSError, subprocess.SubprocessError):
+                pass
+    return {'ok': True, 'mode': 'off'}
+
+
+def apply_speaker_dsp(mode='cinema'):
+    """Start or switch the Thor Speaker Audio-DSP filter-chain ('off', 'cinema', 'clear', 'night')."""
+    mode = str(mode or 'off').lower()
+    if mode not in SPEAKER_DSP_MODES or mode == 'off':
+        return stop_speaker_dsp()
+    conf_txt = build_speaker_dsp_conf(mode)
+    cdir = Path(os.environ.get('XDG_CACHE_HOME') or (Path.home() / '.cache')) / 'tandem'
+    conf_path = cdir / 'thor-dsp.conf'
+    try:
+        cdir.mkdir(parents=True, exist_ok=True)
+        conf_path.write_text(conf_txt, encoding='utf-8')
+    except OSError as exc:
+        return {'error': str(exc)}
+    if os.environ.get('QT_QPA_PLATFORM') == 'offscreen' or not shutil.which('pipewire') or not shutil.which('wpctl'):
+        return {'ok': True, 'mode': mode, 'written': str(conf_path), 'active': False}
+    try:
+        st0 = subprocess.run(['wpctl', 'status'], capture_output=True, text=True, timeout=2).stdout
+    except (OSError, subprocess.SubprocessError):
+        return {'ok': True, 'mode': mode, 'written': str(conf_path), 'active': False}
+    sids0 = _parse_sink_ids(st0)
+    if not sids0.get('speaker') and SPEAKER_SINK.lower() not in st0.lower():
+        return {'ok': True, 'mode': mode, 'written': str(conf_path), 'active': False}
+    # Preserve current volume across sink transition
+    cur_vol = None
+    try:
+        vout = subprocess.run(['wpctl', 'get-volume', '@DEFAULT_AUDIO_SINK@'], capture_output=True, text=True, timeout=2).stdout
+        vm = re.search(r'([0-9]+(?:\.[0-9]+)?)', vout or '')
+        if vm:
+            cur_vol = max(0.0, min(1.0, float(vm[1])))
+    except (OSError, subprocess.SubprocessError, ValueError):
+        pass
+    stop_speaker_dsp()
+    with _DSP_LOCK:
+        env = {**os.environ, 'XDG_RUNTIME_DIR': os.environ.get('XDG_RUNTIME_DIR') or f'/run/user/{os.getuid()}'}
+        try:
+            proc = subprocess.Popen(['pipewire', '-c', str(conf_path)], stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
+        except OSError as exc:
+            return {'error': str(exc)}
+        _DSP['proc'], _DSP['mode'] = proc, mode
+        try:
+            _dsp_pidfile().write_text(str(proc.pid))
+        except OSError:
+            pass
+        if hasattr(os, 'sched_setaffinity') and (os.cpu_count() or 0) >= 8:
+            try:
+                os.sched_setaffinity(proc.pid, {0, 1, 2})
+            except OSError:
+                pass
+        dsp_id = None
+        for _ in range(16):
+            if proc.poll() is not None:
+                break
+            time.sleep(0.06)
+            try:
+                st = subprocess.run(['wpctl', 'status'], capture_output=True, text=True, timeout=2).stdout
+                dsp_id = _parse_sink_ids(st).get('dsp')
+                if dsp_id:
+                    break
+            except (OSError, subprocess.SubprocessError):
+                pass
+        if dsp_id:
+            if cur_vol is not None:
+                subprocess.run(['wpctl', 'set-volume', str(dsp_id), f'{cur_vol:.2f}'], capture_output=True, timeout=2)
+            if not headphones_active():
+                subprocess.run(['wpctl', 'set-default', str(dsp_id)], capture_output=True, timeout=2)
+        return {'ok': True, 'mode': mode, 'written': str(conf_path), 'active': bool(dsp_id)}
+
+
+

@@ -14,6 +14,7 @@ COPY os/toravo-tandem-firstboot /usr/libexec/toravo-tandem-firstboot
 COPY os/toravo-tandem-firstboot.service /usr/lib/systemd/system/toravo-tandem-firstboot.service
 COPY os/99-toravo-perf.conf /usr/lib/sysctl.d/99-toravo-perf.conf
 COPY os/99-toravo-hw.rules /usr/lib/udev/rules.d/99-toravo-hw.rules
+COPY os/99-toravo-tmpfiles.conf /usr/lib/tmpfiles.d/99-toravo-tmpfiles.conf
 
 RUN mkdir -p /usr/lib/systemd/zram-generator.conf.d /etc/armada \
     && printf '[zram0]\ncompression-algorithm = lz4\n' > /usr/lib/systemd/zram-generator.conf.d/99-toravo-lz4.conf \

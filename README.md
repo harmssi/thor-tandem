@@ -8,10 +8,10 @@ screens on the bottom one. A lean native program (Python + Qt), no browser, Stea
 ### Option 1 — Ready-to-Flash OS Image (No Terminal Needed · Based on ArmadaOS)
 Download the complete, bootable **Toravo Tandem OS** image (based on ArmadaOS / Fedora 44 `bootc` with Toravo Tandem pre-installed):
 
-- **Direct download (`.img.xz`, 5.2 GB):** [toravo-tandem-os-1.1.0-arm64.img.xz](https://toravo.de/_downloads/toravo-tandem-os-1.1.0-arm64.img.xz) ([SHA-256](https://toravo.de/_downloads/toravo-tandem-os-1.1.0-arm64.img.xz.sha256))
+- **Direct download (`.img.xz`, 5.2 GB):** [toravo-tandem-os-1.2.0-arm64.img.xz](https://toravo.de/_downloads/toravo-tandem-os-1.2.0-arm64.img.xz) ([SHA-256](https://toravo.de/_downloads/toravo-tandem-os-1.2.0-arm64.img.xz.sha256))
 - **Why `.img.xz` instead of `.iso`?** The AYN Thor boots via **OpenABL (ARM64 UEFI)** directly from GPT disk images on microSD or USB drives rather than legacy x86 CD ISOs. Standard flashers (**Balena Etcher**, **Raspberry Pi Imager**, **Rufus**) write `.img.xz` directly without unpacking.
 - **3 steps:**
-  1. Flash `toravo-tandem-os-1.1.0-arm64.img.xz` onto a microSD card or USB drive (≥ 16 GB) using Balena Etcher, Raspberry Pi Imager, Rufus, or `sudo ./os/flash-thor.sh`.
+  1. Flash `toravo-tandem-os-1.2.0-arm64.img.xz` onto a microSD card or USB drive (≥ 16 GB) using Balena Etcher, Raspberry Pi Imager, Rufus, or `sudo ./os/flash-thor.sh`.
   2. Insert into your AYN Thor and boot via OpenABL — it launches straight into **Toravo Tandem** and the first-run wizard (Wi-Fi, keyboard, game folders).
   3. Full upstream **ArmadaOS updates (`bootc upgrade`)** and **Toravo Tandem auto-updates** keep working normally. You can also build the image yourself with [`os/`](os/README.md).
 
@@ -26,7 +26,19 @@ The interface speaks English or German (Settings › Look › Language; the inst
 
 ![Dual-Screen PC & Retro Library on AYN Thor](docs/screenshots/steam-library-dual.png)
 
-## New in 1.1.0 — HyperDrive Ultra Edition
+## New in 1.2.0 — Zero-Lag, Audio-DSP & UFS 4.0 Edition
+
+- **PipeWire "Thor Audio-DSP" Psychoacoustic Speaker Pipeline (`telemetry.py`, `ui/quick_view.py`, `ui/settings_view.py`):**
+  - Zero-glitch `libpipewire-module-filter-chain` DSP (`Off · Cinema Bass · Clear · Night`) targeting **exclusively** the internal stereo speakers (`alsa_output.platform-sound.HiFi__Speaker__sink`) while keeping wired headphones and Bluetooth audio 100 % bit-perfect. Cuts sub-105 Hz cone excursion while boosting 168 Hz upper-bass warmth and 5.2 kHz stereo air — inspired by the Steam Deck OLED & Asahi Bankstown pipelines.
+- **RetroArch "Zero-Lag" (~55 ms Faster), Instant Auto-Resume & Built-In Offline OLED Shaders (`companion.py`, `tandem.py`):**
+  - Automatically tunes RetroArch for `video_max_swapchain_images = "2"`, `28 ms` PipeWire audio, `video_frame_delay_auto = "true"`, and `1 Preemptive Frame` across 25+ classic 2D consoles (kept off for 3D cores so N64/PS1 never stutter).
+  - Ships two self-contained `#version 450` Vulkan Slang shaders (**`CRT-OLED`** Trinitron scanlines + aperture grille & **`Handheld-LCD`** subpixel cell grid + warm GBA/GBC color matrix) with `Auto` per-system selection and 1-tap override in Quick Menu Pro, plus OnionOS-style **Instant Auto-Save / Auto-Resume**.
+- **OnionOS-Style Visual Game Switcher & Native ArmadaOS Dual-Screen Capture (`ui/quick_view.py`, `companion.py`, `tandem.py`):**
+  - Upgraded `Quick Switch · Recent Games` into full-bleed gameplay moment cards (`● Live frame` + playtime + 1-tap switch even while another game is running), and added native ArmadaOS `x11grab` capture fallback so both `MomentTracker` and dual-screen `Screenshot` (`-oben.png` + `-unten.png`) work without `gamescopectl`.
+- **UFS 4.0 Lockless I/O, MGLRU 500 ms Thrash Guard & 8 GB Shader/DXVK Vault (`os/99-toravo-*`, `thor_perf.py`):**
+  - Switches internal 4.2 GB/s UFS 4.0 flash (`sd[a-z]`) from single-lock `bfq` to lockless `none` (`read_ahead_kb=256`, keeping `bfq` on microSD), enables Multi-Gen LRU working-set protection (`min_ttl_ms=500`), disables background memory compaction stalls (`vm.compaction_proactiveness=0`, THP `defer+madvise`, `kernel.timer_migration=0`), sets `8 MB` streaming socket buffers + `hwdec=auto-safe` Qualcomm Iris V4L2 video decode for `mpv`, and adds `DM_VK_MESH=0` stability protection against Adreno 740 `VK_EXT_mesh_shader` UCHE faults.
+
+Earlier in 1.1.0 — HyperDrive Ultra Edition:
 
 - **1-Click Mesa-Git Turnip Driver Updater (`thor_updater.py`, `ui/settings_view.py`, `thor_perf.py`):**
   - Integrated upstream **Adreno 740 Linux ARM64 `glibc` Turnip feed** (`Droid-Deck/Drivers`, Wayland + X11 WSI) directly into `Settings › Updates › Emulators & Sources` and the full auto-updater, with dual SHA-256 verification, strict `ELF64 aarch64 glibc` validation (automatically rejects Android/Bionic `.so` builds), **1-Tap `.prev` Rollback**, and instant live selection in Quick Menu Pro & `Performance › Turnip`.
