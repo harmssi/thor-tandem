@@ -1144,7 +1144,14 @@ class Tandem(QRasterWindow):
         plbl = dict(profs).get(cur_p, 'Standard')
         rows.append(('Leistung (dieses Spiel)', plbl, lambda np=nxt_p: self.post('api/gameopt', {'id': gid, 'profile': np})))
         if s in ('steam', 'port'):
-            for fkey, flbl in (('tu_deck_emu', 'Turnip Deck-Modus'), ('tu_sysmem', 'Turnip Sysmem-Fix'), ('fex_fast', 'FEX-Turbo (Fast-Math)')):
+            res_opts = [(0, '1080p Nativ'), (900, '900p SGSR'), (720, '720p Max-FPS')]
+            cur_r = int(opt.get('res') or 0)
+            rids = [x[0] for x in res_opts]
+            nxt_r = rids[(rids.index(cur_r) + 1) % len(rids)] if cur_r in rids else 0
+            rlbl = dict(res_opts).get(cur_r, '1080p Nativ')
+            rows.append(('Render-Auflösung', rlbl, lambda nr=nxt_r: self.post('api/gameopt', {'id': gid, 'res': nr})))
+            for fkey, flbl in (('tu_deck_emu', 'Turnip Deck-Modus'), ('tu_sysmem', 'Turnip Sysmem-Fix'),
+                               ('fex_tso', 'Strict TSO (Crash-Fix)'), ('fex_fast', 'FEX-Turbo (Fast-Math)')):
                 fv = bool(opt.get(fkey))
                 rows.append((flbl, 'An' if fv else 'Aus', lambda fk=fkey, nv=not fv: self.post('api/gameopt', {'id': gid, fk: nv})))
         is_pin = gid in (L.get('pinned') or [])

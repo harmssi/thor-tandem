@@ -81,6 +81,10 @@ def draw(win, p):
             parts.append(f'CPU {peak / 1000:.2f} GHz'.replace('.', ','))
     if perf.get('gpu_mhz'):
         parts.append(f'GPU {perf["gpu_mhz"]} MHz')
+    if perf.get('ram_free_gib') is not None:
+        parts.append(f'{perf["ram_free_gib"]:g} GB frei'.replace('.', ','))
+    if perf.get('scheduler') in ('lavd', 'cosmos'):
+        parts.append(perf['scheduler'].upper())
     if pw.get('temp') is not None: parts.append(f'{pw["temp"]} °C')
     if pw.get('fan') is not None: parts.append(f'Lüfter {pw["fan"]}')
     win.text(p, '  ·  '.join(parts), badge.right() + 1.4 * u, hy, ('u', 1.68, 500), MUTED,
@@ -225,18 +229,33 @@ def draw(win, p):
                 win.hit(rr, lambda g=rg: (close(win), win.start(g)), name='qswitch:' + rg['id'])
             y += rc_h + gap
 
-        # ---- 4. Performance, GPU Clock, Fan, FPS Cap, Scaling & Frame Generation Card ----
+        # ---- 4. HyperDrive, Performance, Turnip, GPU Clock, Fan, Res, FPS Cap & Scaling Card ----
+        eng = T.get('engine') or {}
+        has_eng = bool(eng)
         has_prof = bool(pw.get('profiles'))
         fg = getattr(win, 'FG', None)
         has_fg = bool(fg and fg.get('there'))
-        rows_n = int(has_prof) + 2 + (2 if win.RUN else 0) + int(has_fg)
+        rows_n = (2 if has_eng else 0) + int(has_prof) + 2 + (3 if win.RUN else 0) + int(has_fg)
         if rows_n:
             pcard_h = 3.2 * u + rows_n * 5.4 * u + (.6 * u if not win.RUN else 0)
             pcard = QRectF(x0, y, cw, pcard_h)
-            win.box(p, pcard, 1.8 * u, PANEL, LINE)
-            win.text(p, 'LEISTUNG & HARDWARE (DIESES SPIEL)' if win.RUN else 'LEISTUNG & HARDWARE',
-                     x0 + 1.6 * u, y + 1.0 * u, f_sec, MUTED, cw - 3.2 * u)
+            hyper_on = bool(eng.get('hyperdrive'))
+            win.box(p, pcard, 1.8 * u, PANEL, LIVE if hyper_on else LINE)
+            hdr_lbl = ('⚡ HYPERDRIVE AKTIV · DIESES SPIEL' if win.RUN else '⚡ HYPERDRIVE AKTIV · ENGINE') if hyper_on else ('LEISTUNG & HARDWARE (DIESES SPIEL)' if win.RUN else 'LEISTUNG & HARDWARE')
+            win.text(p, hdr_lbl, x0 + 1.6 * u, y + 1.0 * u, f_sec, LIVE if hyper_on else MUTED, cw - 3.2 * u)
             py = y + 3.3 * u
+            if has_eng:
+                seg_row(x0 + 1.2 * u, py, cw - 2.4 * u, 4.5 * u,
+                        [('Standard', lambda: send(win, 'hyperdrive', False), not hyper_on, 'hd:off'),
+                         ('⚡ HyperDrive (WinNative · FEX Fast · LAVD · Big-Cores)', lambda: send(win, 'hyperdrive', True), hyper_on, 'hd:on')],
+                        LIVE if hyper_on else FOCUS)
+                py += 5.4 * u
+                cur_drv = eng.get('turnip') or 'stable'
+                drv_opts = eng.get('turnip_drivers') or [['stable', 'Stable'], ['devel', 'Devel'], ['winnative', 'WinNative']]
+                seg_row(x0 + 1.2 * u, py, cw - 2.4 * u, 4.5 * u,
+                        [(f'Turnip {dlbl.split(" (")[0]}', lambda did=did: send(win, 'turnip', did), cur_drv == did, f'drv:{did}')
+                         for did, dlbl in drv_opts[:4]])
+                py += 5.4 * u
             if has_prof:
                 cur_prof = (win.RUN or {}).get('profile') or pw.get('profile')
                 seg_row(x0 + 1.2 * u, py, cw - 2.4 * u, 4.5 * u,
@@ -256,6 +275,11 @@ def draw(win, p):
                      for fm, lbl in (('auto', 'Lüfter Auto'), ('quiet', 'Leise'), ('cool', 'Kühl'), ('max', 'Max'))])
             py += 5.4 * u
             if win.RUN:
+                cur_res = int((win.RUN or {}).get('res') or 0)
+                seg_row(x0 + 1.2 * u, py, cw - 2.4 * u, 4.5 * u,
+                        [(lbl, lambda rh=rh: win.set_gameopt(res=rh), cur_res == rh, f'res:{rh}')
+                         for rh, lbl in ((0, '1080p Nativ'), (900, '900p SGSR'), (720, '720p Boost'))])
+                py += 5.4 * u
                 cur_fps = (win.RUN or {}).get('fps') or 0
                 seg_row(x0 + 1.2 * u, py, cw - 2.4 * u, 4.5 * u,
                         [(lbl, lambda hz=hz: win.set_gameopt(fps=hz), cur_fps == hz)

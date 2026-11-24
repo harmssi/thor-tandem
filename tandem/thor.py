@@ -1,9 +1,10 @@
-"""The Thor's own hardware under ArmadaOS, reached without root through the interfaces the system already has:
+"""The Thor's own hardware & ArmadaOS HyperDrive engine, reached without root through existing system interfaces:
 
-- stick lights and gyro: Armada Control, ArmadaOS's Decky plugin. It runs as root and its methods can be called by any
-  local program through the Decky loader (WebSocket on 127.0.0.1:1337, token from /auth/token), exactly as the Steam
-  side panel calls them. (/run/armada/session.sock only knows game_launched and reapply_perf.)
-- performance profile, temperature and fan: armada-powerd on the system bus (org.armada.Power, open to group wheel).
+- Armada Control Decky plugin (WebSocket on 127.0.0.1:1337, token from /auth/token):
+  stick lights, gyro, sleep mode, AND HyperDrive game-tweaks (/etc/armada/game-tweaks.json + compat-applied.json:
+  Turnip WinNative/Devel/Stable driver switching, FEX Fast-JIT profile, scx_lavd / scx_cosmos BPF gaming schedulers,
+  Big-Core 3-7 isolation, and ARM64EC Proton-CachyOS auto-wiring across all Steam games).
+- armada-powerd on the system bus (org.armada.Power, open to group wheel): performance profile, temperature, fan.
 
 Everything answers None / an error text where a device lacks it; nothing here needs Steam to run.
 """
@@ -46,7 +47,6 @@ def decky(method, *args, timeout=10):
 
 def _decky(method, *args, timeout=10):
     token, key = _token(), base64.b64encode(os.urandom(16)).decode()
-    # Decky matches replies to calls by id across all connections: a small counter would get another caller's answer
     call = int.from_bytes(os.urandom(6), 'big') + 1
     with socket.create_connection(DECKY, timeout=timeout) as sock:
         sock.sendall(f'GET /ws?auth={token} HTTP/1.1\r\nHost: {DECKY[0]}:{DECKY[1]}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n'
@@ -87,9 +87,48 @@ def power():
             'fan': data.get('fan_rpm'), 'perf': thor_perf.telemetry()}
 
 
+def _extract_engine(config):
+    """Summarize Armada Control's Turnip driver, FEX profile, BPF scheduler, core isolation & HyperDrive state."""
+    tw = ((config.get('tweaks') or {}).get('global')) or {}
+    drivers = config.get('turnipDrivers') or []
+    drv_list = [[d['id'], f"{d.get('label', d['id'])}" + (f" ({d['version'].split('-')[0]})" if d.get('version') else '')]
+                for d in drivers if isinstance(d, dict) and d.get('id')]
+    cur_drv = tw.get('turnipDriver') or 'stable'
+    cur_fex = tw.get('fexProfile') or 'default'
+    cur_sched = tw.get('scheduler') or 'eevdf'
+    cur_cores = tw.get('cores') or 'all'
+    hyper = bool(cur_fex == 'fast' and cur_drv in ('winnative', 'devel') and cur_sched in ('lavd', 'cosmos') and cur_cores == 'big')
+    return {
+        'hyperdrive': hyper,
+        'turnip': cur_drv,
+        'turnip_drivers': drv_list or [['stable', 'Stable'], ['devel', 'Devel'], ['winnative', 'WinNative']],
+        'fex_profile': cur_fex,
+        'scheduler': cur_sched,
+        'cores': cur_cores,
+        'games': ((config.get('tweaks') or {}).get('games')) or {},
+    }
+
+
+def sync_steam_compat(config=None, proton_prefer='proton-cachyos-11.0-arm64'):
+    """Ensure every installed Steam game has armada-game-launch + ARM64EC Proton-CachyOS enabled."""
+    try:
+        cfg = config or decky('get_config') or {}
+        applied = decky('get_compat_applied') or {}
+        existing = set(str(a) for a in (applied.get('appids') or []) if str(a).isdigit())
+        installed = {str(g.get('appid')) for g in (cfg.get('installedGames') or []) if isinstance(g, dict) and str(g.get('appid', '')).isdigit()}
+        protons = cfg.get('protonDefaults') or []
+        chosen = proton_prefer if proton_prefer in protons else (applied.get('protonDefault') or (protons[-1] if protons else 'proton_11-arm64'))
+        merged = sorted(existing | installed, key=int)
+        if merged != sorted(existing, key=int) or applied.get('protonDefault') != chosen:
+            return decky('save_compat_applied', merged, chosen)
+        return applied
+    except (OSError, ValueError, TypeError):
+        return None
+
+
 def state():
-    """What the settings show: {'rgb', 'gyro', 'power', 'os', 'sleep_mode', 'bottom_enabled'}; None where unavailable."""
-    out = {'rgb': None, 'gyro': None, 'power': power(), 'os': None, 'sleep_mode': None, 'bottom_enabled': None}
+    """What the settings show: {'rgb', 'gyro', 'power', 'os', 'sleep_mode', 'bottom_enabled', 'engine'}; None where unavailable."""
+    out = {'rgb': None, 'gyro': None, 'power': power(), 'os': None, 'sleep_mode': None, 'bottom_enabled': None, 'engine': None}
     try:
         config = decky('get_config')
         out['gyro'] = config['gyro'] if (config.get('gyro') or {}).get('supported') else None
@@ -100,14 +139,27 @@ def state():
             out['bottom_enabled'] = config['bottomScreenEnabled']
         if config.get('rgbSupported'):
             rgb = decky('get_rgb')
-            out['rgb'] = {**rgb, 'level': rgb.get('maxBrightness' if rgb.get('linkBrightness') else 'brightness', 50)}  # what the one slider shows
+            out['rgb'] = {**rgb, 'level': rgb.get('maxBrightness' if rgb.get('linkBrightness') else 'brightness', 50)}
+        out['engine'] = _extract_engine(config)
     except (OSError, ValueError, KeyError, TypeError, AttributeError): pass
     return out
 
 
+def _update_global_tweaks(**updates):
+    cfg = decky('get_config') or {}
+    tweaks = cfg.get('tweaks') or {'global': {}, 'games': {}}
+    glob = dict(tweaks.get('global') or {})
+    for k, v in updates.items():
+        if v is None:
+            glob.pop(k, None)
+        else:
+            glob[k] = v
+    decky('save_tweaks', {'global': glob, 'games': dict(tweaks.get('games') or {})})
+    return cfg
+
+
 def change(key, value):
-    """One setting: 'profile' (Eco|Balanced|Performance|Turbo), 'gpu_clock' (0|401|550|680), 'charge_limit' (80|85|100),
-    'gyro' (bool), 'sleep_mode' (s2idle|fake), 'bottom_screen' (bool) or 'rgb' (dict). Returns the new state() or {'error': text}."""
+    """Modify hardware or Armada HyperDrive engine settings without root."""
     global _ACTIVE_PROFILE
     try:
         if key == 'profile':
@@ -117,6 +169,55 @@ def change(key, value):
             if not done or done.returncode: return {'error': 'Das Leistungsprofil lässt sich gerade nicht ändern.'}
             _ACTIVE_PROFILE = value
             thor_perf.apply_profile(value)
+        elif key == 'hyperdrive':
+            on = bool(value)
+            if on:
+                cfg = decky('get_config') or {}
+                drv_ids = [d.get('id') for d in (cfg.get('turnipDrivers') or []) if isinstance(d, dict)]
+                best_drv = 'winnative' if 'winnative' in drv_ids else ('devel' if 'devel' in drv_ids else 'stable')
+                _update_global_tweaks(
+                    turnipDriver=best_drv,
+                    fexProfile='fast',
+                    scheduler='lavd',
+                    cores='big',
+                    gamescopeCores='little',
+                    nice=-10,
+                    wineTopology=True,
+                    gamescopeVulkanRealtime=True,
+                    thunks={'Vulkan': True, 'GL': True, 'drm': True},
+                )
+                sync_steam_compat(cfg, 'proton-cachyos-11.0-arm64')
+                if _ACTIVE_PROFILE != 'Turbo':
+                    _power('set-property', *POWER_OBJ, 'Profile', 's', 'Performance')
+                    _ACTIVE_PROFILE = 'Performance'
+                    thor_perf.apply_profile('Performance')
+            else:
+                _update_global_tweaks(
+                    turnipDriver='stable',
+                    fexProfile='default',
+                    scheduler=None,
+                    cores=None,
+                    gamescopeCores=None,
+                    nice=0,
+                )
+        elif key == 'turnip':
+            _update_global_tweaks(turnipDriver=str(value or 'stable'))
+        elif key == 'fex_profile':
+            if value not in ('fast', 'default', 'compatible'): return {'error': 'Unbekanntes FEX-Profil.'}
+            _update_global_tweaks(fexProfile=str(value))
+            if value == 'fast':
+                sync_steam_compat(None, 'proton-cachyos-11.0-arm64')
+        elif key == 'scheduler':
+            if value not in ('eevdf', 'lavd', 'cosmos'): return {'error': 'Unbekannter Scheduler.'}
+            _update_global_tweaks(scheduler=None if value == 'eevdf' else str(value))
+        elif key == 'core_mode':
+            if value not in ('all', 'big'): return {'error': 'Unbekannter Kern-Modus.'}
+            _update_global_tweaks(
+                cores='big' if value == 'big' else None,
+                gamescopeCores='little' if value == 'big' else None,
+                nice=-10 if value == 'big' else 0,
+                wineTopology=True,
+            )
         elif key == 'gpu_clock':
             res = thor_perf.set_gpu_clock(value)
             if 'error' in res: return res
@@ -140,7 +241,6 @@ def change(key, value):
             if len(color) != 6 or any(c not in '0123456789ABCDEF' for c in color): return {'error': 'Ungültige Farbe.'}
             bright = max(0, min(100, int(value.get('brightness', now.get('brightness', 50)))))
             link = bool(value.get('linkBrightness', now.get('linkBrightness', False)))
-            # with the link on, armada-rgb follows the screen up to maxBrightness: the slider then sets that ceiling
             decky('set_rgb', bool(value.get('enabled', now.get('enabled', True))), link, color, int(now.get('saturation', 100)),
                   bright if link else int(now.get('maxBrightness', 50)), bright)
         else: return {'error': 'unbekannte Einstellung'}

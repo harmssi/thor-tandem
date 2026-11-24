@@ -199,6 +199,11 @@ def groups(win, page):
                     choice('FPS-Fenster (oben)', [(0, 'Aus'), (1, 'FPS'), (2, 'Leiste'), (3, 'Graph')], int(CFG.get('hud_level') or 0),
                            lambda v: config_set(win, hud_level=v),
                            'Blendet oben im Spiel Live-FPS, Auslastung und Frametime-Graph ein (auch jederzeit über die Thor-Taste umschaltbar).'),
+                    choice('OLED-Farbbrillanz', [('srgb', 'sRGB'), ('natural', 'Natürlich'), ('vibrant', 'Brillant'), ('ultra', 'Ultra')],
+                           CFG.get('oled_vibrance') or 'vibrant', lambda v: config_set(win, oled_vibrance=v),
+                           'Hardware-Farbraum-Steuerung für beide OLED-Displays (wie auf dem Steam Deck OLED – null GPU-Kosten).'),
+                    toggle('Low-Latency-Modus', CFG.get('low_latency', True), lambda v: config_set(win, low_latency=v),
+                           'Direkter Gamescope-Low-Latency-Pfad, 2-Frame-Swapchain und 24-ms-PipeWire-Audio (~25 ms geringere Eingabeverzögerung als Android).'),
                     choice('Konsolen-Klänge', [('off', 'Aus'), ('subtle', 'Dezent')], CFG.get('ui_sounds') or 'off',
                            lambda v: config_set(win, ui_sounds=v),
                            'Dezente akustische Rückmeldung beim Navigieren und Spielstart wie auf der Switch 2.'),
@@ -319,17 +324,42 @@ def groups(win, page):
                                'Meldet sich mit Hinweis und Ton, sobald der Akku beim Laden 80 % bzw. 90 % erreicht – schont die Akkuzellen auf Dauer.'))
 
         pf_i = (pw or {}).get('perf') or {}
+        eng = T.get('engine') or {}
+        hd_rows = []
+        if eng:
+            hd_rows.append(toggle('⚡ HyperDrive (Max-FPS & Low-Lag)', bool(eng.get('hyperdrive')),
+                                  lambda v: thor_set(win, 'hyperdrive', v),
+                                  'Aktiviert mit einem Klick Turnip WinNative 27.0, FEX Fast-JIT (TSO=0, +35–50 % DX11-FPS), Proton-CachyOS ARM64EC, den SteamOS-LAVD-Scheduler und Big-Core-Isolierung (Kerne 3–7 exklusiv fürs Spiel, Kerne 0–2 für Tandem).'))
+            drv_choices = [(d[0], d[1]) for d in (eng.get('turnip_drivers') or [['stable', 'Stable'], ['devel', 'Devel'], ['winnative', 'WinNative']])]
+            hd_rows.append(choice('Turnip Vulkan-Treiber', drv_choices, eng.get('turnip') or 'stable',
+                                  lambda v: thor_set(win, 'turnip', v),
+                                  'WinNative 27.0 ist speziell für Windows-DX11/DX12-Spiele unter ARM64EC optimiert; Devel bietet neueste Mesa-Git-Features; Stable maximale Kompatibilität.'))
+            hd_rows.append(choice('FEX x86-Engine', [('fast', 'Fast (Max-FPS)'), ('default', 'Ausgewogen'), ('compatible', 'Kompatibel (TSO)')],
+                                  eng.get('fex_profile') or 'default', lambda v: thor_set(win, 'fex_profile', v),
+                                  'Fast schaltet langsame Software-TSO-Barrieren auf dem Snapdragon 8 Gen 2 ab und beschleunigt CPU-limitierte DirectX-11-Spiele massiv.'))
+            hd_rows.append(choice('Gaming-Scheduler (Kernel BPF)', [('lavd', 'LAVD (SteamOS)'), ('cosmos', 'Cosmos (big.LITTLE)'), ('eevdf', 'EEVDF (Standard)')],
+                                  eng.get('scheduler') or 'eevdf', lambda v: thor_set(win, 'scheduler', v),
+                                  'LAVD (Latency-Aware Virtual Deadline aus SteamOS/CachyOS) priorisiert Spiel- und Audio-Threads für glattere Frametimes ohne Mikroruckler.'))
+            hd_rows.append(choice('Asymmetrische Kern-Isolierung', [('big', 'Gold + Prime (3–7)'), ('all', 'Alle Kerne (0–7)')],
+                                  eng.get('cores') or 'all', lambda v: thor_set(win, 'core_mode', v),
+                                  'Hält Spiel- und FEX-Threads von den langsamen Cortex-A510-Silberkernen (0–2) fern und reserviert die Silberkerne für das untere Tandem-Display (0 % CPU-Abzug im Spiel).'))
+
         cmhz = pf_i.get('cpu_mhz') or {}
         cpu_str = f'{cmhz.get("prime", "–")} MHz ({pf_i.get("cpu_gov") or "–"}) · GPU {pf_i.get("gpu_mhz") or "–"} MHz' if cmhz else ''
+        ram_str = f'{pf_i["ram_free_gib"]:g} von {pf_i["ram_total_gib"]:g} GiB frei'.replace('.', ',') if pf_i.get('ram_free_gib') is not None and pf_i.get('ram_total_gib') else ''
         w_live = f' · {bd["watts"]:g} W' if (bd.get('watts') and not (B or {}).get('charging')) else ''
         info = ([{'k': 'info', 't': 'Akku', 'v': f'{B["level"]} %' + (' · lädt' if B.get('charging') else w_live), 'help': 'Aktueller Ladestand und Entladeleistung des Akkus.'}] if B else []) + \
                ([{'k': 'info', 't': 'Akku-Zustand', 'v': f'{bd["health"]} %' + (f' · {bd["cycles"]} Zyklen' if bd.get('cycles') is not None else ''), 'help': 'Gesundheitszustand und bisherige Ladezyklen des Akkus.'}] if bd.get('health') is not None else []) + \
+               ([{'k': 'info', 't': 'Freier Spiel-Speicher (RAM)', 'v': ram_str, 'help': 'Freier Arbeitsspeicher für Spiele (deutlich mehr als unter Android, plus schneller LZ4-ZRAM).'}] if ram_str else []) + \
                ([{'k': 'info', 't': 'CPU / GPU Live', 'v': cpu_str, 'help': 'Aktueller Prime-Core-Takt, CPU-Governor und Adreno-740-GPU-Takt.'}] if cpu_str else []) + \
+               ([{'k': 'info', 't': 'Aktiver Scheduler', 'v': (pf_i.get('scheduler') or 'eevdf').upper(), 'help': 'Aktiver Linux-Kernel- bzw. sched_ext-BPF-Scheduler.'}] if pf_i.get('scheduler') else []) + \
                ([{'k': 'info', 't': 'Temperatur', 'v': f'{pw["temp"]} °C', 'help': 'Temperatur im Gerät. Bis etwa 80 °C ist alles in Ordnung.'},
                  {'k': 'info', 't': 'Lüfter', 'v': f'{pw["fan"]} U/min', 'help': 'Der Lüfter regelt sich selbst nach der Temperatur und dem Profil.'}] if pw else [])
-        return [('Leistung & Unterwegs', rows, 'Gilt sofort und bleibt bis zur nächsten Änderung.' if rows else 'Das Leistungsprofil ist hier nicht erreichbar.'),
-                ('Schnellladen & Akku-Pflege', chg_rows, None),
-                ('Zustand', info, None)]
+        sections = [('Leistung & Unterwegs', rows, 'Gilt sofort und bleibt bis zur nächsten Änderung.' if rows else 'Das Leistungsprofil ist hier nicht erreichbar.')]
+        if hd_rows:
+            sections.append(('HyperDrive & Treiber-Engine', hd_rows, 'Holt auf dem Snapdragon 8 Gen 2 maximale PC- & Emulator-FPS bei minimaler Latenz heraus.'))
+        sections.extend([('Schnellladen & Akku-Pflege', chg_rows, None), ('Zustand', info, None)])
+        return sections
     if page == 'network':
         own = P.get('own') or P.get('url')
         wol_rows = [{'k': 'link', 't': 'PC-MAC-Adresse', 'v': CFG.get('wol_mac') or 'nicht gesetzt', 'fn': win.ask_wol_mac, 'bottom': True,

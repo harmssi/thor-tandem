@@ -114,10 +114,27 @@ chown -R 1000:1000 "$HOME_DIR/.local" "$HOME_DIR/.config" "$HOME_DIR/Desktop"
 ETC_DIR="$(find "$MNT" -maxdepth 5 -type d -name sysctl.d 2>/dev/null | grep '/etc/sysctl.d$' | head -n 1 || true)"
 if [ -n "$ETC_DIR" ]; then
     ETC_ROOT="$(dirname "$ETC_DIR")"
-    mkdir -p "$ETC_ROOT/sysctl.d" "$ETC_ROOT/udev/rules.d"
+    mkdir -p "$ETC_ROOT/sysctl.d" "$ETC_ROOT/udev/rules.d" "$ETC_ROOT/systemd/zram-generator.conf.d" "$ETC_ROOT/armada"
     install -m 644 "$ROOT/os/99-toravo-perf.conf" "$ETC_ROOT/sysctl.d/99-toravo-perf.conf"
     install -m 644 "$ROOT/os/99-toravo-hw.rules" "$ETC_ROOT/udev/rules.d/99-toravo-hw.rules"
-    echo "Performance sysctl + udev rules installed into $ETC_ROOT"
+    cat > "$ETC_ROOT/systemd/zram-generator.conf.d/99-toravo-lz4.conf" <<'ZEOF'
+[zram0]
+compression-algorithm = lz4
+ZEOF
+    cat > "$ETC_ROOT/armada/game-tweaks.json" <<'TEOF'
+{
+  "games": {},
+  "global": {
+    "cores": "big",
+    "fexProfile": "fast",
+    "gamescopeCores": "little",
+    "nice": -10,
+    "scheduler": "lavd",
+    "turnipDriver": "winnative"
+  }
+}
+TEOF
+    echo "HyperDrive game-tweaks, LZ4 ZRAM, sysctl + udev rules installed into $ETC_ROOT"
 fi
 
 sync

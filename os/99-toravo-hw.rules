@@ -5,6 +5,7 @@ SUBSYSTEM=="power_supply", KERNEL=="battery", RUN+="/bin/sh -c 'chgrp wheel /sys
 # 2. Smart Fan PWM control
 SUBSYSTEM=="hwmon", ATTR{name}=="pwmfan", RUN+="/bin/sh -c 'chgrp wheel /sys%p/pwm1 /sys%p/pwm1_enable 2>/dev/null; chmod 664 /sys%p/pwm1 /sys%p/pwm1_enable 2>/dev/null'"
 
-# 3. Adreno 740 GPU devfreq + Kryo CPU clusters
+# 3. Adreno 740 GPU devfreq, UFS 4.0 Flash Controller devfreq + Kryo CPU clusters
 SUBSYSTEM=="devfreq", KERNEL=="3d00000.gpu", RUN+="/bin/sh -c 'chgrp wheel /sys%p/governor /sys%p/min_freq /sys%p/max_freq 2>/dev/null; chmod 664 /sys%p/governor /sys%p/min_freq /sys%p/max_freq 2>/dev/null'"
+SUBSYSTEM=="devfreq", KERNEL=="1d84000.ufshc", RUN+="/bin/sh -c 'chgrp wheel /sys%p/governor /sys%p/min_freq /sys%p/max_freq 2>/dev/null; chmod 664 /sys%p/governor /sys%p/min_freq /sys%p/max_freq 2>/dev/null'"
 SUBSYSTEM=="cpu", ACTION=="add", RUN+="/bin/sh -c 'chgrp wheel /sys/devices/system/cpu/cpufreq/policy*/scaling_governor /sys/devices/system/cpu/cpufreq/policy*/scaling_max_freq /sys/devices/system/cpu/cpufreq/policy*/scaling_min_freq 2>/dev/null; chmod 664 /sys/devices/system/cpu/cpufreq/policy*/scaling_governor /sys/devices/system/cpu/cpufreq/policy*/scaling_max_freq /sys/devices/system/cpu/cpufreq/policy*/scaling_min_freq 2>/dev/null'"

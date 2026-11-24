@@ -1114,7 +1114,9 @@ class Tandem:
             cfg_now = load_config()
             prof = opt.get('profile') or ('Performance' if label in ('BananaNative', 'PeanutsNative') else ('Eco' if cfg_now.get('travel_mode') else ''))
             fps = opt.get('fps') if opt.get('fps') in FPS_LIMITS and opt.get('fps') else base_panel_hz(cfg_now)
-            scale = opt.get('scale') if opt.get('scale') in SCALING_FILTERS else 'linear'
+            res_h = int(opt.get('res') or 0) if opt.get('res') in RENDER_RES else 0
+            scale = opt.get('scale') if opt.get('scale') in SCALING_FILTERS else ('sgsr' if res_h else 'linear')
+            low_lat = bool(cfg_now.get('low_latency', True))
             is_dual = bool((game['s'] == 'wiiu') or (game['s'] == 'nds' and label == 'melonDS') or (game['s'] == 'n3ds' and label == 'Azahar'))
             with open(STATE / 'launch.log', 'ab') as log:  # the child keeps its own copy of the handle
                 log.write(f'\n== {time.strftime("%F %T")} {game["t"]}: {cmd}\n'.encode()); log.flush()
@@ -1131,9 +1133,16 @@ class Tandem:
                                'WAYLAND_DISPLAY': os.environ.get('WAYLAND_DISPLAY') or 'gamescope-0',
                                'XDG_RUNTIME_DIR': os.environ.get('XDG_RUNTIME_DIR') or f'/run/user/{os.getuid()}'}
                     if game.get('s') not in ('term', 'app'):
-                        env = thor_perf.game_env(env if env is not None else os.environ, opt, game.get('s', ''))
+                        env = thor_perf.game_env(env if env is not None else os.environ, opt, game.get('s', ''), low_latency=low_lat)
+                        if game.get('s') == 'steam' and not game.get('direct'):
+                            threading.Thread(target=thor.sync_steam_compat, daemon=True).start()
+                        elif ARMADA_LAUNCH.is_file() and cmd and cmd[0] != str(ARMADA_LAUNCH) and game.get('s') in ('port', 'steam', 'ps2', 'wiiu', 'n3ds', 'psp'):
+                            cmd = [str(ARMADA_LAUNCH), *cmd]
+                        thor_perf.set_tandem_isolation(True)
                     if prof: thor.change('profile', prof)
                     if fps: apply_fps_limit(fps)
+                    apply_low_latency(low_lat)
+                    apply_render_res(res_h)
                     if scale != 'linear': apply_scaling_filter(scale)
                     stopping = getattr(self, 'steam_stopping', None)
                     if game['s'] == 'steam' and not game.get('direct') and stopping and stopping.is_alive():  # a start sent to a Steam that is shutting down is lost
@@ -1144,7 +1153,11 @@ class Tandem:
                             if not alive: break
                             time.sleep(1)
                     try: self.proc = subprocess.Popen(cmd, stdout=log, stderr=log, stdin=subprocess.DEVNULL, start_new_session=True, env=env)
-                    except OSError as error: return {'error': f'Start fehlgeschlagen: {error}'}
+                    except OSError as error:
+                        thor_perf.set_tandem_isolation(False)
+                        return {'error': f'Start fehlgeschlagen: {error}'}
+                    if game.get('s') not in ('term', 'app'):
+                        thor_perf.pin_game_tree(self.proc.pid, 'big')
                     if game.get('direct') or game['s'] not in ('steam', 'app'): (STATE / 'running').write_text(f'{self.proc.pid} {start_time(self.proc.pid)}')
             played = self.saved.setdefault('played', {}).setdefault(gid, {'secs': 0})
             played['last'] = int(time.time())
@@ -1159,7 +1172,7 @@ class Tandem:
                             'deck': f'deck/{game["appid"]}.html' if game.get('appid') and (HERE / f'decks/{game["appid"]}.html').is_file() else None,
                             'pack': pack, 'pack_other_region': pack_other, 'pack_candidates': pack_cands,
                             'pack_mode': 'art' if assigned_pack == '__art__' else 'pack',
-                            'wide': wide, 'dual': is_dual, 'profile': prof, 'fps': fps, 'scale': scale,
+                            'wide': wide, 'dual': is_dual, 'profile': prof, 'fps': fps, 'scale': scale, 'res': res_h,
                             **({'flatpak': fp_id} if fp_id else {}),
                             'port': game.get('media') or ({'deck': PORTS[game['port']][3], 'socket': str(DECK_SOCKET)} if game['s'] == 'port' else None)}
                 if not self.dry: threading.Thread(target=self.watch, args=(self.proc, gid, game.get('appid')), daemon=True).start()
@@ -1178,7 +1191,7 @@ class Tandem:
             if not gid: return {'error': 'Es läuft kein Spiel.'}
             game = self.library.games.get(gid)
             opt = self.saved.setdefault('gameopt', {}).setdefault(gid, {})
-            emu_id, prof, fps, scale = data.get('emu'), data.get('profile'), data.get('fps'), data.get('scale')
+            emu_id, prof, fps, scale, res_h = data.get('emu'), data.get('profile'), data.get('fps'), data.get('scale'), data.get('res')
             if emu_id is not None and game:
                 valid_ids = {e['id'] for e in emulators_for(game['s'])}
                 if emu_id == '' or emu_id is False: opt.pop('emu', None)
@@ -1200,7 +1213,12 @@ class Tandem:
                 if scale != 'linear': opt['scale'] = scale
                 else: opt.pop('scale', None)
                 if run and run['id'] == gid: run['scale'] = scale
-            for flag in ('tu_deck_emu', 'tu_sysmem', 'fex_fast'):
+            if res_h is not None:
+                if res_h not in RENDER_RES: return {'error': 'unbekannte Einstellung'}
+                if res_h: opt['res'] = int(res_h)
+                else: opt.pop('res', None)
+                if run and run['id'] == gid: run['res'] = int(res_h)
+            for flag in ('tu_deck_emu', 'tu_sysmem', 'fex_fast', 'fex_tso'):
                 if flag in data:
                     if data[flag]: opt[flag] = True
                     else: opt.pop(flag, None)
@@ -1215,11 +1233,13 @@ class Tandem:
             if prof is not None and not self.dry: thor_res = thor.change('profile', target_prof)
             if fps is not None and not self.dry: apply_fps_limit(target_fps)
             if scale is not None and not self.dry: apply_scaling_filter(target_scale)
+            if res_h is not None and not self.dry: apply_render_res(int(res_h or 0))
             if thor_res and 'error' not in thor_res: self.publish('thor', {'thor': thor_res})
             self.publish()
         else:
             self.publish('library')
         out = {'ok': True, 'profile': opt.get('profile', ''), 'fps': opt.get('fps', 0), 'scale': opt.get('scale', 'linear')}
+        if res_h is not None or opt.get('res'): out['res'] = opt.get('res', 0)
         if emu_id is not None or opt.get('emu'): out['emu'] = opt.get('emu', '')
         return out
 
@@ -1353,6 +1373,8 @@ class Tandem:
                 if steam_pids(appid):
                     there, gone = there + 2, 0
                     longest = max(longest, there)
+                    if there in (2, 6, 12):
+                        thor_perf.pin_game_tree(None, 'big')
                     if longest >= SETUP_SECS: self.steam_show = 0  # the game itself is there: Steam's own window may go
                 else: there, gone = 0, gone + 2
                 # Asked to quit: the wait for a game that may still appear is over, whatever was seen of it so far.
@@ -1386,6 +1408,9 @@ class Tandem:
         if had_fps and not self.dry:
             apply_fps_limit(base_panel_hz(cfg_end))
         if had_scale and not self.dry: apply_scaling_filter('linear')
+        if not self.dry:
+            apply_render_res(0)
+            thor_perf.set_tandem_isolation(False)
         if is_game and not self.dry:
             saved_moment = self.moments.finish(gid)
             if saved_moment and gid in self.library.games:
@@ -2033,17 +2058,63 @@ def screenshot():
 
 
 FPS_LIMITS = (0, 30, 40, 45, 60)
+RENDER_RES = (0, 900, 720)
 SCALING_FILTERS = ('linear', 'sgsr', 'fsr', 'pixel')
+OLED_VIBRANCE = {'srgb': 0, 'natural': 50, 'vibrant': 85, 'ultra': 100}
 NIGHT_MODES = {'off': None, 'warm': (1.0, 0.89, 0.72), 'night': (1.0, 0.78, 0.50)}
 MUTED = {'on': False}
+ARMADA_LAUNCH = Path('/usr/libexec/armada/armada-game-launch')
+
+
+def _x11_displays():
+    """Active XWayland displays (top :0 and optional bottom :1 from armada-bottom-env)."""
+    out = [os.environ.get('DISPLAY') or ':0']
+    benv = Path(os.environ.get('XDG_RUNTIME_DIR') or f'/run/user/{os.getuid()}') / 'armada-bottom-env'
+    try:
+        for line in benv.read_text().splitlines():
+            if line.startswith('DISPLAY='):
+                d = line.split('=', 1)[1].strip().strip('"\'')
+                if d and d not in out:
+                    out.append(d)
+    except OSError:
+        pass
+    return out
+
+
+def _xprop_set(atom, value, fmt='32c', displays=None):
+    if not shutil.which('xprop'):
+        return
+    for dpy in (displays or [os.environ.get('DISPLAY') or ':0']):
+        env = {**os.environ, 'DISPLAY': dpy}
+        try:
+            if value is None:
+                subprocess.run(['xprop', '-root', '-remove', atom], env=env, capture_output=True, timeout=3)
+            else:
+                subprocess.run(['xprop', '-root', '-f', atom, fmt, '-set', atom, str(value)],
+                               env=env, capture_output=True, timeout=3)
+        except (OSError, subprocess.SubprocessError):
+            pass
 
 
 def apply_fps_limit(hz):
     """Gamescope's frame limiter / panel refresh target on the top screen (0 = full 120 Hz, 60 = 60 Hz)."""
-    if not shutil.which('xprop'): return
-    env = {**os.environ, 'DISPLAY': os.environ.get('DISPLAY') or ':0'}
-    try: subprocess.run(['xprop', '-root', '-f', 'GAMESCOPE_FPS_LIMIT', '32c', '-set', 'GAMESCOPE_FPS_LIMIT', str(int(hz))], env=env, capture_output=True, timeout=3)
-    except (OSError, subprocess.SubprocessError): pass
+    _xprop_set('GAMESCOPE_FPS_LIMIT', int(hz))
+
+
+def apply_low_latency(on=True):
+    """Gamescope low-latency presentation path on the top screen (~15-25 ms lower lag than Android SurfaceFlinger)."""
+    _xprop_set('GAMESCOPE_LOW_LATENCY', 1 if on else 0)
+
+
+def apply_render_res(height=0):
+    """Tell Gamescope / Steam the target internal game height (720 / 900 / 0=native 1080p)."""
+    _xprop_set('GAMESCOPE_STEAM_MAX_HEIGHT', int(height) if height in (720, 900) else None)
+
+
+def apply_oled_vibrance(mode='vibrant'):
+    """Hardware KMS color gamut wideness on both OLED panels (Steam Deck OLED vibrant gamut pipeline, zero GPU cost)."""
+    val = OLED_VIBRANCE.get(mode, 85)
+    _xprop_set('GAMESCOPE_COLOR_SDR_GAMUT_WIDENESS', val, displays=_x11_displays())
 
 
 def base_panel_hz(cfg=None):
@@ -2192,19 +2263,26 @@ def apply_travel_effects(on, tandem=None):
 
 
 def apply_scaling_filter(mode):
-    """Gamescope upscaling filter on the top screen (linear, sgsr, fsr, pixel)."""
-    if mode not in SCALING_FILTERS or not shutil.which('gamescopectl'): return
-    env = {**os.environ, 'XDG_RUNTIME_DIR': os.environ.get('XDG_RUNTIME_DIR') or f'/run/user/{os.getuid()}', 'WAYLAND_DISPLAY': 'gamescope-0'}
-    try:
-        subprocess.run(['gamescopectl', 'scaling_filter', mode], env=env, capture_output=True, timeout=3)
-        if mode in ('sgsr', 'fsr'):
-            subprocess.run(['gamescopectl', 'scaling_sharpness', '12'], env=env, capture_output=True, timeout=3)
-    except (OSError, subprocess.SubprocessError): pass
+    """Gamescope upscaling filter on the top screen (linear, sgsr, fsr, pixel) via X11 root atoms (+ gamescopectl fallback)."""
+    if mode not in SCALING_FILTERS: return
+    # GamescopeUpscaleFilter enum: 0 = LINEAR, 1 = NEAREST (pixel), 2 = FSR/SGSR, 3 = NIS
+    atom_val = {'linear': 0, 'pixel': 1, 'fsr': 2, 'sgsr': 2}.get(mode, 0)
+    _xprop_set('GAMESCOPE_SCALING_FILTER', atom_val)
+    _xprop_set('GAMESCOPE_NEW_SCALING_FILTER', atom_val)
+    if mode in ('sgsr', 'fsr'):
+        _xprop_set('GAMESCOPE_FSR_SHARPNESS', 5)
+    if shutil.which('gamescopectl'):
+        env = {**os.environ, 'XDG_RUNTIME_DIR': os.environ.get('XDG_RUNTIME_DIR') or f'/run/user/{os.getuid()}', 'WAYLAND_DISPLAY': 'gamescope-0'}
+        try:
+            subprocess.run(['gamescopectl', 'scaling_filter', mode], env=env, capture_output=True, timeout=3)
+            if mode in ('sgsr', 'fsr'):
+                subprocess.run(['gamescopectl', 'scaling_sharpness', '12'], env=env, capture_output=True, timeout=3)
+        except (OSError, subprocess.SubprocessError): pass
 
 
 def apply_night_mode(mode):
-    """Hardware 3D LUT blue-light filter on both Gamescope displays via gamescopectl set_look (zero GPU/CPU cost)."""
-    if mode not in NIGHT_MODES or not shutil.which('gamescopectl'): return
+    """Hardware 3D LUT blue-light filter on both Gamescope displays via GAMESCOPE_COLOR_LOOK_G22 X11 atom (zero GPU/CPU cost)."""
+    if mode not in NIGHT_MODES: return
     gains = NIGHT_MODES[mode]
     cube_arg = ''
     if gains:
@@ -2220,12 +2298,14 @@ def apply_night_mode(mode):
                         lines.append(f'{(r / (n - 1)) * gains[0]:.5f} {(g / (n - 1)) * gains[1]:.5f} {(b / (n - 1)) * gains[2]:.5f}')
             cube.write_text('\n'.join(lines) + '\n')
         cube_arg = str(cube)
-    rt = Path(os.environ.get('XDG_RUNTIME_DIR') or f'/run/user/{os.getuid()}')
-    for sock in sorted(rt.glob('gamescope-[0-9]*')):
-        if not re.fullmatch(r'gamescope-\d+', sock.name): continue
-        env = {**os.environ, 'XDG_RUNTIME_DIR': str(rt), 'WAYLAND_DISPLAY': sock.name, 'GAMESCOPE_WAYLAND_DISPLAY': sock.name}
-        try: subprocess.run(['gamescopectl', 'set_look', cube_arg], env=env, capture_output=True, timeout=4)
-        except (OSError, subprocess.SubprocessError): pass
+    _xprop_set('GAMESCOPE_COLOR_LOOK_G22', cube_arg if cube_arg else None, fmt='8u', displays=_x11_displays())
+    if shutil.which('gamescopectl'):
+        rt = Path(os.environ.get('XDG_RUNTIME_DIR') or f'/run/user/{os.getuid()}')
+        for sock in sorted(rt.glob('gamescope-[0-9]*')):
+            if not re.fullmatch(r'gamescope-\d+', sock.name): continue
+            env = {**os.environ, 'XDG_RUNTIME_DIR': str(rt), 'WAYLAND_DISPLAY': sock.name, 'GAMESCOPE_WAYLAND_DISPLAY': sock.name}
+            try: subprocess.run(['gamescopectl', 'set_look', cube_arg], env=env, capture_output=True, timeout=4)
+            except (OSError, subprocess.SubprocessError): pass
 
 
 def trigger_saves_backup(tandem, quiet=False):
@@ -2515,6 +2595,12 @@ def save_config(data):
     if data.get('night_mode') in NIGHT_MODES:
         config['night_mode'] = data['night_mode']
         threading.Thread(target=apply_night_mode, args=(data['night_mode'],), daemon=True).start()
+    if data.get('oled_vibrance') in OLED_VIBRANCE:
+        config['oled_vibrance'] = data['oled_vibrance']
+        threading.Thread(target=apply_oled_vibrance, args=(data['oled_vibrance'],), daemon=True).start()
+    if isinstance(data.get('low_latency'), bool):
+        config['low_latency'] = data['low_latency']
+        threading.Thread(target=apply_low_latency, args=(data['low_latency'],), daemon=True).start()
     if isinstance(data.get('save_auto'), bool): config['save_auto'] = data['save_auto']
     if isinstance(data.get('auto_update'), bool): config['auto_update'] = data['auto_update']
     if isinstance(data.get('auto_companions'), bool): config['auto_companions'] = data['auto_companions']
@@ -2700,6 +2786,8 @@ def public_config():
             'wol_mac': config.get('wol_mac', ''),
             'charger_standby': config.get('charger_standby') if config.get('charger_standby') in ('doze', 'sleep') else 'doze',
             'night_mode': config.get('night_mode') if config.get('night_mode') in NIGHT_MODES else 'off',
+            'oled_vibrance': config.get('oled_vibrance') if config.get('oled_vibrance') in OLED_VIBRANCE else 'vibrant',
+            'low_latency': config.get('low_latency', True),
             'save_auto': config.get('save_auto', True),
             'auto_update': config.get('auto_update', True),
             'auto_companions': config.get('auto_companions', True),
