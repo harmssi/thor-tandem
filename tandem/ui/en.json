@@ -1,5 +1,33 @@
 {
   "text": {
+    "Übersetzen": "Translate",
+    "🌐 Übersetzen": "🌐 Translate",
+    "⏳ Übersetze …": "⏳ Translating …",
+    "⚡ Jetzt übersetzen": "⚡ Translate now",
+    "● Auto-Dialog": "● Auto dialogue",
+    "Auto-Dialog": "Auto dialogue",
+    "100 % Offline": "100% Offline",
+    "Hybrid · DE": "Hybrid · DE",
+    "🔊 Vorlesen": "🔊 Speak",
+    "Sprachen": "Languages",
+    "Vollbild": "Full screen",
+    "Dialog unten": "Bottom dialogue",
+    "Dialog oben": "Top dialogue",
+    "⊞ Eigener Rahmen": "⊞ Custom region",
+    "LIVE-SPIELÜBERSETZER (DEUTSCH)": "LIVE GAME TRANSLATOR (GERMAN)",
+    "Tippe oben auf „⚡ Jetzt übersetzen“ oder schalte „Auto-Dialog“ ein.\n• Liest englische, japanische, chinesische & spanische Dialoge vom oberen Bildschirm und übersetzt sie sofort auf Deutsch.\n• Läuft komplett auf den Silberkernen (0 % FPS-Verlust im Spiel) – auch offline unterwegs.": "Tap “⚡ Translate now” above or enable “Auto dialogue”.\n• Reads English, Japanese, Chinese & Spanish dialogue from the top screen and translates it live into German.\n• Runs exclusively on the Silver cores (0% game FPS loss) – works offline on the go too.",
+    "DIALOG-VERLAUF": "DIALOGUE HISTORY",
+    "Verlauf leeren": "Clear history",
+    "‹ Abbrechen": "‹ Cancel",
+    "Mit dem Finger den Dialog-Bereich aufziehen:": "Drag your finger to frame the dialogue region:",
+    "Lade Live-Vorschau vom oberen Bildschirm …": "Loading live preview from the top screen …",
+    "‹ Übersetzer": "‹ Translator",
+    "Offline-Sprachpakete (Deutsch)": "Offline language packs (German)",
+    "OFFLINE-SPIELÜBERSETZER EINRICHTEN": "SET UP OFFLINE GAME TRANSLATOR",
+    "Lädt einmalig PaddleOCR + Offline-Sprachpakete (Englisch & Japanisch → Deutsch, ~220 MB, kein Cloud-Konto nötig).": "Downloads PaddleOCR + offline language packs once (English & Japanese → German, ~220 MB, no cloud account needed).",
+    "Installation läuft …": "Installing …",
+    "Jetzt installieren (1 Klick)": "Install now (1 click)",
+    "✓ Bereit": "✓ Ready",
     "Klang-DSP": "Audio DSP",
     "Kino-Bass": "Cinema Bass",
     "Klar": "Clear",
@@ -2377,6 +2405,14 @@
     [
       "^(.+) installiert \\(wählbar unter Leistung › Turnip\\)\\.$",
       "\\1 installed (selectable under Performance › Turnip)."
+    ],
+    [
+      "Quelle: (.+) → DE",
+      "Source: {1} → DE"
+    ],
+    [
+      "● (.+) → DEUTSCH  ·  (.+)",
+      "● {1} → GERMAN  ·  {2}"
     ],
     [
       "^Ungültiges Turnip-Paket: (.+)$",

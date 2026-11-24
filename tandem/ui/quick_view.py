@@ -403,6 +403,8 @@ def draw(win, p):
     f_acts = []
     if win.RUN:
         f_acts.append(('Zu Tandem', lambda: (close(win), win.post('api/pause')), RAISED, TEXT))
+        if win.RUN.get('s') not in ('app', 'term'):
+            f_acts.append(('🌐 Übersetzen', lambda: quick_translate(win), ui.faded(FOCUS, .18), FOCUS))
     else:
         f_acts.append(('Zufallsspiel', lambda: (close(win), win.pick_random()), ui.faded(FOCUS, .18), FOCUS))
         f_acts.append(('Bildschirmschoner', lambda: (close(win), win.post('api/saver', {'open': True})), RAISED, TEXT))
@@ -434,3 +436,25 @@ def record(win, on):
 
 def shot(win):
     win.post('api/shot', {}, then=lambda r: r and win.toast(r.get('error') or 'Bildschirmfoto gespeichert'))
+
+
+def quick_translate(win):
+    close(win)
+    win.memo['open_translate'] = True
+    dk = getattr(win, 'deck', None)
+    if dk and dk is not False:
+        # Switch bespoke companion to Werkzeuge tab or Dual-Screen deck to Übersetzen tab, then activate translator
+        if hasattr(dk, 'TABS') and hasattr(dk, 'univ') and len(dk.TABS) >= 2:
+            dk.set_tab(len(dk.TABS) - 1)
+            dk.univ().set_tab(7)
+            dk.univ().tr_view.capture_now()
+            win.memo.pop('open_translate', None)
+        elif hasattr(dk, 'sub') and hasattr(dk, 'set_tab'):
+            dk.set_tab(5)
+            dk.sub.tr_view.capture_now()
+            win.memo.pop('open_translate', None)
+        elif hasattr(dk, 'tr_view'):
+            dk.set_tab(7)
+            dk.tr_view.capture_now()
+            win.memo.pop('open_translate', None)
+    win.update()

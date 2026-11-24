@@ -1394,11 +1394,20 @@ class CompanionDecksAndGameMenuTest(unittest.TestCase):
         self.assertEqual([g[0] for g in stats_groups], ['Übersicht', 'Meistgespielt', 'Letzte 7 Tage'])
         self.assertEqual(stats_groups[1][1][0]['t'], 'Chrono Trigger')
 
-        # Universal Deck Tab 6: Switch-2 Precision Mouse Mode
+        # Universal Deck Tab 6: Switch-2 Precision Mouse Mode + Tab 7: Live German Game Translator (PlayTranslate style)
         u_mouse = universal.Deck(w)
         u_mouse.tab = 6
         hm = render(u_mouse, 'univ-mouse')
-        self.assertTrue({'utab:Maus', 'umouse:Linksklick', 'umouse:Halten / Ziehen', 'umouse:Rechtsklick'} <= set(hm))
+        self.assertTrue({'utab:Maus', 'utab:Übersetzen', 'umouse:Linksklick', 'umouse:Halten / Ziehen', 'umouse:Rechtsklick'} <= set(hm))
+        u_mouse.set_tab(7)
+        u_mouse.tr_view.st['last'] = {
+            'source': 'It is dangerous to go alone! Take this magic sword.',
+            'translated': 'Es ist gefährlich, alleine zu gehen! Nimm dieses magische Schwert.',
+            'reading': '', 'detected': 'en', 'engine': 'offline',
+            'words': ['dangerous', 'alone', 'magic', 'sword'], 'at': int(time.time()),
+        }
+        ht = render(u_mouse, 'univ-translate')
+        self.assertTrue({'tr:now', 'tr:auto', 'tr:mode', 'treg:full', 'treg:bottom', 'treg:custom', 'tword:sword'} <= set(ht))
         u_mouse.close()
 
         # Dual-Screen OLED Screensaver showcase (Thor Kosmos, Arcade, Dual-Aurora)

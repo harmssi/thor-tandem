@@ -26,7 +26,15 @@ The interface speaks English or German (Settings › Look › Language; the inst
 
 ![Dual-Screen PC & Retro Library on AYN Thor](docs/screenshots/steam-library-dual.png)
 
-## New in 1.2.0 — Zero-Lag, Audio-DSP & UFS 4.0 Edition
+## New in 1.3.0 — Live Screen Game Translator (PlayTranslate Style · Offline & Hybrid)
+
+- **Real-Time Dual-Screen Game Translator (`thor_translate.py`, `thor_ocr_worker.py`, `ui/decks/translator.py`):**
+  - Built-in **`Translate` (`Übersetzen`)** tab in the Universal Companion Deck, every bespoke game companion (`Tools`), and Dual-Screen decks, plus a 1-tap **`🌐 Translate`** button in the Thor Quick Menu.
+  - **1-Tap & Auto-Dialogue Mode:** Captures the top OLED game screen (`:0`) and translates English, Japanese, Chinese, Spanish & French dialogue into **German** on the bottom OLED screen, with a lightweight pixel-fingerprint + typewriter-settle detector that automatically updates whenever a new dialogue box appears.
+  - **Finger-Drawn Dialogue Regions:** Choose `Full screen`, `Bottom dialogue`, `Top dialogue`, or drag your finger directly over a live preview of the top screen to frame the exact subtitle/speech box (saved per game).
+  - **Zero-Cost Offline + Hybrid Engine (0 % Game FPS Loss):** Persistent `PaddleOCR` (`rapidocr-onnxruntime`) + `CTranslate2` int8 Marian-NMT worker pinned to **Silver Cortex-A510 cores (`CPU 0–2`)** (~220 MB, zero PyTorch/CUDA bloat, 100 % offline capable on a plane), with tappable **Word-Lookup chips**, phonetic Romaji/Pinyin reading hints, **30-line Dialogue History**, and **German Text-to-Speech (`🔊`)**.
+
+Earlier in 1.2.0 — Zero-Lag, Audio-DSP & UFS 4.0 Edition:
 
 - **PipeWire "Thor Audio-DSP" Psychoacoustic Speaker Pipeline (`telemetry.py`, `ui/quick_view.py`, `ui/settings_view.py`):**
   - Zero-glitch `libpipewire-module-filter-chain` DSP (`Off · Cinema Bass · Clear · Night`) targeting **exclusively** the internal stereo speakers (`alsa_output.platform-sound.HiFi__Speaker__sink`) while keeping wired headphones and Bluetooth audio 100 % bit-perfect. Cuts sub-105 Hz cone excursion while boosting 168 Hz upper-bass warmth and 5.2 kHz stereo air — inspired by the Steam Deck OLED & Asahi Bankstown pipelines.

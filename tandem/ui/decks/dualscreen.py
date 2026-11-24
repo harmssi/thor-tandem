@@ -7,7 +7,7 @@ from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath
 
 from decks import universal
 
-DUAL_TABS = ('Touchscreen', 'Notizen', 'Guides', 'Cockpit', 'Steuerung')
+DUAL_TABS = ('Touchscreen', 'Notizen', 'Guides', 'Cockpit', 'Steuerung', 'Übersetzen')
 
 
 class _XImage(ctypes.Structure):
@@ -108,8 +108,8 @@ class Deck:
 
     def set_tab(self, i):
         self.tab = i
-        # Map DUAL_TABS index -> universal.TABS index: 1->2 (Notizen), 2->3 (Guides), 3->5 (Cockpit), 4->0 (Steuerung)
-        mapping = {1: 2, 2: 3, 3: 5, 4: 0}
+        # Map DUAL_TABS index -> universal.TABS index: 1->2 (Notizen), 2->3 (Guides), 3->5 (Cockpit), 4->0 (Steuerung), 5->7 (Übersetzen)
+        mapping = {1: 2, 2: 3, 3: 5, 4: 0, 5: 7}
         if i in mapping:
             self.sub.set_tab(mapping[i])
         self.w.update()

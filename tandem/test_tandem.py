@@ -1536,6 +1536,18 @@ class ThorStorageTests(unittest.TestCase):
 
         c12 = tandem.save_config({'speaker_dsp': 'clear', 'ra_zerolag': False, 'ra_autoresume': False, 'ra_shader': 'crt'})
         self.assertEqual((c12['speaker_dsp'], c12['ra_zerolag'], c12['ra_autoresume'], c12['ra_shader']), ('clear', False, False, 'crt'))
+
+        # v1.3.0: PlayTranslate-style Tandem German Game Translator (per-game crop persistence, engine status, options)
+        import thor_translate
+        t_prefs = TMP / 'tr-prefs.json'
+        self.assertEqual(thor_translate.game_crop_spec('gba1', t_prefs)['region'], 'full')
+        st_crop = thor_translate.set_game_crop('gba1', 'custom', [0.05, 0.62, 0.90, 0.32], prefs_file=t_prefs)
+        self.assertEqual(st_crop['region'], 'custom')
+        self.assertEqual(st_crop['crop'], [0.05, 0.62, 0.9, 0.32])
+        st_opt = thor_translate.set_options(None, auto=False, mode='offline', src='ja')
+        self.assertEqual((st_opt['mode'], st_opt['src'], st_opt['target']), ('offline', 'ja', 'de'))
+        thor_translate.set_options(None, auto=False, mode='auto', src='auto', clear_history=True)
+
         tandem.save_config({'speaker_dsp': 'cinema', 'ra_zerolag': True, 'ra_autoresume': True, 'ra_shader': 'sharp',
                             'panel_hz': 120, 'auto_travel': False, 'ai_workdir': ''})
 

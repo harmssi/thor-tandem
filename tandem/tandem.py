@@ -17,6 +17,7 @@ import telemetry  # battery wattage/playtime, CPU/RAM, PipeWire mixer, dock stat
 import thor  # the Thor's own hardware: stick lights, gyro, performance profile
 import thor_perf  # Snapdragon 8 Gen 2 / Adreno 740 performance engine (schedutil/Turbo, GPU lock, bypass charge, Vulkan/FEX env)
 import thor_storage  # integrated Linux/Tandem system backups & live retroactive Android partition shrinker
+import thor_translate  # PlayTranslate-style real-time screen OCR & offline/hybrid German game translator
 import thor_updater  # Obtainium-class integrated emulator/core updater & automatic game companion provisioner
 
 HOME = Path.home()
@@ -1425,6 +1426,7 @@ class Tandem:
         if not self.dry:
             apply_render_res(0)
             thor_perf.set_tandem_isolation(False)
+            thor_translate.stop_worker()
         if is_game and not self.dry:
             saved_moment = self.moments.finish(gid)
             if saved_moment and gid in self.library.games:
@@ -3725,6 +3727,14 @@ def handler(tandem):
             if path == '/api/achievements':
                 run = tandem.run and tandem.library.games.get(tandem.run['id'])
                 return self.send(200, achievements(run) if run else {'note': 'Es läuft kein Spiel.'})
+            if path == '/api/translate':
+                from urllib.parse import parse_qs
+                qs = parse_qs(urlparse(self.path).query)
+                gid = (qs.get('id') or [(tandem.run or {}).get('id', '')])[0]
+                return self.send(200, thor_translate.status(gid))
+            if path == '/api/translate_preview':
+                raw_png = thor_translate.preview_bytes()
+                return self.send(200, raw_png, 'image/png') if raw_png else self.send(404, {'error': 'kein Bild'})
             if path == '/api/events': return self.events()
             self.send(404, {'error': 'unbekannt'})
 
@@ -3957,6 +3967,31 @@ def handler(tandem):
             if path == '/api/guides':
                 gid = str(data.get('id') or (tandem.run or {}).get('id', ''))
                 return self.send(200, companion.guide_fetch_wiki(gid, data.get('q', ''), public_config()['lang']))
+            if path == '/api/translate':
+                gid = str(data.get('id') or (tandem.run or {}).get('id', ''))
+                act = str(data.get('action') or 'now')
+                if act == 'now':
+                    return self.send(200, thor_translate.translate_now(gid))
+                if act == 'options':
+                    return self.send(200, thor_translate.set_options(
+                        tandem, auto=data.get('auto'), mode=data.get('mode'),
+                        src=data.get('src'), clear_history=bool(data.get('clear')),
+                    ))
+                if act == 'crop':
+                    return self.send(200, thor_translate.set_game_crop(gid, str(data.get('region') or 'full'), data.get('box')))
+                if act == 'word':
+                    return self.send(200, thor_translate.lookup_word(data.get('word', ''), gid))
+                if act == 'speak':
+                    thor_translate.speak(data.get('text', ''), 'de')
+                    return self.send(200, thor_translate.status(gid))
+                if act == 'install':
+                    thor_translate.install_engine()
+                    return self.send(200, thor_translate.status(gid))
+                if act == 'model':
+                    pid = str(data.get('id') or '')
+                    threading.Thread(target=thor_translate.download_model_pair, args=(pid,), daemon=True).start()
+                    return self.send(200, thor_translate.status(gid))
+                return self.send(200, thor_translate.status(gid))
             if path == '/api/bgm':
                 if data.get('action') == 'stream_vol':
                     return self.send(200, telemetry.set_stream_volume(data.get('id', 0), data.get('vol', 80)))

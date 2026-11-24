@@ -6,7 +6,7 @@ from urllib.parse import quote
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QPointF, QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen, QPolygonF
 
-TABS = ('Steuerung', 'Stände', 'Notizen', 'Guides', 'Musik', 'Cockpit', 'Maus')
+TABS = ('Steuerung', 'Stände', 'Notizen', 'Guides', 'Musik', 'Cockpit', 'Maus', 'Übersetzen')
 PENS = (('#f5f5f7', 'Weiß'), ('#ffb23e', 'Gold'), ('#2dd4bf', 'Türkis'), ('#ff6b5e', 'Rot'))
 
 
@@ -70,11 +70,17 @@ class Deck:
         self.m_down_at = 0.0
         self.m_moved = 0.0
         self.m_drag = False
-        if os.environ.get('QT_QPA_PLATFORM') != 'offscreen':
+        from decks import translator
+        self.tr_view = translator.TranslatorView(self)
+        if w.memo.pop('open_translate', False):
+            self.tab = 7
+            self.tr_view.activate(trigger_now=True)
+        elif os.environ.get('QT_QPA_PLATFORM') != 'offscreen':
             self._fetch_notes()
 
     def close(self):
         self.tele_timer.stop()
+        self.tr_view.close()
         if self.m_drag:
             self.w.post('api/mouse', {'btn': 'left', 'action': 'up'})
         if self.save_timer.isActive():
@@ -119,6 +125,10 @@ class Deck:
             if not self.tele_timer.isActive(): self.tele_timer.start(2500)
         else:
             self.tele_timer.stop()
+        if idx == 7:
+            self.tr_view.activate()
+        else:
+            self.tr_view.deactivate()
         if idx == 1: self._fetch_slots()
         elif idx == 2 and not self.notes_loaded: self._fetch_notes()
         elif idx == 3 and not self.guides_loaded: self._fetch_guides()
@@ -183,6 +193,8 @@ class Deck:
                        (pos.y() - r.y()) * self.canvas.height() / r.height())
 
     def press(self, pos):
+        if self.tab == 7:
+            return self.tr_view.press(pos)
         if pos is None:
             if self.drawing:
                 self.drawing = False
@@ -211,6 +223,8 @@ class Deck:
             self.pan_start = (pos, self.open_guide['px'], self.open_guide['py'])
 
     def move(self, pos):
+        if self.tab == 7:
+            return self.tr_view.move(pos)
         if self.tab == 6 and self.m_mode and self.m_last is not None:
             dx, dy = pos.x() - self.m_last.x(), pos.y() - self.m_last.y()
             self.m_moved += abs(dx) + abs(dy)
@@ -272,14 +286,17 @@ class Deck:
         w.capsule(p, bar, ui.PANEL, ui.LINE)
         tw = cw / len(TABS)
         for i, label in enumerate(TABS):
-            r = QRectF(x0 + i * tw + .25 * u, y + .25 * u, tw - .5 * u, 4.7 * u)
+            r = QRectF(x0 + i * tw + .2 * u, y + .25 * u, tw - .4 * u, 4.7 * u)
             on = (i == self.tab)
             if on: w.capsule(p, r, ui.RAISED, ui.faded(ui.FOCUS, .7))
-            w.text(p, label, r.x(), r.y(), ('u', 1.72, 700 if on else 500), ui.FOCUS if on else ui.MUTED, r.width(), 1, 4.7 / 1.72)
+            w.text(p, label, r.x(), r.y(), ('u', 1.56, 700 if on else 500), ui.FOCUS if on else ui.MUTED, r.width(), 1, 4.7 / 1.56)
             w.hit(r, lambda i=i: self.set_tab(i), name='utab:' + label)
         return y + 6.8 * u
 
     def paint_body(self, p, y):
+        if self.w.memo.pop('open_translate', False):
+            self.set_tab(7)
+            self.tr_view.capture_now()
         self.canvas_rect = QRectF()
         self.map_rect = QRectF()
         self.pad_rect = QRectF()
@@ -291,6 +308,7 @@ class Deck:
         elif self.tab == 4: self._paint_music(p, y)
         elif self.tab == 5: self._paint_cockpit(p, y)
         elif self.tab == 6: self._paint_mouse(p, y)
+        elif self.tab == 7: self.tr_view.paint(p, y)
 
     def _quit_footer(self, p):
         ui = self._ui()
