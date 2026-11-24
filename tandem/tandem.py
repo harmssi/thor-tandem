@@ -1112,7 +1112,7 @@ class Tandem:
             if not self.dry: self.home_window = focused_window()
             opt = self.saved.get('gameopt', {}).get(gid) or {}
             cfg_now = load_config()
-            prof = opt.get('profile') or ('Performance' if label in ('BananaNative', 'PeanutsNative') else ('Eco' if cfg_now.get('travel_mode') else ''))
+            prof = opt.get('profile') or ('Turbo' if label in ('BananaNative', 'PeanutsNative') else ('Eco' if cfg_now.get('travel_mode') else ''))
             fps = opt.get('fps') if opt.get('fps') in FPS_LIMITS and opt.get('fps') else base_panel_hz(cfg_now)
             res_h = int(opt.get('res') or 0) if opt.get('res') in RENDER_RES else 0
             scale = opt.get('scale') if opt.get('scale') in SCALING_FILTERS else ('sgsr' if res_h else 'linear')
@@ -1202,7 +1202,7 @@ class Tandem:
                 if prof: opt['profile'] = prof
                 else: opt.pop('profile', None)
                 if run and run['id'] == gid:
-                    run['profile'] = opt.get('profile') or ('Performance' if run.get('emu') in ('BananaNative', 'PeanutsNative') else '')
+                    run['profile'] = opt.get('profile') or ('Turbo' if run.get('emu') in ('BananaNative', 'PeanutsNative') else '')
             if fps is not None:
                 if fps not in FPS_LIMITS: return {'error': 'unbekannte Einstellung'}
                 if fps: opt['fps'] = int(fps)
