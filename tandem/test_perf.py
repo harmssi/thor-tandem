@@ -109,12 +109,19 @@ class PerfEngineTest(unittest.TestCase):
         # User override always wins
         opt2 = thor_perf.smart_game_opt({'appid': '377160', 's': 'steam'}, {'res': 0})
         self.assertEqual(opt2['res'], 0)
-        # 12 GB Thor disables Android fileback thrashing and enables 4 PSO threads
-        mem = self.root / 'meminfo12'
-        mem.write_text('MemTotal:       12058624 kB\nMemAvailable:    8500000 kB\n')
-        env = thor_perf.game_env({}, {}, 'steam', engine_label='BananaNative', meminfo=mem)
-        self.assertEqual(env['DM_MEM_FILEBACK'], '0')
-        self.assertEqual(env['DM_VK_PSO_SLOTS'], '4')
+        # 12 GB Thor: PeanutsNative disables fileback; Switch-2 BananaNative (6.2 GB heap) keeps fileback headroom until 16 GB Thor Max
+        mem12 = self.root / 'meminfo12'
+        mem12.write_text('MemTotal:       12058624 kB\nMemAvailable:    8500000 kB\n')
+        env_p = thor_perf.game_env({}, {}, 'switch', engine_label='PeanutsNative', meminfo=mem12)
+        self.assertEqual(env_p['DM_MEM_FILEBACK'], '0')
+        env_b12 = thor_perf.game_env({}, {}, 'steam', engine_label='BananaNative', meminfo=mem12)
+        self.assertNotIn('DM_MEM_FILEBACK', env_b12)
+        self.assertEqual(env_b12['DM_VK_MESH'], '0')
+        self.assertEqual(env_b12['DM_VK_PSO_SLOTS'], '4')
+        mem16 = self.root / 'meminfo16'
+        mem16.write_text('MemTotal:       16000000 kB\nMemAvailable:   12000000 kB\n')
+        env_b16 = thor_perf.game_env({}, {}, 'steam', engine_label='BananaNative', meminfo=mem16)
+        self.assertEqual(env_b16['DM_MEM_FILEBACK'], '0')
 
 
 if __name__ == '__main__':
