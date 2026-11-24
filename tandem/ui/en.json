@@ -1288,7 +1288,25 @@
     "Keine Schreibrechte für Ladelimit (udev-Regel nötig).": "No write permission for charge limit (udev rule required).",
     "Unbekannter Lüfter-Modus.": "Unknown fan mode.",
     "Lüfter-Steuerung nicht verfügbar.": "Fan control not available.",
-    "Keine Schreibrechte für Lüfter (udev-Regel nötig).": "No write permission for fan control (udev rule required)."
+    "Keine Schreibrechte für Lüfter (udev-Regel nötig).": "No write permission for fan control (udev rule required).",
+    "DISPLAY OBEN": "TOP DISPLAY",
+    "BYPASS-LIMIT": "BYPASS LIMIT",
+    "LEISTUNG & HARDWARE (DIESES SPIEL)": "PERFORMANCE & HARDWARE (THIS GAME)",
+    "LEISTUNG & HARDWARE": "PERFORMANCE & HARDWARE",
+    "GPU Auto": "GPU Auto",
+    "680 Max": "680 Max",
+    "Lüfter Auto": "Fan Auto",
+    "Spiel-Farbe": "Game Color",
+    "Zufallsspiel": "Random Game",
+    "Zufall": "Random",
+    "Keine Spiele gefunden.": "No games found.",
+    "Menü-Vibration": "Menu haptics",
+    "Dezentes haptisches Klicken beim Navigieren durch Menüs, Tabs und beim Spielstart.": "Subtle haptic click when navigating menus, tabs and launching games.",
+    "Mit Spiel-Farbe (Ambient)": "Match game color (Ambient)",
+    "Passt die Stick-Beleuchtung automatisch an die Cover-Farbe des ausgewählten oder laufenden Spiels an.": "Automatically matches the stick lighting to the cover color of the selected or running game.",
+    "60 Hz": "60 Hz",
+    "401 MHz": "401 MHz",
+    "550 MHz": "550 MHz"
   },
   "rules": [
     [

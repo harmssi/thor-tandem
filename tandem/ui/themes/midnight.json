@@ -1,0 +1,9 @@
+{
+  "name": "Midnight Gold",
+  "colors": {"bg": "#060913", "panel": "#101626", "raised": "#192238", "line": "#283452", "text": "#f8f6f0", "muted": "#9aa4bc", "accent": "#f5c85b", "live": "#34d399", "warn": "#ff6b5e"},
+  "gradient": ["#d4a234", "#fde68a"],
+  "fonts": {"ui": ["Inter", "Adwaita Sans", "Noto Sans"], "display": ["Barlow Condensed", "Nimbus Sans Narrow"], "body": ["Barlow", "Noto Sans"]},
+  "radius": 1.05,
+  "glow": 0.9,
+  "gameAccent": true
+}

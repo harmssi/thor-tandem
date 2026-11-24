@@ -2492,6 +2492,8 @@ def save_config(data):
         config['hud_level'] = int(data['hud_level'])
         telemetry.set_hud(config['hud_level'])
     if isinstance(data.get('kb_haptics'), bool): config['kb_haptics'] = data['kb_haptics']
+    if isinstance(data.get('ui_haptics'), bool): config['ui_haptics'] = data['ui_haptics']
+    if isinstance(data.get('rgb_sync'), bool): config['rgb_sync'] = data['rgb_sync']
     if data.get('lang') in ('de', 'en'): config['lang'] = data['lang']
     if data.get('theme') in [t['id'] for t in themes()]: config['theme'] = data['theme']
     if data.get('view_mode') in ('grid', 'stage'): config['view_mode'] = data['view_mode']
@@ -2710,6 +2712,7 @@ def public_config():
             'overlays': config.get('overlays', True),
             'motion': config.get('motion') if config.get('motion') in ('full', 'reduced') else 'full',
             'kb_layout': config.get('kb_layout', ''), 'kb_haptics': config.get('kb_haptics', True),
+            'ui_haptics': config.get('ui_haptics', True), 'rgb_sync': config.get('rgb_sync', True),
             'controls_style': config.get('controls_style') if config.get('controls_style') in ('thor', 'xbox') else 'thor',
             'hud_level': int(config['hud_level']) if config.get('hud_level') in (0, 1, 2, 3) else 0,
             'saver_style': config.get('saver_style') if config.get('saver_style') in ('kosmos', 'arcade', 'aurora', 'minimal') else 'kosmos',

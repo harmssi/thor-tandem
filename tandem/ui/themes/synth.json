@@ -1,0 +1,9 @@
+{
+  "name": "Synthwave",
+  "colors": {"bg": "#090414", "panel": "#160d29", "raised": "#23163d", "line": "#39245e", "text": "#faf4ff", "muted": "#a894c8", "accent": "#ff6ec7", "live": "#4ade80", "warn": "#ff5c77"},
+  "gradient": ["#ff6ec7", "#7c3aed"],
+  "fonts": {"ui": ["Inter", "Adwaita Sans", "Noto Sans"], "display": ["Barlow Condensed", "Nimbus Sans Narrow"], "body": ["Barlow", "Noto Sans"]},
+  "radius": 1.15,
+  "glow": 1.0,
+  "gameAccent": true
+}

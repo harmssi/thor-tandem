@@ -1,0 +1,9 @@
+{
+  "name": "Crimson Ember",
+  "colors": {"bg": "#0a0607", "panel": "#170e10", "raised": "#241619", "line": "#3a2228", "text": "#fdf4f5", "muted": "#b2949a", "accent": "#ff4d5a", "live": "#34d399", "warn": "#ff9f43"},
+  "gradient": ["#ff3b5c", "#ff9f43"],
+  "fonts": {"ui": ["Inter", "Adwaita Sans", "Noto Sans"], "display": ["Barlow Condensed", "Nimbus Sans Narrow"], "body": ["Barlow", "Noto Sans"]},
+  "radius": 0.95,
+  "glow": 1.0,
+  "gameAccent": true
+}

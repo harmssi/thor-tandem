@@ -219,6 +219,8 @@ def groups(win, page):
         layout = 'us' if CFG.get('kb_layout') == 'us' else 'de'
         rows2.append(choice('Bildschirmtastatur', [('de', 'Deutsch'), ('us', 'Englisch')], layout, lambda v: config_set(win, kb_layout=v),
                             'Belegung der Tasten auf dem unteren Bildschirm, wenn etwas eingetippt wird.'))
+        rows2.append(toggle('Menü-Vibration', CFG.get('ui_haptics', True), lambda v: config_set(win, ui_haptics=v),
+                            'Dezentes haptisches Klicken beim Navigieren durch Menüs, Tabs und beim Spielstart.'))
         rows2.append(toggle('Tastatur-Vibration', CFG.get('kb_haptics', True), lambda v: config_set(win, kb_haptics=v),
                             'Kurzes haptisches Klicken beim Tippen auf der Bildschirmtastatur.'))
         rows2.append({'k': 'button', 't': 'Thor klingeln & vibrieren',
@@ -251,7 +253,9 @@ def groups(win, page):
                          'adj': lambda d: thor_set(win, 'rgb', {'brightness': max(0, min(100, rgb.get('level', 50) + 5 * d)), 'enabled': True}),
                          'help': 'Wie hell die Ringe leuchten. Mit „Mit dem Bildschirm“ ist das die größte Helligkeit.'},
                         toggle('Mit dem Bildschirm', rgb.get('linkBrightness'), lambda v: thor_set(win, 'rgb', {'linkBrightness': v, 'brightness': rgb.get('level', 50)}),
-                               'Die Ringe werden mit dem oberen Bildschirm heller und dunkler.')],
+                               'Die Ringe werden mit dem oberen Bildschirm heller und dunkler.'),
+                        toggle('Mit Spiel-Farbe (Ambient)', CFG.get('rgb_sync', True), lambda v: config_set(win, rgb_sync=v),
+                               'Passt die Stick-Beleuchtung automatisch an die Cover-Farbe des ausgewählten oder laufenden Spiels an.')],
                  'Die Einstellung bleibt auch nach einem Neustart.')]
     if page == 'perf':
         if T is None: return loading
@@ -431,8 +435,8 @@ def groups(win, page):
                 choice('Animationen', [('full', 'Flüssig'), ('reduced', 'Reduziert')], CFG.get('motion') or 'full',
                        lambda v: config_set(win, motion=v),
                        'Flüssige Übergänge für Cover, Fokusring und Karussell, oder reduzierte Bewegung.')]
-        return [('Thema', rows, 'Die Hervorhebung nimmt im Spiel die Farbe des Covers an, wenn das Thema es vorsieht.'),
-                ('Darstellung', disp, None),
+        return [('Darstellung', disp, None),
+                ('Thema', rows, 'Die Hervorhebung nimmt im Spiel die Farbe des Covers an, wenn das Thema es vorsieht.'),
                 ('Sprache', [choice('Sprache / Language', [('de', 'Deutsch'), ('en', 'English')], CFG.get('lang') or 'de', lambda v: config_set(win, lang=v),
                                     'Sprache der Oberfläche auf beiden Bildschirmen und der Einstellungsseite. Spiele bleiben, wie sie sind.')], None)]
     if page == 'library':

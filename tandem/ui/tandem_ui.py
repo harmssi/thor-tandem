@@ -451,6 +451,8 @@ class Tandem(QRasterWindow):
         self.focus_anim = {'fx': 0.0, 'fy': 0.0, 'tx': 0.0, 'ty': 0.0, 'key': None, 'page': None, 't0': 0.0}
         self.page_anim = (None, 0.0)
         self.stage_anim = {'from': 0.0, 'to': 0.0, 'page': None, 't0': 0.0}
+        self._rgb_last, self._rgb_pending = None, None
+        self.rgb_timer = QTimer(self); self.rgb_timer.setSingleShot(True); self.rgb_timer.timeout.connect(self._flush_rgb)
         load_accents()
         self.active = time.time()  # last input, for resting()
         self.event.connect(self.on_event)
@@ -914,6 +916,7 @@ class Tandem(QRasterWindow):
         if gid == 'act:steam': return self.post('api/action', {'name': 'steam'})
         if gid == 'rescan': return self.post('api/rescan', then=lambda r: r and self.toast(f'{r["games"]} Spiele gefunden' + (f', {r["covers"]} Cover geladen.' if r.get('covers') else '.')))
         if self.CFG.get('ui_sounds') == 'subtle': self.post('api/sound', {'kind': 'launch'})
+        self.ui_haptic()
         self.post('api/launch', {'id': gid}, then=lambda r: r is None and self.toast('Tandem-Dienst antwortet nicht.'))
 
     def go(self, a):
@@ -956,6 +959,8 @@ class Tandem(QRasterWindow):
         elif a == 'back' and S['sys']: S.update(i=list(self.L['systems']).index(S['sys']) if S['sys'] in self.L['systems'] else 0, sys=None, tab=1)
         if self.CFG.get('ui_sounds') == 'subtle' and a in ('left', 'right', 'up', 'down', 'prev', 'next', 'back', 'ok'):
             self.post('api/sound', {'kind': 'back' if a == 'back' else 'ok' if a == 'ok' else 'tick'})
+        if a in ('left', 'right', 'up', 'down', 'prev', 'next', 'back', 'ok', 'fav'):
+            self.ui_haptic()
         self.push()
 
     def ask(self, title, secret, done, initial=''):  # text entry without a real keyboard: the key grid fills a field on this screen
@@ -1242,6 +1247,52 @@ class Tandem(QRasterWindow):
 
     def haptic(self):
         if self.CFG.get('kb_haptics', True): HAPTICS.tap()
+
+    def ui_haptic(self):
+        if self.CFG.get('ui_haptics', True): HAPTICS.tap()
+
+    def _queue_rgb(self, hex_color):
+        if self.side != 'bottom' or not self.CFG.get('rgb_sync', True): return
+        if self.THOR and self.THOR.get('rgb') and not self.THOR['rgb'].get('enabled'): return
+        hc = str(hex_color or '').lstrip('#').upper()
+        if len(hc) != 6 or hc == self._rgb_last or hc == self._rgb_pending: return
+        self._rgb_pending = hc
+        self.rgb_timer.start(280)
+
+    def _flush_rgb(self):
+        hc = self._rgb_pending
+        self._rgb_pending = None
+        if not hc or hc == self._rgb_last or not self.CFG.get('rgb_sync', True): return
+        if self.THOR and self.THOR.get('rgb') and not self.THOR['rgb'].get('enabled'): return
+        self._rgb_last = hc
+        self.post('api/thor', {'rgb': {'color': hc, 'enabled': True}})
+
+    def pick_random(self):
+        """Jumps to a random installed game in the current list (or across the library) with a haptic click."""
+        items = self.items()
+        pool = [(idx, it) for idx, it in enumerate(items) if not it.get('kind') and it.get('s') not in ('app', 'term') and it.get('inst') != 'no']
+        if len(pool) > 1:
+            pool = [x for x in pool if x[0] != self.S.get('i')]
+        if pool:
+            idx, pick = random.choice(pool)
+            self.S['i'] = idx
+            self.ui_haptic()
+            self.toast(f'Zufall: {pick["t"]}')
+            self.push()
+            return
+        all_g = [g for g in (self.L.get('games') or []) if g.get('s') not in ('app', 'term') and g.get('inst') != 'no' and g['id'] not in (self.L.get('hidden') or ())]
+        if not all_g:
+            return self.toast('Keine Spiele gefunden.')
+        pick = random.choice(all_g)
+        self.S = {'tab': 1, 'sys': pick['s'], 'i': 0}
+        sys_items = self.items()
+        for idx, it in enumerate(sys_items):
+            if it.get('id') == pick['id']:
+                self.S['i'] = idx
+                break
+        self.ui_haptic()
+        self.toast(f'Zufall: {pick["t"]}')
+        self.push()
 
     def _kb_repeat_tick(self):
         if not self.kb_down or self.kb_down[1] != 14:
@@ -1842,6 +1893,8 @@ class Tandem(QRasterWindow):
             t_acc = self.ease(self.acc_anim['t0'], self.dur(.24)) if self.acc_anim['t0'] else 1.0
             if t_acc >= 1: self.acc_anim['t0'] = 0.0
             FOCUS.setRgba(self.lerp_color(self.acc_anim['from_c'], self.acc_anim['to_c'], t_acc).rgba())  # smooth colour morph between games
+        if self.side == 'bottom' and not self.SETUP:
+            self._queue_rgb('%02X%02X%02X' % (target_acc.red(), target_acc.green(), target_acc.blue()))
         if self.SETUP and not self.RUN: self.draw_setup(p)
         else: (self.draw_top if self.side == 'top' else self.draw_bottom)(p, items)
         if self.QUICK and self.side == 'bottom': quick_view.draw(self, p)
@@ -1971,6 +2024,10 @@ class Tandem(QRasterWindow):
             g = QLinearGradient(0, 0, 0, 9 * u)
             g.setColorAt(0, rgba(0, 0, 0, .35)); g.setColorAt(1, rgba(0, 0, 0, 0))
             p.fillRect(QRectF(0, 0, W, 9 * u), QBrush(g))
+            if THEME['glow']:
+                ag = QRadialGradient(QPointF(.14 * W, .92 * H), .52 * W)
+                ag.setColorAt(0, faded(FOCUS, .15 * THEME['glow'])); ag.setColorAt(1, faded(FOCUS, 0))
+                p.fillRect(full, QBrush(ag))
         else:  # nothing in front: a soft light in the accent colour instead of a flat black wall
             g = QRadialGradient(QPointF(.12 * W, 1.05 * H), .75 * W)
             g.setColorAt(0, faded(FOCUS, .16)); g.setColorAt(1, faded(FOCUS, 0))
@@ -2165,6 +2222,15 @@ class Tandem(QRasterWindow):
                     self.text(p, slbl, sr2.x(), sr2.y(), sf, TEXT, sw2, 1, h / (1.75 * u))
                     self.hit(sr2, self.cycle_sort, name='Sort:' + slbl)
                     rx = sr2.right()
+            if self.S['tab'] in (0, 2) or self.S['sys']:
+                sf = ('u', 1.85, 600)
+                zw = self.width_of('Zufall', sf) + 2.4 * u
+                if rx + .7 * u + zw < self.width() - 8.2 * u:
+                    zrect = QRectF(rx + .7 * u, y, zw, h)
+                    self.capsule(p, zrect, faded(PANEL, .94), faded(TEXT, .08))
+                    self.text(p, 'Zufall', zrect.x(), zrect.y(), sf, TEXT, zw, 1, h / (1.85 * u))
+                    self.hit(zrect, self.pick_random, name='Zufall')
+                    rx = zrect.right()
             if self.S['tab'] in (0, 2) or self.S['sys']:
                 sf = ('u', 1.85, 700)
                 ow = 4.6 * u
@@ -2632,6 +2698,9 @@ class Tandem(QRasterWindow):
             p.setOpacity(max(.28, 1.0 - .22 * min(ad, 3.0)))
             self.tile(p, rect, items[n], n, n == i and ad < .45, 0)
             if n == i and ad < .35:
+                sheen = QLinearGradient(rect.left(), rect.top(), rect.left(), rect.top() + rect.height() * .26)
+                sheen.setColorAt(0, rgba(255, 255, 255, .14)); sheen.setColorAt(1, rgba(255, 255, 255, 0))
+                self.box(p, QRectF(rect.x(), rect.y(), rect.width(), rect.height() * .26), .12 * rect.width(), QBrush(sheen))
                 refl_h = min(5.2 * u, bottom - info_h - rect.bottom() + 1.5 * u)
                 if refl_h > 1.5 * u:
                     rrect = QRectF(rect.x() + .8 * u, rect.bottom() + .5 * u, rect.width() - 1.6 * u, refl_h)
@@ -2655,6 +2724,14 @@ class Tandem(QRasterWindow):
         self.capsule(p, brect, FOCUS)
         self.text(p, act_lbl, brect.x(), brect.y(), bf, INK, bw, 1, bh / (2.0 * u))
         self.hit(brect, lambda: self.go('ok'), name=act_lbl)
+        if len(items) > 1:
+            cnt = f'{i + 1} / {len(items)}'
+            cf = ('u', 1.55, 600)
+            cw_p = self.width_of(cnt, cf) + 2.2 * u
+            crect = QRectF(brect.right() + 1.2 * u, brect.y() + .7 * u, cw_p, bh - 1.4 * u)
+            if crect.right() < W - 3 * u:
+                self.capsule(p, crect, faded(PANEL, .88), faded(TEXT, .1))
+                self.text(p, cnt, crect.x(), crect.y(), cf, MUTED, cw_p, 1, crect.height() / (1.55 * u))
 
     def ingame(self, p, top=None, ach=True):
         """The panel while a game runs: title, sliders, RetroArch's buttons, achievements, quit. A deck with tabs of its

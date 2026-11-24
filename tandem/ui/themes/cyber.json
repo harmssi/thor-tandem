@@ -1,0 +1,9 @@
+{
+  "name": "Cyber Neon",
+  "colors": {"bg": "#05050c", "panel": "#10101e", "raised": "#1a1a30", "line": "#2b2b4a", "text": "#f4f6ff", "muted": "#9298b8", "accent": "#00f0ff", "live": "#22ff99", "warn": "#ff3d71"},
+  "gradient": ["#ff2a85", "#00f0ff"],
+  "fonts": {"ui": ["Inter", "Adwaita Sans", "Noto Sans"], "display": ["Barlow Condensed", "Nimbus Sans Narrow"], "body": ["Barlow", "Noto Sans"]},
+  "radius": 1.05,
+  "glow": 1.0,
+  "gameAccent": true
+}

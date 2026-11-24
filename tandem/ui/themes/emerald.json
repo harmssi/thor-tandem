@@ -1,0 +1,9 @@
+{
+  "name": "Emerald OLED",
+  "colors": {"bg": "#000000", "panel": "#0b110e", "raised": "#131e19", "line": "#21362d", "text": "#f0fdf7", "muted": "#8aa89b", "accent": "#10b981", "live": "#34d399", "warn": "#ff6b5e"},
+  "gradient": ["#059669", "#2dd4bf"],
+  "fonts": {"ui": ["Inter", "Adwaita Sans", "Noto Sans"], "display": ["Inter", "Adwaita Sans", "Noto Sans"], "body": ["Inter", "Adwaita Sans", "Noto Sans"]},
+  "radius": 1.1,
+  "glow": 0.9,
+  "gameAccent": true
+}

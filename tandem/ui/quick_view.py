@@ -60,6 +60,7 @@ def draw(win, p):
     win.hit(close_r, lambda: close(win), name='Schließen')
 
     pw = T.get('power') or {}
+    perf = pw.get('perf') or {}
     qt = getattr(win, 'QTELE', None) or {}
     bat = qt.get('battery') or win.BATT or {}
     chg = qt.get('charger') or {}
@@ -73,10 +74,14 @@ def draw(win, p):
         if not bat.get('charging') and bat.get('mins_left'):
             btxt += f' ({_fmt_rem(bat["mins_left"])})'
         parts.append(btxt)
+    if perf.get('cpu_mhz'):
+        parts.append(f'CPU {max(perf["cpu_mhz"]) / 1000:.2f} GHz'.replace('.', ','))
+    if perf.get('gpu_mhz'):
+        parts.append(f'GPU {perf["gpu_mhz"]} MHz')
     if pw.get('temp') is not None: parts.append(f'{pw["temp"]} °C')
     if pw.get('fan') is not None: parts.append(f'Lüfter {pw["fan"]}')
-    win.text(p, '  ·  '.join(parts), badge.right() + 1.4 * u, hy, ('u', 1.72, 500), MUTED,
-             close_r.x() - badge.right() - 2.8 * u, 2, 4.6 / 1.72)
+    win.text(p, '  ·  '.join(parts), badge.right() + 1.4 * u, hy, ('u', 1.68, 500), MUTED,
+             close_r.x() - badge.right() - 2.8 * u, 2, 4.6 / 1.68)
 
     footer_h = 5.6 * u
     body_top, body_bottom = 7.6 * u, H - 2.2 * u - footer_h - 1.2 * u
@@ -94,7 +99,7 @@ def draw(win, p):
                 win.box(p, ir, 1.0 * u, active_color)
             win.text(p, lbl, ir.x(), ir.y(), ('u', 1.72, 700 if on else 500),
                      INK if on else TEXT, ir.width(), 1, ir.height() / (1.72 * u))
-            win.hit(ir, lambda fn=fn: (touched(win), fn()), name=hname)
+            win.hit(ir, lambda fn=fn: (win.ui_haptic(), touched(win), fn()), name=hname)
 
     def draw_body(y):
         gap = 1.3 * u
@@ -120,23 +125,34 @@ def draw(win, p):
                  for m, lbl in (('off', 'Aus'), ('warm', 'Warm'), ('night', 'Nacht'))])
         y += card_h1 + gap
 
-        # ---- 1b. Unterwegs-Sparmodus & Panel-Frequenz (Akku-Optimierung) ----
+        # ---- 1b. Unterwegs-Sparmodus, Bypass-Ladelimit & Panel-Frequenz (Akku-Optimierung) ----
         travel_on = bool(win.CFG.get('travel_mode'))
         cur_hz = 60 if (travel_on or int(win.CFG.get('panel_hz') or 120) == 60) else 120
-        tcard = QRectF(x0, y, col_w, card_h1)
-        hzcard = QRectF(x0 + col_w + gap, y, col_w, card_h1)
+        col3_w = (cw - 2 * gap) / 3
+        tcard = QRectF(x0, y, col3_w, card_h1)
+        hzcard = QRectF(x0 + col3_w + gap, y, col3_w, card_h1)
+        chgcard = QRectF(x0 + 2 * (col3_w + gap), y, col3_w, card_h1)
         win.box(p, tcard, 1.7 * u, PANEL, LIVE if travel_on else LINE)
-        win.text(p, 'AKKU UNTERWEGS', tcard.x() + 1.6 * u, y + 1.1 * u, f_sec, LIVE if travel_on else MUTED, col_w - 3.2 * u)
-        seg_row(tcard.x() + 1.2 * u, y + 3.5 * u, col_w - 2.4 * u, 4.5 * u,
+        win.text(p, 'AKKU UNTERWEGS', tcard.x() + 1.4 * u, y + 1.1 * u, f_sec, LIVE if travel_on else MUTED, col3_w - 2.8 * u)
+        seg_row(tcard.x() + 1.0 * u, y + 3.5 * u, col3_w - 2.0 * u, 4.5 * u,
                 [('Normal', lambda: cfg_set(win, travel_mode=False), not travel_on, 'travel:off'),
                  ('Unterwegs', lambda: cfg_set(win, travel_mode=True), travel_on, 'travel:on')],
                 LIVE if travel_on else FOCUS)
 
         win.box(p, hzcard, 1.7 * u, PANEL, LINE)
-        win.text(p, 'DISPLAY OBEN (HZ)', hzcard.x() + 1.6 * u, y + 1.1 * u, f_sec, MUTED, col_w - 3.2 * u)
-        seg_row(hzcard.x() + 1.2 * u, y + 3.5 * u, col_w - 2.4 * u, 4.5 * u,
+        win.text(p, 'DISPLAY OBEN', hzcard.x() + 1.4 * u, y + 1.1 * u, f_sec, MUTED, col3_w - 2.8 * u)
+        seg_row(hzcard.x() + 1.0 * u, y + 3.5 * u, col3_w - 2.0 * u, 4.5 * u,
                 [('120 Hz', lambda: cfg_set(win, travel_mode=False, panel_hz=120), cur_hz == 120, 'hz:120'),
-                 ('60 Hz Spar', lambda: cfg_set(win, panel_hz=60), cur_hz == 60, 'hz:60')])
+                 ('60 Hz', lambda: cfg_set(win, panel_hz=60), cur_hz == 60, 'hz:60')])
+
+        cur_cl = int(perf.get('charge_limit') or 100)
+        win.box(p, chgcard, 1.7 * u, PANEL, LIVE if cur_cl < 100 else LINE)
+        win.text(p, 'BYPASS-LIMIT', chgcard.x() + 1.4 * u, y + 1.1 * u, f_sec, LIVE if cur_cl < 100 else MUTED, col3_w - 2.8 * u)
+        seg_row(chgcard.x() + 1.0 * u, y + 3.5 * u, col3_w - 2.0 * u, 4.5 * u,
+                [('Aus', lambda: send(win, 'charge_limit', 100), cur_cl >= 100, 'cl:100'),
+                 ('80 %', lambda: send(win, 'charge_limit', 80), cur_cl == 80, 'cl:80'),
+                 ('85 %', lambda: send(win, 'charge_limit', 85), cur_cl == 85, 'cl:85')],
+                LIVE if cur_cl < 100 else FOCUS)
         y += card_h1 + gap
 
         # ---- 2. Brightness & Volume Bento Card ----
@@ -206,37 +222,49 @@ def draw(win, p):
                 win.hit(rr, lambda g=rg: (close(win), win.start(g)), name='qswitch:' + rg['id'])
             y += rc_h + gap
 
-        # ---- 4. Performance, FPS Cap, Scaling & Frame Generation Card ----
+        # ---- 4. Performance, GPU Clock, Fan, FPS Cap, Scaling & Frame Generation Card ----
         has_prof = bool(pw.get('profiles'))
         fg = getattr(win, 'FG', None)
         has_fg = bool(fg and fg.get('there'))
-        rows_n = int(has_prof) + (2 if win.RUN else 0) + int(has_fg)
+        rows_n = int(has_prof) + 2 + (2 if win.RUN else 0) + int(has_fg)
         if rows_n:
-            pcard_h = 3.2 * u + rows_n * 5.6 * u + (.6 * u if not win.RUN else 0)
+            pcard_h = 3.2 * u + rows_n * 5.4 * u + (.6 * u if not win.RUN else 0)
             pcard = QRectF(x0, y, cw, pcard_h)
             win.box(p, pcard, 1.8 * u, PANEL, LINE)
-            win.text(p, 'LEISTUNG & DARSTELLUNG (DIESES SPIEL)' if win.RUN else 'LEISTUNG',
+            win.text(p, 'LEISTUNG & HARDWARE (DIESES SPIEL)' if win.RUN else 'LEISTUNG & HARDWARE',
                      x0 + 1.6 * u, y + 1.0 * u, f_sec, MUTED, cw - 3.2 * u)
             py = y + 3.3 * u
             if has_prof:
                 cur_prof = (win.RUN or {}).get('profile') or pw.get('profile')
-                seg_row(x0 + 1.2 * u, py, cw - 2.4 * u, 4.6 * u,
+                seg_row(x0 + 1.2 * u, py, cw - 2.4 * u, 4.5 * u,
                         [(label, (lambda v=v: win.set_gameopt(profile=v)) if win.RUN else (lambda v=v: send(win, 'profile', v)),
                           cur_prof == v) for v, label in pw['profiles']])
-                py += 5.6 * u
+                py += 5.4 * u
+            # Adreno 740 GPU Clock + Fan Mode
+            cur_gpu = int(perf.get('gpu_mhz') or 0) if perf.get('gpu_gov') == 'performance' else 0
+            seg_row(x0 + 1.2 * u, py, cw - 2.4 * u, 4.5 * u,
+                    [(lbl, lambda mhz=mhz: send(win, 'gpu_clock', mhz),
+                      (cur_gpu == 0 if mhz == 0 else abs(cur_gpu - mhz) < 35), f'gpu:{mhz}')
+                     for mhz, lbl in ((0, 'GPU Auto'), (401, '401 MHz'), (550, '550 MHz'), (680, '680 Max'))])
+            py += 5.4 * u
+            cur_fan = perf.get('fan_mode') or 'auto'
+            seg_row(x0 + 1.2 * u, py, cw - 2.4 * u, 4.5 * u,
+                    [(lbl, lambda fm=fm: send(win, 'fan_mode', fm), cur_fan == fm, f'fan:{fm}')
+                     for fm, lbl in (('auto', 'Lüfter Auto'), ('quiet', 'Leise'), ('cool', 'Kühl'), ('max', 'Max'))])
+            py += 5.4 * u
             if win.RUN:
                 cur_fps = (win.RUN or {}).get('fps') or 0
-                seg_row(x0 + 1.2 * u, py, cw - 2.4 * u, 4.6 * u,
+                seg_row(x0 + 1.2 * u, py, cw - 2.4 * u, 4.5 * u,
                         [(lbl, lambda hz=hz: win.set_gameopt(fps=hz), cur_fps == hz)
                          for hz, lbl in ((0, 'Offen'), (60, '60 FPS'), (45, '45 FPS'), (40, '40 FPS'), (30, '30 FPS'))])
-                py += 5.6 * u
+                py += 5.4 * u
                 cur_scale = (win.RUN or {}).get('scale') or 'linear'
-                seg_row(x0 + 1.2 * u, py, cw - 2.4 * u, 4.6 * u,
+                seg_row(x0 + 1.2 * u, py, cw - 2.4 * u, 4.5 * u,
                         [(lbl, lambda m=m: win.set_gameopt(scale=m), cur_scale == m)
                          for m, lbl in (('linear', 'Standard'), ('sgsr', 'SGSR'), ('fsr', 'FSR'), ('pixel', 'Pixel'))])
-                py += 5.6 * u
+                py += 5.4 * u
             if has_fg:
-                seg_row(x0 + 1.2 * u, py, cw - 2.4 * u, 4.6 * u,
+                seg_row(x0 + 1.2 * u, py, cw - 2.4 * u, 4.5 * u,
                         [('Frame Gen: Aus', lambda: win.post('api/framegen', {'on': False}, then=lambda r: r and (setattr(win, 'FG', r), win.update())), not fg['on']),
                          ('Frame Gen: An', lambda: win.post('api/framegen', {'on': True}, then=lambda r: r and (setattr(win, 'FG', r), win.update())), bool(fg['on']))])
             y += pcard_h + gap
@@ -248,7 +276,13 @@ def draw(win, p):
             rc_left = QRectF(x0, y, col_w, 9.0 * u)
             rc_right = QRectF(x0 + col_w + gap, y, col_w, 9.0 * u)
             win.box(p, rc_left, 1.7 * u, PANEL, LINE)
-            win.text(p, 'STICK-BELEUCHTUNG', rc_left.x() + 1.6 * u, y + 1.0 * u, f_sec, MUTED, col_w - 3.2 * u)
+            win.text(p, 'STICK-BELEUCHTUNG', rc_left.x() + 1.6 * u, y + 1.0 * u, f_sec, MUTED, col_w - 13 * u)
+            sync_on = bool(win.CFG.get('rgb_sync', True))
+            sr_btn = QRectF(rc_left.right() - 11.4 * u, y + .65 * u, 10.2 * u, 2.3 * u)
+            win.capsule(p, sr_btn, ui.faded(FOCUS, .22) if sync_on else RAISED, FOCUS if sync_on else LINE)
+            win.text(p, 'Spiel-Farbe', sr_btn.x(), sr_btn.y(), ('u', 1.28, 700 if sync_on else 500),
+                     FOCUS if sync_on else MUTED, sr_btn.width(), 1, 2.3 / 1.28)
+            win.hit(sr_btn, lambda: (win.ui_haptic(), touched(win), cfg_set(win, rgb_sync=not sync_on)), name='qrgb_sync')
             on_rgb = bool(rgb.get('enabled'))
             cur_c = str(rgb.get('color', 'FFFFFF')).upper()
             tog_r = QRectF(rc_left.x() + 1.2 * u, y + 3.4 * u, 9.5 * u, 4.4 * u)
@@ -304,7 +338,8 @@ def draw(win, p):
     if win.RUN:
         f_acts.append(('Zu Tandem', lambda: (close(win), win.post('api/pause')), RAISED, TEXT))
     else:
-        f_acts.append(('Bildschirmschoner', lambda: (close(win), win.post('api/saver', {'open': True})), ui.faded(FOCUS, .18), FOCUS))
+        f_acts.append(('Zufallsspiel', lambda: (close(win), win.pick_random()), ui.faded(FOCUS, .18), FOCUS))
+        f_acts.append(('Bildschirmschoner', lambda: (close(win), win.post('api/saver', {'open': True})), RAISED, TEXT))
     f_acts.append(('Standby', lambda: (close(win), win.post('api/action', {'name': 'suspend'})), RAISED, TEXT))
     if win.RUN:
         f_acts.append(('Spiel beenden', lambda: (close(win), win.confirm_quit()), ui.faded(WARN, .18), WARN))
