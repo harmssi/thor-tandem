@@ -699,10 +699,16 @@ class Tandem(QRasterWindow):
         was, self.RUN = self.RUN, m.get('run')
         self.follow_setup(m.get('setup'))
         if m.get('from') != self.me: self.S = dict(m['ui'])
+        if self.RUN:
+            self.SAVER_NOW = False
+            self.active = time.time()
         if self.RUN and (not was or was['id'] != self.RUN['id']): self.ACH = None; self.load_ach()
         if not self.RUN: self.ACH = None
         if self.deck is not None and (not self.RUN or not was or was['id'] != self.RUN['id']): self.drop_deck()
-        if was and not self.RUN: self.load()  # play time and "last played" changed
+        if was and not self.RUN:
+            self.SAVER_NOW = False
+            self.active = time.time()
+            self.load()  # play time and "last played" changed
         self.update()
 
     def follow_theme(self):  # the config names the look: take it over when it is another one (or its file changed name)

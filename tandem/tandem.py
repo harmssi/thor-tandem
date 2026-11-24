@@ -1059,6 +1059,8 @@ class Tandem:
         return (label, cmd + [game['path']]) if label else (None, cmd)
 
     def launch(self, gid):
+        if DOZE and not self.dry:
+            doze(False, self)
         with self.lock:
             if self.run: return {'error': 'Es ist noch ein Spiel offen – erst fortsetzen oder beenden.' if self.run.get('paused') else 'Es läuft schon ein Spiel.'}
             if gid in ('term', 'ai:claude', 'ai:agy'):
