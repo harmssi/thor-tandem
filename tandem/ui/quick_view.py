@@ -75,7 +75,10 @@ def draw(win, p):
             btxt += f' ({_fmt_rem(bat["mins_left"])})'
         parts.append(btxt)
     if perf.get('cpu_mhz'):
-        parts.append(f'CPU {max(perf["cpu_mhz"]) / 1000:.2f} GHz'.replace('.', ','))
+        cm = perf['cpu_mhz']
+        peak = max(cm.values()) if isinstance(cm, dict) else max(cm)
+        if peak:
+            parts.append(f'CPU {peak / 1000:.2f} GHz'.replace('.', ','))
     if perf.get('gpu_mhz'):
         parts.append(f'GPU {perf["gpu_mhz"]} MHz')
     if pw.get('temp') is not None: parts.append(f'{pw["temp"]} °C')
