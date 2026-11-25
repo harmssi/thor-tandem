@@ -109,14 +109,24 @@ class PerfEngineTest(unittest.TestCase):
         # User override always wins
         opt2 = thor_perf.smart_game_opt({'appid': '377160', 's': 'steam'}, {'res': 0})
         self.assertEqual(opt2['res'], 0)
+        # BananaNative defaults on startup to 720p + SGSR + Turbo + FrameGen, and blocks white-screen flags & double LSFG
+        bn_opt = thor_perf.smart_game_opt({'t': 'Ocarina of Time', 's': 'steam', 'direct': True}, {}, engine_label='BananaNative')
+        self.assertEqual((bn_opt['res'], bn_opt['scale'], bn_opt['profile'], bn_opt['framegen']), (720, 'sgsr', 'Turbo', True))
         # 12 GB Thor: PeanutsNative disables fileback; Switch-2 BananaNative (6.2 GB heap) keeps fileback headroom until 16 GB Thor Max
         mem12 = self.root / 'meminfo12'
         mem12.write_text('MemTotal:       12058624 kB\nMemAvailable:    8500000 kB\n')
         env_p = thor_perf.game_env({}, {}, 'switch', engine_label='PeanutsNative', meminfo=mem12)
         self.assertEqual(env_p['DM_MEM_FILEBACK'], '0')
-        env_b12 = thor_perf.game_env({}, {}, 'steam', engine_label='BananaNative', meminfo=mem12)
+        self.assertEqual(env_p['DISABLE_LSFGVK'], '1')
+        env_b12 = thor_perf.game_env({}, bn_opt, 'steam', engine_label='BananaNative', meminfo=mem12)
         self.assertNotIn('DM_MEM_FILEBACK', env_b12)
+        self.assertEqual(env_b12['DISABLE_LSFGVK'], '1')
+        self.assertEqual(env_b12['NX_FRAMEGEN'], '1')
+        self.assertEqual(env_b12['DM_OPMODE'], 'handheld')
+        self.assertEqual(env_b12['DM_GRAPHICS_SCALE'], '2')
         self.assertEqual(env_b12['DM_VK_MESH'], '0')
+        self.assertEqual(env_b12['DM_VK_DIRECT_GMEM'], '0')
+        self.assertEqual(env_b12['DM_VK_CS_ASYNC'], '0')
         self.assertEqual(env_b12['DM_VK_PSO_SLOTS'], '4')
         mem16 = self.root / 'meminfo16'
         mem16.write_text('MemTotal:       16000000 kB\nMemAvailable:   12000000 kB\n')

@@ -99,10 +99,14 @@ def smart_game_opt(game, user_opt=None, auto_eco=False, whisper_mode=False, on_b
         elif tier == '3d_mid':
             base['profile'] = 'Balanced'
             base['fps'] = 60
-    if appid in HEAVY_720P_APPIDS and not g.get('direct'):
+    if (appid in HEAVY_720P_APPIDS and not g.get('direct')) or engine_label == 'BananaNative' or g.get('s') == 'banananative':
         base['res'] = 720
         base['scale'] = 'sgsr'
-        base['profile'] = 'Balanced' if whisper_mode else 'Performance'
+        if engine_label == 'BananaNative' or g.get('s') == 'banananative':
+            base['profile'] = 'Turbo'
+            base['framegen'] = True
+        else:
+            base['profile'] = 'Balanced' if whisper_mode else 'Performance'
     if whisper_mode:
         base['vsync_strict'] = True
         base['whisper'] = True
@@ -534,6 +538,13 @@ def game_env(base_env=None, opt=None, system='', fex_mode='fast', turnip_driver=
     # On 12 GB+ Thor with ZRAM swap, disable Android's file-backed pool eviction (eliminates major page faults per frame!),
     # parallelize background Vulkan PSO compiles across 4 threads, and pin vk-replay to Cortex-X3 Prime Core 7 (0x80).
     if engine_label in ('BananaNative', 'PeanutsNative') or system == 'banananative':
+        # Prevent external global lsfg-vk Vulkan layer from double-hooking on top of internal Lossless.dll (DM_LSFG)
+        env['DISABLE_LSFGVK'] = '1'
+        if opt.get('framegen') is not None:
+            env.setdefault('NX_FRAMEGEN', '1' if opt.get('framegen') else '0')
+        if res_h == 720:
+            env.setdefault('DM_OPMODE', 'handheld')
+            env.setdefault('DM_GRAPHICS_SCALE', '2')
         mtxt = _read(meminfo) or ''
         mt_kb = 0
         for line in mtxt.splitlines():
@@ -547,8 +558,10 @@ def game_env(base_env=None, opt=None, system='', fex_mode='fast', turnip_driver=
             env.setdefault('DM_MEM_FILEBACK', '0')
             env.setdefault('DM_VK_LOW_RAM', '0')
         if engine_label == 'BananaNative' or system == 'banananative':
-            # Disable experimental Turnip 27.0 VK_EXT_mesh_shader (causes Adreno 740 UCHE translation fault / white-out in OoT)
+            # Prevent Adreno 740 white-out bugs: disable experimental VK_EXT_mesh_shader, sparse non-coherent GMEM, and async compute skips
             env.setdefault('DM_VK_MESH', '0')
+            env.setdefault('DM_VK_DIRECT_GMEM', '0')
+            env.setdefault('DM_VK_CS_ASYNC', '0')
         env.setdefault('DM_VK_PSO_SLOTS', '4')
         if (os.cpu_count() or 0) >= 8:
             env.setdefault('DM_VK_AFF_ALL', '0xf8')

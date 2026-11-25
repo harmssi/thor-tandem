@@ -922,6 +922,21 @@ def ensure_speaker_sink_ready():
         pass
 
 
+def _speaker_vol_file():
+    cdir = Path(os.environ.get('XDG_CACHE_HOME') or (Path.home() / '.cache')) / 'tandem'
+    return cdir / 'speaker-vol'
+
+
+def save_speaker_volume(vol_0_1):
+    """Persist user speaker volume (0.0..1.0) so SDDM/DSP restarts never copy unity 1.00 from hardware sink."""
+    try:
+        vf = _speaker_vol_file()
+        vf.parent.mkdir(parents=True, exist_ok=True)
+        vf.write_text(f'{max(0.0, min(1.0, float(vol_0_1))):.2f}\n', encoding='utf-8')
+    except (OSError, ValueError):
+        pass
+
+
 def apply_speaker_dsp(mode='cinema'):
     """Start or switch the Thor Speaker Audio-DSP filter-chain ('off', 'cinema', 'clear', 'night')."""
     mode = str(mode or 'off').lower()
@@ -944,15 +959,22 @@ def apply_speaker_dsp(mode='cinema'):
     sids0 = _parse_sink_ids(st0)
     if not sids0.get('speaker') and SPEAKER_SINK.lower() not in st0.lower():
         return {'ok': True, 'mode': mode, 'written': str(conf_path), 'active': False}
-    # Preserve current volume across sink transition
+    # Preserve user DSP volume across sink transition (never read unity 1.00 from the underlying hardware speaker sink!)
     cur_vol = None
-    try:
-        vout = subprocess.run(['wpctl', 'get-volume', '@DEFAULT_AUDIO_SINK@'], capture_output=True, text=True, timeout=2).stdout
-        vm = re.search(r'([0-9]+(?:\.[0-9]+)?)', vout or '')
-        if vm:
-            cur_vol = max(0.0, min(1.0, float(vm[1])))
-    except (OSError, subprocess.SubprocessError, ValueError):
-        pass
+    if sids0.get('dsp'):
+        try:
+            vout = subprocess.run(['wpctl', 'get-volume', str(sids0['dsp'])], capture_output=True, text=True, timeout=2).stdout
+            vm = re.search(r'([0-9]+(?:\.[0-9]+)?)', vout or '')
+            if vm:
+                cur_vol = max(0.0, min(1.0, float(vm[1])))
+                save_speaker_volume(cur_vol)
+        except (OSError, subprocess.SubprocessError, ValueError):
+            pass
+    if cur_vol is None:
+        try:
+            cur_vol = max(0.0, min(1.0, float(_speaker_vol_file().read_text().strip())))
+        except (OSError, ValueError):
+            cur_vol = 0.15
     stop_speaker_dsp()
     with _DSP_LOCK:
         if sids0.get('speaker'):

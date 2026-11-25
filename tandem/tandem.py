@@ -1334,6 +1334,10 @@ class Tandem:
                         env = {**os.environ, 'DISPLAY': os.environ.get('DISPLAY') or ':0',
                                'WAYLAND_DISPLAY': os.environ.get('WAYLAND_DISPLAY') or 'gamescope-0',
                                'XDG_RUNTIME_DIR': os.environ.get('XDG_RUNTIME_DIR') or f'/run/user/{os.getuid()}'}
+                    if opt.get('framegen'):
+                        frame_gen(True)
+                    elif label in ('BananaNative', 'PeanutsNative') and 'framegen' not in opt:
+                        opt = {**opt, 'framegen': bool(frame_gen().get('on'))}
                     if game.get('s') not in ('term', 'app'):
                         env = thor_perf.game_env(env if env is not None else os.environ, opt, game.get('s', ''), low_latency=low_lat, engine_label=label)
                         if game.get('s') == 'steam' and not game.get('direct'):
@@ -2722,6 +2726,7 @@ def change(key, value):
             telemetry.ensure_speaker_sink_ready()
             run_quiet(['wpctl', 'set-mute', '@DEFAULT_AUDIO_SINK@', '0'])
             run_quiet(['wpctl', 'set-volume', '@DEFAULT_AUDIO_SINK@', f'{value}%'])
+            telemetry.save_speaker_volume(value / 100.0)
     else: return {'error': 'unbekannte Einstellung'}
     return settings()
 
