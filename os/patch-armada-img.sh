@@ -114,10 +114,16 @@ chown -R 1000:1000 "$HOME_DIR/.local" "$HOME_DIR/.config" "$HOME_DIR/Desktop"
 ETC_DIR="$(find "$MNT" -maxdepth 5 -type d -name sysctl.d 2>/dev/null | grep '/etc/sysctl.d$' | head -n 1 || true)"
 if [ -n "$ETC_DIR" ]; then
     ETC_ROOT="$(dirname "$ETC_DIR")"
-    mkdir -p "$ETC_ROOT/sysctl.d" "$ETC_ROOT/udev/rules.d" "$ETC_ROOT/tmpfiles.d" "$ETC_ROOT/systemd/zram-generator.conf.d" "$ETC_ROOT/armada"
+    mkdir -p "$ETC_ROOT/sysctl.d" "$ETC_ROOT/udev/rules.d" "$ETC_ROOT/tmpfiles.d" "$ETC_ROOT/systemd/zram-generator.conf.d" "$ETC_ROOT/armada" "$ETC_ROOT/NetworkManager/conf.d"
     install -m 644 "$ROOT/os/99-toravo-perf.conf" "$ETC_ROOT/sysctl.d/99-toravo-perf.conf"
     install -m 644 "$ROOT/os/99-toravo-hw.rules" "$ETC_ROOT/udev/rules.d/99-toravo-hw.rules"
     install -m 644 "$ROOT/os/99-toravo-tmpfiles.conf" "$ETC_ROOT/tmpfiles.d/99-toravo-tmpfiles.conf"
+    install -m 644 "$ROOT/os/power-profiles.conf" "$ETC_ROOT/armada/power-profiles.conf"
+    rm -f "$ETC_ROOT/NetworkManager/conf.d/wifi-powersave-off.conf"
+    cat > "$ETC_ROOT/NetworkManager/conf.d/99-toravo-wifi-powersave.conf" <<'WEOF'
+[connection]
+wifi.powersave = 3
+WEOF
     cat > "$ETC_ROOT/systemd/zram-generator.conf.d/99-toravo-lz4.conf" <<'ZEOF'
 [zram0]
 compression-algorithm = lz4
@@ -138,12 +144,12 @@ TEOF
     echo "HyperDrive game-tweaks, LZ4 ZRAM, sysctl + udev rules installed into $ETC_ROOT"
 fi
 
-# Append mitigations=off workqueue.power_efficient=N to BLS kernel options in /boot/loader/entries
+# Append mitigations=off workqueue.power_efficient=Y to BLS kernel options in /boot/loader/entries
 for bls in "$MNT"/boot/loader*/entries/*.conf "$MNT"/ostree/boot.*/default/*/*/boot/loader/entries/*.conf; do
     [ -f "$bls" ] || continue
     if grep -q '^options ' "$bls" && ! grep -q 'mitigations=off' "$bls"; then
-        sed -i 's/^options \(.*\)$/options \1 mitigations=off workqueue.power_efficient=N/' "$bls"
-        echo "Added mitigations=off workqueue.power_efficient=N to $bls"
+        sed -i 's/^options \(.*\)$/options \1 mitigations=off workqueue.power_efficient=Y/' "$bls"
+        echo "Added mitigations=off workqueue.power_efficient=Y to $bls"
     fi
 done
 

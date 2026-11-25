@@ -296,9 +296,9 @@ def groups(win, page):
             rows.append(choice('Adreno GPU-Takt', [(0, 'Auto'), (401, '401 MHz'), (550, '550 MHz'), (680, '680 MHz')],
                                cur_gpu, lambda v: thor_set(win, 'gpu_clock', v),
                                'Fixiert den Adreno-740-Takt gegen Shader-Ruckler in schweren Spielen oder überlässt ihn der Automatik.'))
-            rows.append(choice('Lüfter-Modus', [('auto', 'Auto'), ('quiet', 'Leise'), ('cool', 'Kühl'), ('max', 'Max')],
+            rows.append(choice('Lüfter-Modus', [('silent', '0 dB Lautlos'), ('auto', 'Auto (0 dB Idle)'), ('quiet', 'Leise'), ('cool', 'Kühl'), ('max', 'Max')],
                                pf.get('fan_mode') or 'auto', lambda v: thor_set(win, 'fan_mode', v),
-                               'Kühl hält den Snapdragon 8 Gen 2 bei langen Sessions deutlich unter 65 °C und verhindert Throttling.'))
+                               '0 dB schaltet den Lüfter bis 56 °C komplett stromlos (0 U/min); Auto regelt sanft ab 52 °C; Kühl hält lange AAA-Sessions deutlich unter 65 °C.'))
         rows.append(toggle('Unterwegs-Modus (Akku-Sparpaket)', CFG.get('travel_mode', False),
                            lambda v: config_set(win, travel_mode=v),
                            'Schaltet mit einem Tipp auf Profil Sparsam, senkt das obere OLED-Panel auf 60 Hz, schaltet die Stick-LEDs aus und beendet Hintergrund-Steam – bringt unterwegs spürbar längere Laufzeit.'))
@@ -313,6 +313,32 @@ def groups(win, page):
             rows.append(choice('Standby-Modus', [('s2idle', 'Nativ (Tiefschlaf)'), ('fake', 'Schnell-Ruhe')],
                                T['sleep_mode'], lambda v: thor_set(win, 'sleep_mode', v),
                                'Nativ (s2idle) versetzt den Snapdragon-Chip in echten Kernel-Tiefschlaf für minimalen Standby-Verbrauch in der Tasche.'))
+
+        silent_rows = [
+            toggle('Auto-Eco pro Konsole (2D/Retro = 0 RPM)', CFG.get('auto_eco_games', True),
+                   lambda v: config_set(win, auto_eco_games=v),
+                   'Wählt beim Start automatisch Sparsam für 2D-/Retro-Konsolen (~3,5–5 W, 0 U/min Lüfter) und Ausgewogen für PS2/GC/N64, solange kein eigenes Spielprofil gesetzt ist.'),
+            toggle('🍃 Flüster-Modus (FIFO-VSync & 40 FPS @ 120 Hz)', CFG.get('whisper_mode', False),
+                   lambda v: config_set(win, whisper_mode=v),
+                   'Erzwingt stromsparendes Vulkan-FIFO-Pacing (FEX-Threads schlafen im VSync statt ungebremst weiterzulaufen) und den 40-FPS-Goldmodus auf dem 120-Hz-OLED (spart 30–40 % Watt & Hitze).'),
+            toggle('Auto-60-Hz im Akkubetrieb', CFG.get('auto_60hz_battery', True),
+                   lambda v: config_set(win, auto_60hz_battery=v),
+                   'Schaltet das obere Display auf Akku automatisch auf 60 Hz (außer im 40-FPS-@120-Hz-Flüster-Modus) und am Netzteil sofort wieder auf 120 Hz.'),
+            choice('Unterer Bildschirm Auto-Ruhe im Spiel',
+                   [(0, 'Aus'), (60, 'Nach 1 Min.'), (120, 'Nach 2 Min.'), (300, 'Nach 5 Min.')],
+                   int(CFG.get('bottom_idle_secs') or 0), lambda v: config_set(win, bottom_idle_secs=v),
+                   'Dunkelt das untere OLED-Panel im Spiel ohne Berührung komplett ab (~1,2 W Ersparnis); die erste Berührung weckt es sofort wieder.'),
+            toggle('Gyro-Sensor Auto-Ruhe (spart ~27 % Hintergrund-CPU)', CFG.get('gyro_auto', True),
+                   lambda v: config_set(win, gyro_auto=v),
+                   'Schaltet den hochfrequenten Qualcomm-IMU-Stream (InputPlumber) im Menü und Standby automatisch aus, damit die CPU-Kerne tief schlafen.'),
+            toggle('Stick-LEDs unter 25 % Akku automatisch aus', CFG.get('rgb_saver', True),
+                   lambda v: config_set(win, rgb_saver=v),
+                   'Spart ab 25 % Restakku automatisch den LED-Strom und schaltet die Ringe beim Laden wieder ein.'),
+            choice('Rucksack-Schutz (Auto-Aus im Akku-Standby)',
+                   [(0, 'Aus'), (45, 'Nach 45 Min.'), (90, 'Nach 90 Min.'), (180, 'Nach 3 Std.')],
+                   int(CFG.get('standby_poweroff_mins') or 0), lambda v: config_set(win, standby_poweroff_mins=v),
+                   'Sichert im Akkubetrieb nach der gewählten Standby-Dauer offene RetroArch-Stände und fährt den Thor sauber auf echte 0,0 W herunter.'),
+        ]
 
         chg_rows = []
         if chg:
@@ -372,22 +398,36 @@ def groups(win, page):
                ([{'k': 'info', 't': 'CPU / GPU Live', 'v': cpu_str, 'help': 'Aktueller Prime-Core-Takt, CPU-Governor und Adreno-740-GPU-Takt.'}] if cpu_str else []) + \
                ([{'k': 'info', 't': 'Aktiver Scheduler', 'v': (pf_i.get('scheduler') or 'eevdf').upper(), 'help': 'Aktiver Linux-Kernel- bzw. sched_ext-BPF-Scheduler.'}] if pf_i.get('scheduler') else []) + \
                ([{'k': 'info', 't': 'Temperatur', 'v': f'{pw["temp"]} °C', 'help': 'Temperatur im Gerät. Bis etwa 80 °C ist alles in Ordnung.'},
-                 {'k': 'info', 't': 'Lüfter', 'v': f'{pw["fan"]} U/min', 'help': 'Der Lüfter regelt sich selbst nach der Temperatur und dem Profil.'}] if pw else [])
-        sections = [('Leistung & Unterwegs', rows, 'Gilt sofort und bleibt bis zur nächsten Änderung.' if rows else 'Das Leistungsprofil ist hier nicht erreichbar.')]
+                 {'k': 'info', 't': 'Lüfter', 'v': '0 U/min (0 dB lautlos)' if int(pw.get('fan') or 0) == 0 else f'{pw["fan"]} U/min',
+                  'help': 'Der Lüfter schaltet sich unter 52–56 °C komplett stromlos (0 U/min) und regelt darüber sanft nach Temperatur.'}] if pw else [])
+        sections = [
+            ('Leistung & Unterwegs', rows, 'Gilt sofort und bleibt bis zur nächsten Änderung.' if rows else 'Das Leistungsprofil ist hier nicht erreichbar.'),
+            ('Ruhe & Akku-Ausdauer (0 dB)', silent_rows, 'Maximiert Akkulaufzeit und hält den Lüfter unter 52–56 °C komplett lautlos (0 U/min).'),
+        ]
         if hd_rows:
             sections.append(('HyperDrive & Treiber-Engine', hd_rows, 'Holt auf dem Snapdragon 8 Gen 2 maximale PC- & Emulator-FPS bei minimaler Latenz heraus.'))
         sections.extend([('Schnellladen & Akku-Pflege', chg_rows, None), ('Zustand', info, None)])
         return sections
     if page == 'network':
         own = P.get('own') or P.get('url')
+        fly_st = getattr(win, 'AIRPLANE_ST', None) or {}
+        net_top = [
+            {'k': 'link', 't': 'WLAN', 'v': SYS.get('ssid') or ('nicht verbunden' if win.SYS else '…'), 'fn': lambda: go_page(win, 'network>wifi'),
+             'help': 'Netze in der Nähe zeigen und verbinden.'},
+            toggle('WLAN-7 Stromsparmodus (Auto-PowerSave)', CFG.get('wifi_powersave', True),
+                   lambda v: config_set(win, wifi_powersave=v),
+                   'Spart rund 1–1,5 W und Abwärme im Menü, Standby und in lokalen Spielen; während Moonlight, AirPlay oder Pro-Controller wird er für 0 ms Latenz automatisch pausiert.'),
+            toggle('✈️ Flugmodus (WLAN & Bluetooth aus)', bool(fly_st.get('on')),
+                   lambda v: win.post('api/airplane', {'on': v}, then=lambda r: r and (setattr(win, 'AIRPLANE_ST', r), win.update())),
+                   'Schaltet WLAN und Bluetooth für lange Offline-Reisen komplett ab (+1,5 bis 2,5 W Ersparnis).'),
+        ]
         wol_rows = [{'k': 'link', 't': 'PC-MAC-Adresse', 'v': CFG.get('wol_mac') or 'nicht gesetzt', 'fn': win.ask_wol_mac, 'bottom': True,
                      'help': 'MAC-Adresse deines Streaming-PCs für Wake-on-LAN (z. B. für Moonlight).'}]
         if CFG.get('wol_mac'):
             wol_rows.append({'k': 'button', 't': 'PC jetzt aufwecken',
                              'fn': lambda: win.post('api/wol', {}, then=lambda r: r and win.toast(r.get('text') or r.get('error', ''))),
                              'help': 'Sendet ein Wake-on-LAN-Signal im Heimnetz an den eingetragenen PC.'})
-        return [(None, [{'k': 'link', 't': 'WLAN', 'v': SYS.get('ssid') or ('nicht verbunden' if win.SYS else '…'), 'fn': lambda: go_page(win, 'network>wifi'),
-                         'help': 'Netze in der Nähe zeigen und verbinden.'}], None),
+        return [(None, net_top, None),
                 ('Vom Handy oder PC', [{'k': 'info', 't': 'Adresse', 'v': own or '–', 'help': 'Diese Adresse im Browser öffnen: dort gibt es dieselben Einstellungen, bequem mit Tastatur.'},
                                        {'k': 'info', 't': 'PIN', 'v': str(P.get('pin') or '–'), 'help': 'Die PIN gilt einmal. Danach bleibt der Browser ein Jahr angemeldet.'}] +
                  ([{'k': 'info', 't': 'Im Heimnetz', 'v': P['ip_url'], 'help': 'Falls der Name nicht gefunden wird: diese Adresse mit Zahlen.'}] if P.get('ip_url') else []), None),

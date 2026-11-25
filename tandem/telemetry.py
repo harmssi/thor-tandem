@@ -819,5 +819,93 @@ def sample_ambilight_hex(png_path):
         return None
 
 
+# ---- Wi-Fi 7 (ath12k), PCIe Runtime-PM & 1-Tap Airplane Mode (Silent & Endurance Suite) ----------------------------
+_NET_PM = {'wifi_ps': None}
+
+
+def set_wifi_powersave(on=True):
+    """Dynamically toggle IEEE 802.11 power-save + PCIe Runtime-PM (on in menu/standby/offline games, off while streaming)."""
+    target = bool(on)
+    with LOCK:
+        if _NET_PM['wifi_ps'] is target:
+            return {'ok': True, 'wifi_powersave': target}
+        _NET_PM['wifi_ps'] = target
+    # 1. PCIe Runtime-PM (ath12k root port & endpoint) where writable by wheel
+    for ctrl in glob.glob('/sys/bus/pci/devices/*/power/control'):
+        try:
+            Path(ctrl).write_text('auto' if target else 'on')
+        except OSError:
+            pass
+    # 2. NetworkManager per-connection 802-11-wireless.powersave (3 = enabled, 2 = disabled)
+    if shutil.which('nmcli'):
+        try:
+            out = subprocess.run(['nmcli', '-t', '-f', 'UUID,TYPE', 'connection', 'show', '--active'],
+                                 capture_output=True, text=True, timeout=3).stdout
+            for line in out.splitlines():
+                if line.endswith(':802-11-wireless') or line.endswith(':wireless'):
+                    uuid = line.split(':', 1)[0]
+                    if uuid:
+                        subprocess.run(['nmcli', 'connection', 'modify', uuid, '802-11-wireless.powersave', '3' if target else '2'],
+                                       capture_output=True, timeout=3)
+        except (OSError, subprocess.SubprocessError):
+            pass
+    # 3. Direct mac80211 iw fallback where permitted
+    if shutil.which('iw'):
+        for net in glob.glob('/sys/class/net/wl*'):
+            iface = Path(net).name
+            try:
+                subprocess.run(['iw', 'dev', iface, 'set', 'power_save', 'on' if target else 'off'],
+                               capture_output=True, timeout=2)
+            except (OSError, subprocess.SubprocessError):
+                pass
+    return {'ok': True, 'wifi_powersave': target}
+
+
+def airplane_state():
+    """Return {'on': bool, 'wifi_blocked': bool, 'bt_blocked': bool} from /sys/class/rfkill (0 subprocess cost!)."""
+    wifi_b = bt_b = False
+    seen_w = seen_b = False
+    for rdir in glob.glob('/sys/class/rfkill/rfkill*'):
+        try:
+            rtype = (Path(rdir) / 'type').read_text().strip()
+            soft = (Path(rdir) / 'soft').read_text().strip() == '1'
+            if rtype == 'wlan':
+                seen_w = True
+                wifi_b = wifi_b or soft
+            elif rtype == 'bluetooth':
+                seen_b = True
+                bt_b = bt_b or soft
+        except OSError:
+            continue
+    on = bool((seen_w or seen_b) and (not seen_w or wifi_b) and (not seen_b or bt_b))
+    return {'on': on, 'wifi_blocked': wifi_b, 'bt_blocked': bt_b}
+
+
+def set_airplane_mode(on):
+    """Toggle Wi-Fi + Bluetooth radios via rfkill (/dev/rfkill seat ACL -> no root required, saves 1.5-2.5 W on travel)."""
+    target = bool(on)
+    if not shutil.which('rfkill'):
+        return {'error': 'rfkill nicht verfügbar.'}
+    act = 'block' if target else 'unblock'
+    ok = False
+    for kind in ('wifi', 'wlan', 'bluetooth'):
+        try:
+            r = subprocess.run(['rfkill', act, kind], capture_output=True, timeout=3)
+            if r.returncode == 0:
+                ok = True
+        except (OSError, subprocess.SubprocessError):
+            pass
+    if shutil.which('nmcli'):
+        try:
+            subprocess.run(['nmcli', 'radio', 'wifi', 'off' if target else 'on'], capture_output=True, timeout=3)
+        except (OSError, subprocess.SubprocessError):
+            pass
+    st = airplane_state()
+    if not ok and st['on'] != target:
+        return {'error': 'Flugmodus konnte nicht umgeschaltet werden.'}
+    return {'ok': True, **st}
+
+
+
 
 

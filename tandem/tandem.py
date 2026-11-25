@@ -1153,13 +1153,20 @@ class Tandem:
             if pack: cmd, wide = wide_core(cmd, pack, self.saved.get('wide', {}).get(gid, False))
             if not self.dry: self.home_window = focused_window()
             raw_opt = self.saved.get('gameopt', {}).get(gid) or {}
-            opt = thor_perf.smart_game_opt(game, raw_opt)
             cfg_now = load_config()
+            on_bat_now = not on_power()
+            opt = thor_perf.smart_game_opt(
+                game, raw_opt,
+                auto_eco=bool(cfg_now.get('auto_eco_games', True)),
+                whisper_mode=bool(cfg_now.get('whisper_mode', False)),
+                on_battery=on_bat_now,
+                engine_label=label,
+            )
             prof = opt.get('profile') or ('Turbo' if label in ('BananaNative', 'PeanutsNative') else ('Eco' if cfg_now.get('travel_mode') else ''))
-            fps = opt.get('fps') if opt.get('fps') in FPS_LIMITS and opt.get('fps') else base_panel_hz(cfg_now)
+            fps = opt.get('fps') if opt.get('fps') in FPS_LIMITS and opt.get('fps') else base_panel_hz(cfg_now, on_bat=on_bat_now)
             res_h = int(opt.get('res') or 0) if opt.get('res') in RENDER_RES else 0
             scale = opt.get('scale') if opt.get('scale') in SCALING_FILTERS else ('sgsr' if res_h else 'linear')
-            low_lat = bool(cfg_now.get('low_latency', True))
+            low_lat = bool(cfg_now.get('low_latency', True)) and not bool(opt.get('vsync_strict'))
             is_dual = bool((game['s'] == 'wiiu') or (game['s'] == 'nds' and label == 'melonDS') or (game['s'] == 'n3ds' and label == 'Azahar'))
             with open(STATE / 'launch.log', 'ab') as log:  # the child keeps its own copy of the handle
                 log.write(f'\n== {time.strftime("%F %T")} {game["t"]}: {cmd}\n'.encode()); log.flush()
@@ -1197,6 +1204,8 @@ class Tandem:
                     apply_low_latency(low_lat)
                     apply_render_res(res_h)
                     if scale != 'linear': apply_scaling_filter(scale)
+                    threading.Thread(target=sync_wifi_powersave, args=(self,), daemon=True).start()
+                    threading.Thread(target=sync_gyro_power, args=(True, game, label), daemon=True).start()
                     stopping = getattr(self, 'steam_stopping', None)
                     if game['s'] == 'steam' and not game.get('direct') and stopping and stopping.is_alive():  # a start sent to a Steam that is shutting down is lost
                         stopping.join(60)
@@ -1481,6 +1490,10 @@ class Tandem:
             thor_features.stop_turbo()
             thor_pro.PROPAD.stop()
             thor_pro.TROPHIES.reset_game(gid)
+            if BOTTOM_OFF['on']:
+                set_bottom_off(False, self)
+            threading.Thread(target=sync_wifi_powersave, args=(self,), daemon=True).start()
+            threading.Thread(target=sync_gyro_power, args=(False, None, ''), daemon=True).start()
         if is_game and not self.dry:
             saved_moment = self.moments.finish(gid)
             if saved_moment and gid in self.library.games:
@@ -2222,10 +2235,83 @@ def apply_oled_vibrance(mode='vibrant'):
     _xprop_set('GAMESCOPE_COLOR_SDR_GAMUT_WIDENESS', val, displays=_x11_displays())
 
 
-def base_panel_hz(cfg=None):
-    """0 = full 120 Hz, 60 = 60 Hz panel refresh when travel_mode or 60 Hz mode is enabled."""
+def base_panel_hz(cfg=None, on_bat=None):
+    """0 = full 120 Hz, 60 = 60 Hz panel refresh when travel_mode, 60 Hz mode, or auto_60hz_battery is active."""
     c = cfg if cfg is not None else load_config()
-    return 60 if (c.get('travel_mode') or int(c.get('panel_hz') or 120) == 60) else 0
+    if c.get('travel_mode') or int(c.get('panel_hz') or 120) == 60:
+        return 60
+    if c.get('whisper_mode'):
+        return 0  # keep 120 Hz carrier so 40-FPS Golden Mode divides cleanly by 3
+    if c.get('auto_60hz_battery', True):
+        bat_now = (not on_power()) if on_bat is None else bool(on_bat)
+        if bat_now:
+            return 60
+    return 0
+
+
+BOTTOM_OFF = {'on': False, 'saved_bb': None}
+
+
+def set_bottom_off(on, tandem=None):
+    """Hardware-sleep & palm-lock the bottom DSI-2 OLED panel while gaming on top (~1.2-2.0 W saved; Thor key wakes)."""
+    want = bool(on)
+    hw = (set_raw is _SET_RAW) and not (tandem and tandem.dry)
+    if want and not BOTTOM_OFF['on']:
+        try:
+            cur_raw = int((Path('/sys/class/backlight') / BACKLIGHTS['bb'] / 'brightness').read_text())
+            BOTTOM_OFF['saved_bb'] = lit('bb', cur_raw)
+        except (OSError, ValueError, KeyError):
+            BOTTOM_OFF['saved_bb'] = None
+        BOTTOM_OFF['on'] = True
+        if hw:
+            set_raw('bb', 0)
+            thor.set_companion_locked(True)
+    elif not want and BOTTOM_OFF['on']:
+        saved = BOTTOM_OFF['saved_bb']
+        BOTTOM_OFF['on'], BOTTOM_OFF['saved_bb'] = False, None
+        if hw:
+            thor.set_companion_locked(False)
+            set_raw('bb', lit('bb', saved if saved is not None else 0))
+    if tandem:
+        tandem.publish('bottom_off', {'on': BOTTOM_OFF['on']})
+    return {'ok': True, 'on': BOTTOM_OFF['on']}
+
+
+def sync_wifi_powersave(tandem=None):
+    """Enable Wi-Fi 7 (ath12k) + PCIe power-save in menu/standby/offline play; disable automatically while streaming."""
+    cfg = load_config()
+    if not cfg.get('wifi_powersave', True):
+        return telemetry.set_wifi_powersave(False)
+    streaming = bool(
+        thor_pro.AIRPLAY.running()
+        or thor_pro.PROPAD.active
+        or thor_features.NETPLAY.get('mode', 'off') != 'off'
+        or (((tandem.run or {}).get('port') or {}).get('deck') == 'pcstream' if tandem else False)
+    )
+    return telemetry.set_wifi_powersave(not streaming)
+
+
+def sync_gyro_power(game_running, game=None, engine_label=''):
+    """Eliminate 27% idle InputPlumber/armada-ssc CPU load in the library & standby while keeping gyro ready for 3D games."""
+    cfg = load_config()
+    if not cfg.get('gyro_auto', True):
+        return
+    try:
+        st = thor.state()
+        gy = st.get('gyro') or {}
+        if not gy:
+            return
+        cur_on = bool(gy.get('enabled'))
+        need_gyro = bool(game_running and thor_perf.classify_game_tier(game, engine_label=engine_label) != '2d'
+                         and SLEEP_STATE.get('gyro_user_on'))
+        if not game_running:
+            if cur_on:
+                SLEEP_STATE['gyro_user_on'] = True
+                thor.change('gyro', False)
+        elif need_gyro and not cur_on:
+            thor.change('gyro', True)
+    except Exception:
+        pass
 
 
 def write_ai_browser_wrapper():
@@ -2568,11 +2654,12 @@ def sleep_game(tandem, on):
 
 
 def doze(on, tandem=None, keep_audio=False):
-    """Standby on a charger (or closed-lid music mode when keep_audio=True): panels asleep, stick lights off, Eco profile."""
+    """Standby on a charger (or closed-lid music mode when keep_audio=True): panels asleep, stick lights off, deep 307 MHz Eco."""
     hw = (set_raw is _SET_RAW) and not (tandem and tandem.dry)
     if on and not DOZE:
         if not keep_audio:
             sleep_game(tandem, True)
+        SLEEP_STATE['doze_at'] = time.time()
         for key, name in BACKLIGHTS.items():
             try: DOZE[key] = lit(key, int((Path('/sys/class/backlight') / name / 'brightness').read_text()))
             except (OSError, ValueError): continue
@@ -2587,33 +2674,49 @@ def doze(on, tandem=None, keep_audio=False):
                 run_quiet(['wpctl', 'set-mute', '@DEFAULT_AUDIO_SINK@', '1'])
                 telemetry.stop_speaker_dsp()
             if shutil.which('armada-rgb'): run_quiet(['armada-rgb', 'sleep'])
+            telemetry.set_wifi_powersave(True)
+            st_now = thor.state() if shutil.which(thor.POWER[0]) else {}
+            if (st_now.get('gyro') or {}).get('enabled'):
+                SLEEP_STATE['gyro'] = True
+                threading.Thread(target=thor.change, args=('gyro', False), daemon=True).start()
             if shutil.which(thor.POWER[0]):
-                SLEEP_STATE['profile'] = ((thor.state().get('power') or {}).get('profile')) or load_config().get('perf_profile') or 'Balanced'
+                SLEEP_STATE['profile'] = ((st_now.get('power') or {}).get('profile')) or load_config().get('perf_profile') or 'Balanced'
                 thor.change('profile', 'Eco')
+                thor.suspend_power(True)
         if tandem:
             tandem.power_open = False
             tandem.publish()
     elif not on:
         was = bool(DOZE)
+        SLEEP_STATE['doze_at'] = 0.0
+        if BOTTOM_OFF['on']:
+            BOTTOM_OFF['on'], BOTTOM_OFF['saved_bb'] = False, None
+            if hw:
+                thor.set_companion_locked(False)
         if was and hw: panel_sleep(False)
         for key, raw in list(DOZE.items()):
             if key in BACKLIGHTS: set_raw(key, lit(key, raw))
         DOZE.clear()
         DOZE_FILE.unlink(missing_ok=True)
         if hw:
+            if was and shutil.which(thor.POWER[0]):
+                thor.suspend_power(False)
             if was and shutil.which('armada-rgb'): run_quiet(['armada-rgb', 'wake'])
             if was and SLEEP_STATE['muted'] is False and shutil.which('wpctl'):
                 run_quiet(['wpctl', 'set-mute', '@DEFAULT_AUDIO_SINK@', '0'])
             prof = ((tandem.run or {}).get('profile') if tandem else '') or SLEEP_STATE['profile'] or load_config().get('perf_profile')
             if prof and shutil.which(thor.POWER[0]):
                 threading.Thread(target=thor.change, args=('profile', prof), daemon=True).start()
+            if SLEEP_STATE.get('gyro') and (not load_config().get('gyro_auto', True) or (tandem and tandem.run)):
+                threading.Thread(target=thor.change, args=('gyro', True), daemon=True).start()
+            threading.Thread(target=sync_wifi_powersave, args=(tandem,), daemon=True).start()
             night = load_config().get('night_mode', 'off')
             if night in ('warm', 'night'):
                 threading.Thread(target=apply_night_mode, args=(night,), daemon=True).start()
             dsp_m = load_config().get('speaker_dsp', 'cinema')
             if dsp_m in telemetry.SPEAKER_DSP_MODES and dsp_m != 'off':
                 threading.Thread(target=telemetry.apply_speaker_dsp, args=(dsp_m,), daemon=True).start()
-        SLEEP_STATE['muted'], SLEEP_STATE['profile'] = None, None
+        SLEEP_STATE['muted'], SLEEP_STATE['profile'], SLEEP_STATE['gyro'] = None, None, False
         sleep_game(tandem, False)
         if tandem:
             tandem.power_open = False
@@ -2750,7 +2853,25 @@ def save_config(data):
         config['travel_mode'] = data['travel_mode']
         travel_changed = data['travel_mode']
     if isinstance(data.get('auto_travel'), bool): config['auto_travel'] = data['auto_travel']
-    hz_changed = False
+    if isinstance(data.get('auto_eco_games'), bool): config['auto_eco_games'] = data['auto_eco_games']
+    whisper_changed = None
+    if isinstance(data.get('whisper_mode'), bool) and data['whisper_mode'] != config.get('whisper_mode', False):
+        config['whisper_mode'] = data['whisper_mode']
+        whisper_changed = data['whisper_mode']
+    if isinstance(data.get('auto_60hz_battery'), bool):
+        config['auto_60hz_battery'] = data['auto_60hz_battery']
+        hz_changed = True
+    else:
+        hz_changed = False
+    if isinstance(data.get('wifi_powersave'), bool):
+        config['wifi_powersave'] = data['wifi_powersave']
+        threading.Thread(target=telemetry.set_wifi_powersave, args=(data['wifi_powersave'],), daemon=True).start()
+    if isinstance(data.get('gyro_auto'), bool): config['gyro_auto'] = data['gyro_auto']
+    if isinstance(data.get('rgb_saver'), bool): config['rgb_saver'] = data['rgb_saver']
+    if data.get('bottom_idle_secs') in (0, 60, 120, 300):
+        config['bottom_idle_secs'] = int(data['bottom_idle_secs'])
+    if data.get('standby_poweroff_mins') in (0, 45, 90, 180):
+        config['standby_poweroff_mins'] = int(data['standby_poweroff_mins'])
     if data.get('panel_hz') in (60, 120):
         config['panel_hz'] = int(data['panel_hz'])
         hz_changed = True
@@ -2797,6 +2918,9 @@ def save_config(data):
     if travel_changed is not None:
         apply_travel_effects(travel_changed)
         extra['text'] = 'Unterwegs-Sparmodus aktiviert (Eco · 60 Hz · LEDs aus).' if travel_changed else 'Unterwegs-Sparmodus beendet (volle Leistung).'
+    elif whisper_changed is not None:
+        apply_fps_limit(40 if whisper_changed else base_panel_hz(config))
+        extra['text'] = '🍃 Flüster-Modus aktiv (0 dB Lüfter · FIFO-VSync · 40 FPS @ 120 Hz).' if whisper_changed else '🍃 Flüster-Modus beendet.'
     elif hz_changed:
         apply_fps_limit(base_panel_hz(config))
     return {**public_config(), **extra}
@@ -2943,6 +3067,14 @@ def public_config():
             'auto_companions': config.get('auto_companions', True),
             'travel_mode': bool(config.get('travel_mode', False)),
             'auto_travel': bool(config.get('auto_travel', False)),
+            'auto_eco_games': bool(config.get('auto_eco_games', True)),
+            'whisper_mode': bool(config.get('whisper_mode', False)),
+            'auto_60hz_battery': bool(config.get('auto_60hz_battery', True)),
+            'wifi_powersave': bool(config.get('wifi_powersave', True)),
+            'gyro_auto': bool(config.get('gyro_auto', True)),
+            'rgb_saver': bool(config.get('rgb_saver', True)),
+            'bottom_idle_secs': int(config['bottom_idle_secs']) if config.get('bottom_idle_secs') in (0, 60, 120, 300) else 0,
+            'standby_poweroff_mins': int(config['standby_poweroff_mins']) if config.get('standby_poweroff_mins') in (0, 45, 90, 180) else 0,
             'panel_hz': 60 if int(config.get('panel_hz') or 120) == 60 else 120,
             'ai_workdir': config.get('ai_workdir', ''),
             'save_target': config.get('save_target', saves.DEFAULT_TARGET),
@@ -3893,6 +4025,10 @@ def handler(tandem):
                 return self.send(200, ach_res)
             if path == '/api/airplay':
                 return self.send(200, thor_pro.AIRPLAY.status())
+            if path == '/api/airplane':
+                return self.send(200, telemetry.airplane_state())
+            if path == '/api/bottom_off':
+                return self.send(200, {'on': BOTTOM_OFF['on']})
             if path == '/api/patch':
                 from urllib.parse import parse_qs
                 qs = parse_qs(urlparse(self.path).query)
@@ -3980,6 +4116,8 @@ def handler(tandem):
             if path == '/api/uikey':
                 a = str(data.get('a') or '')
                 if a == 'quick':
+                    if BOTTOM_OFF['on']:
+                        set_bottom_off(False, tandem)
                     tandem.publish('quick', {})
                 elif a in ('ok', 'back', 'left', 'right', 'up', 'down', 'prev', 'next', 'fav', 'close', 'menu', 'search', 'home'):
                     tandem.publish('key', {'a': a})
@@ -4068,8 +4206,24 @@ def handler(tandem):
                 act = str(data.get('action') or 'toggle')
                 scr = str(data.get('screen') or 'bottom')
                 if act == 'stop' or (act == 'toggle' and thor_pro.AIRPLAY.running()):
-                    return self.send(200, thor_pro.AIRPLAY.stop())
-                return self.send(200, thor_pro.AIRPLAY.start(scr, game_running=bool(tandem.run)))
+                    res = thor_pro.AIRPLAY.stop()
+                else:
+                    res = thor_pro.AIRPLAY.start(scr, game_running=bool(tandem.run))
+                threading.Thread(target=sync_wifi_powersave, args=(tandem,), daemon=True).start()
+                return self.send(200, res)
+            if path == '/api/airplane':
+                cur_ap = telemetry.airplane_state()['on']
+                want_ap = (not cur_ap) if data.get('on') in (None, 'toggle') else bool(data.get('on'))
+                res = telemetry.set_airplane_mode(want_ap)
+                if res.get('ok'):
+                    res['text'] = '✈️ Flugmodus aktiv (WLAN & Bluetooth aus).' if res.get('on') else '📶 Funkverbindungen wieder aktiv.'
+                    tandem.publish('toast', {'text': res['text']})
+                return self.send(200, res)
+            if path == '/api/bottom_off':
+                want_bo = (not BOTTOM_OFF['on']) if data.get('on') in (None, 'toggle') else bool(data.get('on'))
+                res = set_bottom_off(want_bo, tandem)
+                res['text'] = '🌑 Unterer Bildschirm aus (Thor-Taste weckt ihn).' if res['on'] else '☀️ Unterer Bildschirm aktiv.'
+                return self.send(200, res)
             if path == '/api/patch':
                 gid = str(data.get('id') or '')
                 gm = tandem.library.games.get(gid)
@@ -4159,6 +4313,8 @@ def handler(tandem):
                 threading.Thread(target=work, daemon=True).start()
                 return self.send(200, {'ok': True})
             if path == '/api/quick':  # the Thor key's menu, for scripted takes (the daemon reads only the Thor's own keys)
+                if BOTTOM_OFF['on']:
+                    set_bottom_off(False, tandem)
                 tandem.publish('quick', {}); return self.send(200, {'ok': True})
             if path == '/api/key':
                 is_wine = bool((tandem.run or {}).get('keys') and not (tandem.run or {}).get('login'))
@@ -4771,6 +4927,8 @@ def watch_buttons(tandem):
                 if value == 1 and code == 184:  # Back
                     if free(): tandem.publish('key', {'a': 'back'})
                 elif value == 1 and code == 185:  # the Thor key: its quick menu on the bottom screen (Zu Tandem is in there)
+                    if BOTTOM_OFF['on']:
+                        set_bottom_off(False, tandem)
                     tandem.publish('quick', {})
                 elif value == 1 and code == 316:  # Home (a pad's guide button): freeze the game and show Tandem; again: back into the game
                     if tandem.power_open: tandem.act('power_close')
@@ -4823,11 +4981,17 @@ def main():
     if not args.dry_run:
         threading.Thread(target=sync_protondb_bg, daemon=True).start()
         thor_airpods.MANAGER.start(tandem)
+        def _init_silent_endurance():
+            thor_perf.ensure_audio_powersave(HOME)
+            thor.ensure_silent_profiles(STATE)
+            sync_wifi_powersave(tandem)
+            sync_gyro_power(bool(tandem.run))
+        threading.Thread(target=_init_silent_endurance, daemon=True).start()
     if DOZE and not args.dry_run: doze(False, tandem)  # restarted during a doze: bring the panels back right away
     server = QuietHTTPServer(('127.0.0.1', args.port), handler(tandem))
     threading.Thread(target=watch_buttons, args=(tandem,), daemon=True).start()
     def watch_dock():
-        prev, dimmed, charge_notified, low_batt_froze, prev_on_bat, last_bifrost, tick = False, {}, False, False, None, '', 0
+        prev, dimmed, charge_notified, low_batt_froze, rgb_low_cut, prev_on_bat, last_bifrost, tick = False, {}, False, False, False, None, '', 0
         while True:
             time.sleep(4)
             tick += 1
@@ -4886,6 +5050,25 @@ def main():
                         tandem.publish('toast', {'text': f'⚠️ Akku kritisch ({b["level"]} %) – Spiel gesichert & eingefroren!'})
                 elif not b or b.get('charging') or b.get('level', 100) >= 8:
                     low_batt_froze = False
+                # Stick-LED Battery Saver (< 25% discharging -> LEDs off; >= 30% or charging -> restore)
+                if cfg_w.get('rgb_saver', True) and not DOZE:
+                    if b and not b.get('charging') and 0 < b.get('level', 100) <= 25:
+                        if not rgb_low_cut:
+                            rgb_low_cut = True
+                            thor.change('rgb', {'enabled': False})
+                    elif rgb_low_cut and (not b or b.get('charging') or b.get('level', 100) >= 30):
+                        rgb_low_cut = False
+                        thor.change('rgb', {'enabled': True})
+                # Backpack Protection: optional auto-poweroff after N minutes in battery Standby (0.0 W drain)
+                sp_mins = int(cfg_w.get('standby_poweroff_mins') or 0)
+                if sp_mins in (45, 90, 180) and DOZE and SLEEP_STATE.get('doze_at') and b and not b.get('charging'):
+                    if time.time() - SLEEP_STATE['doze_at'] >= sp_mins * 60:
+                        if tandem.run and tandem.run.get('emu') == 'RetroArch':
+                            retroarch('save')
+                            time.sleep(0.3)
+                        action('poweroff')
+                if tick % 9 == 0:
+                    sync_wifi_powersave(tandem)
                 if cfg_w.get('dock_pad_swap', True):
                     try:
                         bt_st = bluetooth.state()

@@ -524,6 +524,13 @@ class Tandem(QRasterWindow):
                 and time.time() - getattr(self, '_ach_poll_at', 0) > 45):
             self._ach_poll_at = time.time()
             self.load_ach(refresh=True)
+        # Auto-dim bottom OLED during gameplay when untouched (saves ~1.2 W; first touch wakes immediately)
+        idle_s = int(self.CFG.get('bottom_idle_secs') or 0)
+        if (self.side == 'bottom' and idle_s > 0 and self.RUN and not self.QUICK and not self.DOZE
+                and not getattr(self, '_auto_bb_off', False) and time.time() - self.active >= idle_s):
+            self._auto_bb_off = True
+            self._auto_bb_saved = max(15, int(self.SET.get('bb') or 50))
+            self.post('api/set', {'key': 'bb', 'value': 0, 'from': self.me})
         self.update()  # the clock
 
     def load_sys(self, scan=False): self.call('api/system' + ('?scan' if scan else ''), then=lambda s: s and setattr(self, 'SYS', s))
@@ -587,6 +594,12 @@ class Tandem(QRasterWindow):
     def wake(self):  # True: this input only woke the screen up
         was = self.resting()
         self.active = time.time()
+        if getattr(self, '_auto_bb_off', False):
+            self._auto_bb_off = False
+            restore_v = getattr(self, '_auto_bb_saved', 50)
+            self.SET['bb'] = restore_v
+            self.post('api/set', {'key': 'bb', 'value': restore_v, 'from': self.me})
+            was = True
         if self.saver_timer.isActive():
             self.saver_timer.stop()
         if getattr(self, 'SAVER_NOW', False):

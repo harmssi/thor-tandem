@@ -135,6 +135,31 @@ class PerfEngineTest(unittest.TestCase):
         # Idempotent when hwdec is already configured
         self.assertEqual(thor_perf.ensure_mpv_hwdec(mhome), [])
 
+    def test_silent_fan_auto_eco_and_whisper_fifo(self):
+        # 0 dB semi-passive fan mode sets pwm1_enable=3 and pwm1=0
+        self.assertTrue(thor_perf.set_fan_mode('silent', hwmon_base=self.hwmon)['ok'])
+        self.assertEqual((self.hwmon / 'hwmon0/pwm1_enable').read_text(), '3')
+        self.assertEqual((self.hwmon / 'hwmon0/pwm1').read_text(), '0')
+        # Auto-Eco per console class
+        gba_opt = thor_perf.smart_game_opt({'s': 'gba'}, {}, auto_eco=True, on_battery=True)
+        self.assertEqual((gba_opt['profile'], gba_opt['fps'], gba_opt['vsync_strict']), ('Eco', 60, True))
+        ps2_opt = thor_perf.smart_game_opt({'s': 'ps2'}, {}, auto_eco=True, on_battery=False)
+        self.assertEqual((ps2_opt['profile'], ps2_opt['fps']), ('Balanced', 60))
+        # Whisper mode on heavy Steam game -> Balanced + 40 FPS Golden Mode + FIFO VSync + DXVK frame cap
+        wh_opt = thor_perf.smart_game_opt({'appid': '377160', 's': 'steam'}, {}, auto_eco=True, whisper_mode=True, on_battery=True)
+        self.assertEqual((wh_opt['profile'], wh_opt['fps'], wh_opt['res'], wh_opt['vsync_strict']), ('Balanced', 40, 720, True))
+        wh_env = thor_perf.game_env({}, wh_opt, 'steam')
+        self.assertEqual(wh_env['MESA_VK_WSI_PRESENT_MODE'], 'fifo')
+        self.assertEqual(wh_env['DXVK_FRAME_RATE'], '40')
+        self.assertEqual(wh_env['VKD3D_FRAME_RATE'], '40')
+        self.assertEqual(wh_env['PROTON_DXVK_LOWLATENCY'], '0')
+        self.assertEqual(wh_env['PIPEWIRE_LATENCY'], '512/48000')
+        # WirePlumber 3s audio codec suspend drop-in
+        ahome = self.root / 'audio-home'
+        wp_conf = thor_perf.ensure_audio_powersave(ahome)
+        self.assertTrue(wp_conf.endswith('52-tandem-power-save.conf'))
+        self.assertIn('session.suspend-timeout-seconds = 3', Path(wp_conf).read_text())
+
 
 if __name__ == '__main__':
     unittest.main()

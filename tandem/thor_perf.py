@@ -49,16 +49,69 @@ STRICT_TSO_APPIDS = frozenset((
     '892970',   # Valheim (Unity)
 ))
 
+# Game-class tiers for automatic per-console efficiency scaling (0 FPS loss, 0 RPM silent fan on 2D/retro):
+TIER_2D_SYSTEMS = frozenset((
+    'gb', 'gbc', 'gba', 'nes', 'fds', 'sfc', 'snes', 'md', 'genesis', 'megadrive',
+    'mastersystem', 'sms', 'gamegear', 'gg', 'pce', 'pcengine', 'tg16', 'ngp', 'ngpc',
+    'ws', 'wsc', 'atari2600', 'atari5200', 'atari7800', 'lynx', 'pico8', 'tic80',
+    'scummvm', 'dos', 'arcade', 'fbneo', 'mame', 'neogeo', 'psx', 'ps1', 'nds', 'vb', 'poke', 'pokemini',
+))
+TIER_3D_MID_SYSTEMS = frozenset((
+    'n64', 'dc', 'dreamcast', 'saturn', 'psp', 'n3ds', '3ds', 'gc', 'gamecube', 'wii', 'ps2',
+))
 
-def smart_game_opt(game, user_opt=None):
-    """Merge zero-config Smart Presets underneath explicit user per-game options."""
+SILENT_FAN_CURVES = {
+    'relaxed': {'label': 'Relaxed (0 dB)', 'curve': '98:255,92:196,85:140,76:92,66:56,55:38,52:0,0:0'},
+    'moderate': {'label': 'Moderate (0 dB)', 'curve': '96:255,90:204,82:148,74:98,64:62,53:42,49:0,0:0'},
+    'aggressive': {'label': 'Aggressive (0 dB Idle)', 'curve': '90:255,84:204,78:153,70:104,60:68,48:46,44:0,0:0'},
+}
+ULTRA_SILENT_FAN_CURVES = {
+    'relaxed': {'label': 'Ultra Silent (0 dB)', 'curve': '98:255,93:196,86:136,78:86,68:52,59:36,56:0,0:0'},
+    'moderate': {'label': 'Ultra Silent (0 dB)', 'curve': '96:255,91:198,84:142,76:90,66:56,57:38,54:0,0:0'},
+    'aggressive': {'label': 'Quiet Gaming (0 dB Idle)', 'curve': '92:255,86:200,80:148,72:96,62:60,52:42,48:0,0:0'},
+}
+SILENT_FAN_SETTINGS = {'min_pwm': 0, 'ramp_up': 12, 'ramp_down': 6, 'smoothing': 0.72}
+
+
+def classify_game_tier(game, engine_label=''):
+    """Classify a game into '2d' (retro/light), '3d_mid' (6th-gen/handheld 3D), or 'heavy' (PC/Steam/Switch/WiiU)."""
+    g = game or {}
+    s = str(g.get('s') or '').lower()
+    if engine_label in ('BananaNative', 'PeanutsNative') or s in ('steam', 'port', 'switch', 'wiiu', 'banananative'):
+        return 'heavy'
+    if s in TIER_2D_SYSTEMS:
+        return '2d'
+    if s in TIER_3D_MID_SYSTEMS:
+        return '3d_mid'
+    return '3d_mid' if s else 'heavy'
+
+
+def smart_game_opt(game, user_opt=None, auto_eco=False, whisper_mode=False, on_battery=False, engine_label=''):
+    """Merge zero-config Smart Presets + Auto-Eco + Whisper FIFO/40-FPS mode underneath explicit user per-game options."""
     base = {}
     g = game or {}
     appid = str(g.get('appid') or '')
+    tier = classify_game_tier(g, engine_label=engine_label)
+    if auto_eco:
+        if tier == '2d':
+            base['profile'] = 'Eco'
+            base['fps'] = 60
+        elif tier == '3d_mid':
+            base['profile'] = 'Balanced'
+            base['fps'] = 60
     if appid in HEAVY_720P_APPIDS and not g.get('direct'):
         base['res'] = 720
         base['scale'] = 'sgsr'
-        base['profile'] = 'Performance'
+        base['profile'] = 'Balanced' if whisper_mode else 'Performance'
+    if whisper_mode:
+        base['vsync_strict'] = True
+        base['whisper'] = True
+        if tier == 'heavy':
+            if base.get('profile') != 'Eco':
+                base['profile'] = 'Balanced'
+            base.setdefault('fps', 40)  # 40-FPS Golden Mode on 120 Hz OLED (exact 3-refresh divisor, -35% watts!)
+    elif on_battery and auto_eco and tier in ('2d', '3d_mid'):
+        base['vsync_strict'] = True
     if appid in STRICT_TSO_APPIDS:
         base['fex_tso'] = True
     if user_opt:
@@ -113,7 +166,13 @@ PROFILE_TUNING = {
 
 GPU_CLOCKS_MHZ = (0, 401, 550, 680)
 CHARGE_LIMITS = (80, 85, 100)
-FAN_MODES = {'auto': ('Auto', 3, None), 'quiet': ('Leise', 1, 72), 'cool': ('Kühl', 1, 155), 'max': ('Max', 1, 235)}
+FAN_MODES = {
+    'silent': ('0 dB', 3, 0),
+    'auto': ('Auto', 3, None),
+    'quiet': ('Leise', 1, 72),
+    'cool': ('Kühl', 1, 155),
+    'max': ('Max', 1, 235),
+}
 HWMON_BASE = Path('/sys/class/hwmon')
 
 
@@ -206,8 +265,32 @@ def apply_profile(profile, cpu_base=CPU_BASE, gpu_base=GPU_BASE, ufs_base=UFS_BA
     udir = Path(ufs_base)
     if udir.is_dir():
         _write(udir / 'governor', spec.get('ufs_gov', 'simple_ondemand'))
+        _write(udir / 'max_freq', 300000000)
 
     return {'ok': True, 'profile': profile, 'cpu_clusters': applied_cpu, 'gpu_tuned': gpu_ok}
+
+
+def set_standby_clocks(on, cpu_base=CPU_BASE, gpu_base=GPU_BASE, ufs_base=UFS_BASE):
+    """Clamp SM8550 CPU clusters (307/499/595 MHz), Adreno 740 (220 MHz), and UFS 4.0 (75 MHz) to floor clocks in Standby."""
+    if on:
+        for pol in POLICIES:
+            pdir = Path(cpu_base) / pol
+            lo = _read(pdir / 'cpuinfo_min_freq') or _read(pdir / 'scaling_min_freq')
+            if lo and lo.isdigit():
+                _write(pdir / 'scaling_governor', 'schedutil')
+                _write(pdir / 'scaling_min_freq', lo)
+                _write(pdir / 'scaling_max_freq', lo)
+        gdir = Path(gpu_base)
+        if gdir.is_dir():
+            _write(gdir / 'governor', 'simple_ondemand')
+            _write(gdir / 'min_freq', 220000000)
+            _write(gdir / 'max_freq', 220000000)
+        udir = Path(ufs_base)
+        if udir.is_dir():
+            _write(udir / 'governor', 'simple_ondemand')
+            _write(udir / 'max_freq', 75000000)
+        return True
+    return apply_profile('Balanced', cpu_base=cpu_base, gpu_base=gpu_base, ufs_base=ufs_base).get('ok', False)
 
 
 def set_gpu_clock(mhz, gpu_base=GPU_BASE):
@@ -389,7 +472,19 @@ def game_env(base_env=None, opt=None, system='', fex_mode='fast', turnip_driver=
     env.setdefault('PROTON_USE_NTSYNC', '1')
     env.setdefault('WINEFSYNC', '1')
     env.setdefault('STAGING_SHARED_MEMORY', '1')
-    env.setdefault('PROTON_DXVK_LOWLATENCY', '1')
+    strict_fifo = bool(opt.get('vsync_strict') or opt.get('whisper'))
+    if strict_fifo:
+        # FIFO presentation blocks FEX/Wine guest threads cleanly on vblank instead of busy-spinning in MAILBOX!
+        env.setdefault('MESA_VK_WSI_PRESENT_MODE', 'fifo')
+        env['PROTON_DXVK_LOWLATENCY'] = '0'
+        fps_cap = int(opt.get('fps') or 0)
+        if fps_cap > 0:
+            env.setdefault('DXVK_FRAME_RATE', str(fps_cap))
+            env.setdefault('VKD3D_FRAME_RATE', str(fps_cap))
+        env.setdefault('PIPEWIRE_LATENCY', '512/48000')
+        env.setdefault('PULSE_LATENCY_MSEC', '40')
+    else:
+        env.setdefault('PROTON_DXVK_LOWLATENCY', '1')
 
     # 2. Direct Turnip ICD isolation (strips llvmpipe + ~120 MB LLVM RSS out of every game process)
     drv = opt.get('turnip') or turnip_driver
@@ -399,7 +494,7 @@ def game_env(base_env=None, opt=None, system='', fex_mode='fast', turnip_driver=
         env['VK_ICD_FILENAMES'] = icd
 
     # 3. Low-latency presentation & low-latency PipeWire audio (beats Android SurfaceFlinger + AudioTrack lag)
-    if low_latency and not opt.get('vsync_strict'):
+    if low_latency and not strict_fifo:
         env.setdefault('GAMESCOPE_WSI_MIN_IMAGE_COUNT', '2')
         env.setdefault('PIPEWIRE_LATENCY', '256/48000')
         env.setdefault('PULSE_LATENCY_MSEC', '24')
@@ -544,4 +639,35 @@ def ensure_mpv_hwdec(home=None):
         except OSError:
             continue
     return written
+
+
+def ensure_audio_powersave(home=None):
+    """Provision WirePlumber 3-second idle suspend on Qualcomm ALSA sinks/sources (~0.3 W saved + zero idle amp hiss)."""
+    h = Path(home) if home else Path.home()
+    conf = h / '.config/wireplumber/wireplumber.conf.d/52-tandem-power-save.conf'
+    body = (
+        '# Toravo Tandem 1.7.0 — Power down Qualcomm speaker/headphone codec after 3s of silence\n'
+        'monitor.alsa.rules = [\n'
+        '  {\n'
+        '    matches = [\n'
+        '      { node.name = "~alsa_output.*" }\n'
+        '      { node.name = "~alsa_input.*" }\n'
+        '    ]\n'
+        '    actions = {\n'
+        '      update-props = {\n'
+        '        session.suspend-timeout-seconds = 3\n'
+        '      }\n'
+        '    }\n'
+        '  }\n'
+        ']\n'
+    )
+    try:
+        if conf.is_file() and conf.read_text(errors='ignore') == body:
+            return str(conf)
+        conf.parent.mkdir(parents=True, exist_ok=True)
+        conf.write_text(body)
+        return str(conf)
+    except OSError:
+        return ''
+
 

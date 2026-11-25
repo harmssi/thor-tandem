@@ -850,12 +850,13 @@ class Views(unittest.TestCase):
             slider = next(h for h in reversed(bottom.hits) if h[3] == 'bb')
             slider[1](slider[0].left())
             self.assertEqual(bottom.SET['bb'], 5)  # never fully dark
-            if bottom.maxoff.get('quick', 0) > 0:
-                bottom.off['quick'] = bottom.maxoff['quick']
+            for _ in range(2):
+                bottom.off['quick'] = bottom.maxoff.get('quick', 0)
                 self.paint('quick-bot')
                 names = list(dict.fromkeys(names + [h[3] for h in bottom.hits]))
-                bottom.off['quick'] = 0
-            for name in ('bt', 'bb', 'vol', 'Bildschirmfoto', 'Schließen'): self.assertIn(name, names)
+            bottom.off['quick'] = 0
+            for name in ('bt', 'bb', 'vol', 'qwhisper', 'qbot_off', 'qairplane', 'fan:silent', 'Bildschirmfoto', 'Schließen'):
+                self.assertIn(name, names)
             self.tap('Schließen')
             self.assertIsNone(bottom.QUICK)
             bottom.on_event({'kind': 'quick'}); bottom.on_event({'kind': 'quick'})

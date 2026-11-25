@@ -26,7 +26,20 @@ The interface speaks English or German (Settings › Look › Language; the inst
 
 ![Dual-Screen PC & Retro Library on AYN Thor](docs/screenshots/steam-library-dual.png)
 
-## New in 1.6.0 — Zero-Idle-RAM Suite: AirPlay, ROM Patcher, CHD/RVZ Shrinker, Cloud-Saves, Trophy Banners, Offline Whisper & Mac/PC Pro-Pad
+## New in 1.7.0 — Silent 0-RPM & Max Battery Endurance Suite (`0 MB` Extra RAM)
+
+- **True `0 dB / 0 RPM` Semi-Passive Fan Curves & Smooth Hysteresis (`os/power-profiles.conf`, `thor.py`, `thor_perf.py`):**
+  - Cuts fan power completely (`pwm1_enable=3`, **`0 RPM`**) below `52–56 °C` across menu, Standby, 2D/retro games & guides, with `3×` gentler ramp-up (`12`) and thermal-mass smoothing (`0.72`) so brief loading spikes never trigger fan noise, plus a dedicated **`0 dB`** quick-toggle in Quick Menu & Settings.
+- **Automatic Per-Console Smart Auto-Eco (`thor_perf.py`, `tandem.py`):**
+  - Automatically runs 2D & classic systems (`GB/GBA/SNES/MD/NES/PS1/NDS/PICO-8`) on `Eco` + `60 Hz` (`~3.5–5 W`, **6–8+ hrs battery, `0 RPM` silent**) and 6th-gen 3D (`PS2/GameCube/Wii/N64/PSP/Dreamcast`) on SM8550 sweet-spot `Balanced` (`schedutil`, released `220 MHz` idle GPU floor).
+- **🍃 Whisper Mode — Vulkan `FIFO` Frame-Pacing & `40 FPS @ 120 Hz` Golden Mode (`thor_perf.py`, `ui/quick_view.py`):**
+  - Forces `MESA_VK_WSI_PRESENT_MODE=fifo` + `DXVK_FRAME_RATE` so FEX-Emu & Wine threads sleep cleanly on VSync instead of busy-spinning in `MAILBOX`, paired with an exact 3-refresh **`40 FPS` cap on the 120 Hz OLED** (saves **30–40 % watts & heat** with smooth 25 ms frame pacing).
+- **Dynamic Wi-Fi 7 (`ath12k`) + PCIe Runtime Power-Save & 1-Tap `✈️ Airplane Mode` (`telemetry.py`, `os/99-toravo-hw.rules`):**
+  - Enables IEEE 802.11 power-save + PCIe Runtime-PM (`auto`) in menus, Standby & offline games (~1–1.5 W saved), automatically pausing it during Moonlight, AirPlay, Pro-Controller or Netplay (`0 ms` streaming lag), plus 1-tap **`✈️ Airplane`** in Quick Menu.
+- **Deep Standby Clamping, Gyro Auto-Sleep (`-27 %` Idle CPU), `🌑 Bottom Off` & Audio Codec Sleep (`tandem.py`, `thor.py`):**
+  - Clamps all SM8550 clusters to `307/499/595 MHz` + `220 MHz` GPU in Standby (`org.armada.Power1.Suspend`), silences idle Qualcomm IMU/InputPlumber polling, adds 1-tap **`🌑 Bottom off`** (`GAMESCOPE_COMPANION_LOCKED` DRM sleep + auto-idle dim), `3 s` WirePlumber audio-amp sleep (`52-tandem-power-save.conf`), `< 25 %` Stick-LED saver, and optional **Backpack Guard** auto-poweroff in battery Standby (`0.0 W`).
+
+Earlier in 1.6.0 — Zero-Idle-RAM Suite: AirPlay, ROM Patcher, CHD/RVZ Shrinker, Cloud-Saves, Trophy Banners, Offline Whisper & Mac/PC Pro-Pad:
 
 Engineered with a strict **0.0 MB background RAM budget** during gameplay (`mem_available_gib()` RAM guard + ephemeral one-shot workers):
 

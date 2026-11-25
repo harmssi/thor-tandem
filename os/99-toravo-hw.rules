@@ -13,3 +13,7 @@ SUBSYSTEM=="cpu", ACTION=="add", RUN+="/bin/sh -c 'chgrp wheel /sys/devices/syst
 # 4. Storage I/O schedulers: zero-lock 'none' + 256 KB read-ahead on internal 4.2 GB/s UFS 4.0; fair 'bfq' on microSD
 ACTION=="add|change", SUBSYSTEM=="block", KERNEL=="sd[a-z]", ATTR{queue/rotational}=="0", ATTR{queue/scheduler}="none", ATTR{queue/read_ahead_kb}="256"
 ACTION=="add|change", SUBSYSTEM=="block", KERNEL=="mmcblk[0-9]", ATTR{queue/scheduler}="bfq", ATTR{queue/read_ahead_kb}="512"
+
+# 5. PCIe (Qualcomm ath12k Wi-Fi 7) & UFS Runtime Power Management + DSI Backlight Blanking for wheel
+ACTION=="add", SUBSYSTEM=="pci", ATTR{power/control}="auto", RUN+="/bin/sh -c 'chgrp wheel /sys%p/power/control 2>/dev/null; chmod 664 /sys%p/power/control 2>/dev/null'"
+SUBSYSTEM=="backlight", RUN+="/bin/sh -c 'chgrp wheel /sys%p/brightness /sys%p/bl_power 2>/dev/null; chmod 664 /sys%p/brightness /sys%p/bl_power 2>/dev/null'"

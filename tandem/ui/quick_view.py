@@ -19,6 +19,8 @@ def toggle(win):
         win.call('api/airpods', then=lambda a: a and (setattr(win, 'AIRPODS', a), win.update()))
         win.call('api/replay', then=lambda rp: rp and setattr(win, 'REPLAY', rp))
         win.call('api/airplay', then=lambda ap: ap and setattr(win, 'AIRPLAY_ST', ap))
+        win.call('api/airplane', then=lambda fl: fl and (setattr(win, 'AIRPLANE_ST', fl), win.update()))
+        win.call('api/bottom_off', then=lambda bo: bo and setattr(win, 'BOTTOM_OFF_ST', bo))
     win.update()
 
 
@@ -98,7 +100,8 @@ def draw(win, p):
     if perf.get('scheduler') in ('lavd', 'cosmos'):
         parts.append(perf['scheduler'].upper())
     if pw.get('temp') is not None: parts.append(f'{pw["temp"]} °C')
-    if pw.get('fan') is not None: parts.append(f'Lüfter {pw["fan"]}')
+    if pw.get('fan') is not None:
+        parts.append('Lüfter 0 dB' if int(pw['fan']) == 0 else f'Lüfter {pw["fan"]}')
     win.text(p, '  ·  '.join(parts), badge.right() + 1.4 * u, hy, ('u', 1.68, 500), MUTED,
              close_r.x() - badge.right() - 2.8 * u, 2, 4.6 / 1.68)
 
@@ -173,6 +176,32 @@ def draw(win, p):
                  ('85 %', lambda: send(win, 'charge_limit', 85), cur_cl == 85, 'cl:85')],
                 LIVE if cur_cl < 100 else FOCUS)
         y += card_h1 + gap
+
+        # ---- 1c. 0-dB Flüster-Modus (FIFO · 40 FPS @ 120 Hz), Unten aus & Flugmodus ----
+        whisp_on = bool(win.CFG.get('whisper_mode'))
+        fly_st = getattr(win, 'AIRPLANE_ST', None) or {}
+        fly_on = bool(fly_st.get('on'))
+        sc_card = QRectF(x0, y, cw, 8.6 * u)
+        win.box(p, sc_card, 1.7 * u, PANEL, LIVE if (whisp_on or fly_on) else LINE)
+        win.text(p, 'RUHE & MAXIMALE AKKULAUFZEIT (0 DB)', x0 + 1.6 * u, y + 1.0 * u, f_sec,
+                 LIVE if (whisp_on or fly_on) else MUTED, cw - 3.2 * u)
+        bw3 = (cw - 4.0 * u) / 3
+        b_whisp = QRectF(x0 + 1.1 * u, y + 3.2 * u, bw3, 4.3 * u)
+        b_boff = QRectF(b_whisp.right() + .9 * u, y + 3.2 * u, bw3, 4.3 * u)
+        b_fly = QRectF(b_boff.right() + .9 * u, y + 3.2 * u, bw3, 4.3 * u)
+        win.button(p, b_whisp, '🍃 Flüster (40 FPS)', lambda: cfg_set(win, whisper_mode=not whisp_on),
+                   ('u', 1.62, 700 if whisp_on else 600), INK if whisp_on else TEXT,
+                   LIVE if whisp_on else RAISED, None if whisp_on else LINE, 1.1, name='qwhisper')
+        win.button(p, b_boff, '🌑 Unten aus',
+                   lambda: (close(win), win.post('api/bottom_off', {'on': True},
+                                                 then=lambda r: r and r.get('text') and win.toast(r['text']))),
+                   ('u', 1.62, 600), TEXT, RAISED, LINE, 1.1, name='qbot_off')
+        win.button(p, b_fly, '✈️ Flugmodus: An' if fly_on else '✈️ Flugmodus',
+                   lambda: win.post('api/airplane', {'on': 'toggle'},
+                                    then=lambda r: r and (setattr(win, 'AIRPLANE_ST', r), win.update())),
+                   ('u', 1.62, 700 if fly_on else 600), INK if fly_on else TEXT,
+                   LIVE if fly_on else RAISED, None if fly_on else LINE, 1.1, name='qairplane')
+        y += 8.6 * u + gap
 
         # ---- 2. Brightness, Volume & Thor Audio-DSP Bento Card ----
         s_rows = [(k, l) for k, l in (('bt', 'Oben'), ('bb', 'Unten'), ('vol', 'Lautstärke')) if win.SET.get(k) is not None]
@@ -349,7 +378,7 @@ def draw(win, p):
             cur_fan = perf.get('fan_mode') or 'auto'
             seg_row(x0 + 1.2 * u, py, cw - 2.4 * u, 4.5 * u,
                     [(lbl, lambda fm=fm: send(win, 'fan_mode', fm), cur_fan == fm, f'fan:{fm}')
-                     for fm, lbl in (('auto', 'Lüfter Auto'), ('quiet', 'Leise'), ('cool', 'Kühl'), ('max', 'Max'))])
+                     for fm, lbl in (('silent', '0 dB'), ('auto', 'Lüfter Auto'), ('quiet', 'Leise'), ('cool', 'Kühl'), ('max', 'Max'))])
             py += 5.4 * u
             if win.RUN:
                 cur_res = int((win.RUN or {}).get('res') or 0)

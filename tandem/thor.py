@@ -9,6 +9,7 @@
 Everything answers None / an error text where a device lacks it; nothing here needs Steam to run.
 """
 import base64, json, os, socket, struct, subprocess, threading
+from pathlib import Path
 import thor_perf
 
 DECKY = ('127.0.0.1', 1337)
@@ -83,8 +84,87 @@ def power():
     try: data = {k: v['data'] for k, v in json.loads(done.stdout)['data'][0].items()}
     except (AttributeError, ValueError, KeyError, IndexError, TypeError): return None
     prof = _ACTIVE_PROFILE if (_ACTIVE_PROFILE == 'Turbo' and data.get('profile') == 'Performance') else data.get('profile')
+    perf = thor_perf.telemetry()
+    if _ACTIVE_FAN_MODE in ('silent', 'auto') and perf.get('fan_mode') == 'auto':
+        perf['fan_mode'] = _ACTIVE_FAN_MODE
     return {'profile': prof, 'profiles': [[k, v] for k, v in PROFILES.items()], 'temp': data.get('temperature'),
-            'fan': data.get('fan_rpm'), 'perf': thor_perf.telemetry()}
+            'fan': data.get('fan_rpm'), 'perf': perf}
+
+
+_ACTIVE_FAN_MODE = 'auto'
+
+
+def ensure_silent_profiles(state_dir=None, force=False):
+    """Configure armada-powerd once for true 0-RPM semi-passive fan stop (< 52 C), smooth ramp-up (12),
+    and mainline PELT 'schedutil' + released Adreno 740 minimum clock (0.0 = 220 MHz idle in menus)."""
+    sdir = Path(state_dir) if state_dir else (Path.home() / '.local/state/tandem')
+    stamp = sdir / 'silent-fan-1.7.0.stamp'
+    if stamp.is_file() and not force:
+        return True
+    try:
+        cfg = decky('get_config') or {}
+        pw = cfg.get('power')
+        if isinstance(pw, dict) and isinstance(pw.get('profiles'), dict):
+            edited = False
+            for pname in ('eco', 'balanced', 'performance'):
+                p = pw['profiles'].get(pname)
+                if not isinstance(p, dict):
+                    continue
+                if p.get('cpu_governor') != 'schedutil':
+                    p['cpu_governor'] = 'schedutil'
+                    edited = True
+                if float(p.get('gpu_min') or 0.0) > 0.0:
+                    p['gpu_min'] = 0.0
+                    p.pop('gpu_min_mhz', None)
+                    edited = True
+                if pname == 'eco' and float(p.get('gpu_max') or 0.8) > 0.72:
+                    p['gpu_max'] = 0.70
+                    p.pop('gpu_max_mhz', None)
+                    edited = True
+            if edited:
+                decky('save_power_config', pw)
+        decky('save_fan_curves', thor_perf.SILENT_FAN_CURVES, thor_perf.SILENT_FAN_SETTINGS)
+        _power('call', *POWER_OBJ, 'Reload')
+        sdir.mkdir(parents=True, exist_ok=True)
+        stamp.write_text('1.7.0\n')
+        return True
+    except Exception:
+        return False
+
+
+def suspend_power(on):
+    """Clamp SM8550 to 307/499/595 MHz + 220 MHz GPU + 75 MHz UFS + 0-RPM fan in Standby (using armada-powerd Suspend
+    only when /etc/armada/power-profiles.conf has fan_low_pwm=0, otherwise keeping 0-RPM Eco curve active + direct sysfs floor)."""
+    has_zero_susp_fan = False
+    try:
+        pconf = Path('/etc/armada/power-profiles.conf')
+        if pconf.is_file() and 'fan_low_pwm' in pconf.read_text(errors='ignore'):
+            has_zero_susp_fan = True
+    except OSError:
+        pass
+    if has_zero_susp_fan:
+        _power('call', *POWER_OBJ, 'Suspend' if on else 'Resume')
+    return thor_perf.set_standby_clocks(bool(on))
+
+
+def set_companion_locked(locked):
+    """Hardware DRM sleep + touch palm-lock for the bottom DSI-2 OLED via Gamescope (< 10 ms, 0 session disruption)."""
+    val = '1' if locked else '0'
+    env = {**os.environ, 'DISPLAY': os.environ.get('DISPLAY') or ':0'}
+    try:
+        r = subprocess.run(
+            ['xprop', '-root', '-f', 'GAMESCOPE_COMPANION_LOCKED', '32c', '-set', 'GAMESCOPE_COMPANION_LOCKED', val],
+            env=env, capture_output=True, timeout=3,
+        )
+        if r.returncode == 0:
+            return True
+    except (OSError, subprocess.SubprocessError):
+        pass
+    try:
+        decky('set_companion_locked', bool(locked))
+        return True
+    except Exception:
+        return False
 
 
 def _extract_engine(config):
@@ -225,8 +305,18 @@ def change(key, value):
             res = thor_perf.set_charge_limit(value)
             if 'error' in res: return res
         elif key == 'fan_mode':
-            res = thor_perf.set_fan_mode(value)
+            global _ACTIVE_FAN_MODE
+            m = str(value or '').lower()
+            if m in ('silent', 'auto'):
+                curves = thor_perf.ULTRA_SILENT_FAN_CURVES if m == 'silent' else thor_perf.SILENT_FAN_CURVES
+                try:
+                    decky('save_fan_curves', curves, thor_perf.SILENT_FAN_SETTINGS)
+                    _power('call', *POWER_OBJ, 'Reload')
+                except Exception:
+                    pass
+            res = thor_perf.set_fan_mode(m)
             if 'error' in res: return res
+            _ACTIVE_FAN_MODE = m
         elif key == 'gyro':
             decky('set_gyro_enabled', bool(value))
         elif key == 'sleep_mode':
