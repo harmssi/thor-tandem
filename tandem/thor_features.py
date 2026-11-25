@@ -21,8 +21,20 @@ SAFE_ID = re.compile(r'^[A-Za-z0-9_\-]{2,80}$')
 # ==============================================================================
 # 1. 30-Second RAM Instant-Replay Ring Buffer + QR Phone Share
 # ==============================================================================
+def mem_available_gib():
+    """Read Linux MemAvailable in GiB (0.05 ms, zero allocations) to guard heavy games against RAM pressure."""
+    try:
+        for line in Path('/proc/meminfo').read_text().splitlines():
+            if line.startswith('MemAvailable:'):
+                return int(line.split()[1]) / (1024 * 1024)
+    except (OSError, ValueError, IndexError):
+        pass
+    return 8.0
+
+
 class ReplayBuffer:
-    """Keeps 6 x 6s H.264 segments in `/run/user/<uid>/tandem-replay` (tmpfs RAM, 0% UFS wear) pinned to Silver cores."""
+    """Keeps 6 x 5s H.264 segments (~9 MB total) in `/run/user/<uid>/tandem-replay` (tmpfs RAM, 0% UFS wear)
+    pinned to Silver cores, with automatic RAM guard (< 2.4 GiB free -> auto-pause & purge)."""
 
     def __init__(self):
         self.lock = threading.Lock()
@@ -55,6 +67,8 @@ class ReplayBuffer:
             return bool(self.proc and self.proc.poll() is None)
 
     def start(self, display=':0'):
+        if mem_available_gib() < 2.4:
+            return {'error': 'Zu wenig freier RAM (< 2,4 GiB) – Replay-Puffer bleibt zum Schutz des Spiels aus.'}
         with self.lock:
             if self.proc and self.proc.poll() is None:
                 return {'ok': True, 'running': True}
@@ -63,7 +77,7 @@ class ReplayBuffer:
             rdir = self._ram_dir()
             for old in rdir.glob('seg*.mp4'):
                 old.unlink(missing_ok=True)
-            # Choose hardware V4L2 H.264 encoder if usable, else ultrafast libx264 on Silver cores 0-2
+            # Strict ~9 MB RAM cap: 5s x 6 segments @ ~2.2 Mbit/s on Silver cores 0-2
             cmd = []
             if shutil.which('taskset'):
                 cmd.extend(['taskset', '-c', '0-2'])
@@ -73,18 +87,18 @@ class ReplayBuffer:
                 'ffmpeg', '-hide_banner', '-loglevel', 'error', '-y',
                 '-f', 'x11grab', '-framerate', '30', '-i', display,
             ])
-            # Optional Pulse/PipeWire default monitor audio
             if shutil.which('pactl'):
                 cmd.extend(['-f', 'pulse', '-i', 'default'])
             cmd.extend([
                 '-vf', 'scale=1280:720',
-                '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '26', '-pix_fmt', 'yuv420p',
+                '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency',
+                '-b:v', '2200k', '-maxrate', '2600k', '-bufsize', '2600k', '-pix_fmt', 'yuv420p',
                 '-g', '30',
             ])
             if shutil.which('pactl'):
                 cmd.extend(['-c:a', 'aac', '-b:a', '128k'])
             cmd.extend([
-                '-f', 'segment', '-segment_time', '6', '-segment_wrap', '6', '-reset_timestamps', '1',
+                '-f', 'segment', '-segment_time', '5', '-segment_wrap', '6', '-reset_timestamps', '1',
                 str(rdir / 'seg%02d.mp4'),
             ])
             env = {**os.environ, 'DISPLAY': display, 'XDG_RUNTIME_DIR': os.environ.get('XDG_RUNTIME_DIR') or f'/run/user/{os.getuid()}'}

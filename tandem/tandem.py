@@ -18,6 +18,7 @@ import thor  # the Thor's own hardware: stick lights, gyro, performance profile
 import thor_airpods  # native Apple AirPods AAP (L2CAP 0x1001: ANC/Transparency/Adaptive, L/R/Case battery, ear detection) & BT Low-Latency
 import thor_features  # 30s RAM Instant-Replay, 3x4 Macro Pad, Live Cheats, HLTB, Deep-Freeze, Netplay & Heroic GOG/Epic bridge
 import thor_perf  # Snapdragon 8 Gen 2 / Adreno 740 performance engine (schedutil/Turbo, GPU lock, bypass charge, Vulkan/FEX env)
+import thor_pro  # Zero-idle-RAM AirPlay (UxPlay), IPS/BPS/UPS ROM patcher, CHD/RVZ shrinker, Trophy tracker, Offline Whisper & Mac/PC Pro-Pad
 import thor_storage  # integrated Linux/Tandem system backups & live retroactive Android partition shrinker
 import thor_translate  # PlayTranslate-style real-time screen OCR & offline/hybrid German game translator
 import thor_updater  # Obtainium-class integrated emulator/core updater & automatic game companion provisioner
@@ -607,8 +608,13 @@ def _find_switch_box(keys):
     return None
 
 
+_LAST_ROOTS = []
+
+
 class Library:
     def __init__(self, roots, steam):
+        global _LAST_ROOTS
+        _LAST_ROOTS = list(roots or [])
         self.roots, self.steam, self.media, self.games, self.lock = roots, steam, {}, {}, threading.Lock()
 
     def _media_index(self, folder, exts=IMAGES):
@@ -1103,6 +1109,17 @@ class Tandem:
                     run_quiet(['setxkbmap', layout])  # the layout decides what the on-screen keys type
                 else:
                     label, cmd = None, 'Kein Terminal-Programm gefunden.'
+            elif gid == 'propad':
+                game = {'id': 'propad', 't': 'Pro-Controller (Mac & PC)', 's': 'app', 'media': {'deck': 'propad', 'pad': False}}
+                label, cmd = 'Pro-Pad', [sys.executable, '-c', 'import time\nwhile True: time.sleep(3600)']
+                if not self.dry:
+                    thor_pro.PROPAD.start()
+            elif gid == 'airplay:top':
+                if thor_pro.AIRPLAY.running():
+                    res_ap = thor_pro.AIRPLAY.stop()
+                else:
+                    res_ap = thor_pro.AIRPLAY.start('top', game_running=False)
+                return {'ok': True, 'cmd': [], 'tracked': False, 'text': res_ap.get('error') or res_ap.get('text', '')}
             elif gid.startswith('app') and gid[3:].isdigit() and int(gid[3:]) < len(APPS):
                 entry = APPS[int(gid[3:])]
                 game, (label, (cmd, why)) = {'id': gid, 't': entry[0], 's': 'app'}, (entry[0], resolve(*entry[1:]))
@@ -1147,6 +1164,10 @@ class Tandem:
             with open(STATE / 'launch.log', 'ab') as log:  # the child keeps its own copy of the handle
                 log.write(f'\n== {time.strftime("%F %T")} {game["t"]}: {cmd}\n'.encode()); log.flush()
                 if not self.dry:
+                    if game.get('s') not in ('term', 'app') and load_config().get('cloud_saves', True):
+                        cs_res = saves.sync_before_launch(game, label, load_config().get('save_target', saves.DEFAULT_TARGET))
+                        if cs_res.get('pulled'):
+                            self.publish('toast', {'text': cs_res['text']})
                     env = None
                     if label == 'RetroArch':
                         ra_res = companion.configure_retroarch(cfg_now, game=game, opt=opt)
@@ -1458,6 +1479,8 @@ class Tandem:
             thor_translate.stop_worker()
             thor_features.REPLAY.stop()
             thor_features.stop_turbo()
+            thor_pro.PROPAD.stop()
+            thor_pro.TROPHIES.reset_game(gid)
         if is_game and not self.dry:
             saved_moment = self.moments.finish(gid)
             if saved_moment and gid in self.library.games:
@@ -2708,6 +2731,7 @@ def save_config(data):
     if ra_changed:
         threading.Thread(target=companion.configure_retroarch, args=(dict(config),), daemon=True).start()
     if isinstance(data.get('save_auto'), bool): config['save_auto'] = data['save_auto']
+    if isinstance(data.get('cloud_saves'), bool): config['cloud_saves'] = data['cloud_saves']
     if isinstance(data.get('replay_buffer'), bool):
         config['replay_buffer'] = data['replay_buffer']
         if not data['replay_buffer']:
@@ -2914,6 +2938,7 @@ def public_config():
             'bt_low_latency': bool(config.get('bt_low_latency', True)),
             'airpods_ear_pause': bool(config.get('airpods_ear_pause', True)),
             'save_auto': config.get('save_auto', True),
+            'cloud_saves': bool(config.get('cloud_saves', True)),
             'auto_update': config.get('auto_update', True),
             'auto_companions': config.get('auto_companions', True),
             'travel_mode': bool(config.get('travel_mode', False)),
@@ -3602,8 +3627,14 @@ def controls_apply():
 
 def sysbackup_state(tandem=None):
     steam_dir = tandem.library.steam if tandem else (HOME / '.local/share/Steam')
+    roots = tandem.library.roots if tandem else _LAST_ROOTS
     cl = {k: v for k, v in thor_storage.scan_storage_cleanup(HOME, steam_dir).items() if k != '_targets'}
-    return {'backups': thor_storage.backup_overview(), 'storage': thor_storage.storage_layout(), 'cleanup': cl}
+    return {
+        'backups': thor_storage.backup_overview(),
+        'storage': thor_storage.storage_layout(),
+        'cleanup': cl,
+        'compress': thor_pro.scan_compressible_roms(roots),
+    }
 
 
 def updater_state(tandem):
@@ -3701,6 +3732,16 @@ def handle_sysbackup(tandem, data):
     if act == 'cleanup':
         which = str(data.get('which') or 'all')
         res = thor_storage.run_storage_cleanup(which, HOME, tandem.library.steam)
+        tandem.publish('sysbackup', sysbackup_state())
+        return res
+    if act == 'compress_roms':
+        def _done_cmp(r):
+            if r.get('converted'):
+                tandem.library.scan()
+                tandem.publish('library')
+            tandem.publish('sysbackup', sysbackup_state())
+            tandem.publish('toast', {'text': r.get('error') or r.get('text', '')})
+        res = thor_pro.start_compress_roms(tandem.library.roots, game_running=bool(tandem.run), on_done=_done_cmp)
         tandem.publish('sysbackup', sysbackup_state())
         return res
     return {'error': 'unbekannt'}
@@ -3840,7 +3881,28 @@ def handler(tandem):
                 return self.send(200, companion.artwork_candidates(gm, q)) if gm else self.send(404, {'error': 'nicht gefunden'})
             if path == '/api/achievements':
                 run = tandem.run and tandem.library.games.get(tandem.run['id'])
-                return self.send(200, achievements(run) if run else {'note': 'Es läuft kein Spiel.'})
+                if not run:
+                    return self.send(200, {'note': 'Es läuft kein Spiel.'})
+                ach_res = dict(achievements(run))
+                gid_r = tandem.run['id']
+                ach_res['pinned'] = list((tandem.saved.get('ach_pins') or {}).get(gid_r) or [])
+                for u_ach in thor_pro.TROPHIES.check_new_unlocks(gid_r, ach_res):
+                    if not tandem.dry:
+                        telemetry.play_sound('launch')
+                    tandem.publish('trophy', {'title': u_ach.get('t', ''), 'desc': u_ach.get('d', ''), 'points': u_ach.get('p', 0)})
+                return self.send(200, ach_res)
+            if path == '/api/airplay':
+                return self.send(200, thor_pro.AIRPLAY.status())
+            if path == '/api/patch':
+                from urllib.parse import parse_qs
+                qs = parse_qs(urlparse(self.path).query)
+                gid = (qs.get('id') or [''])[0]
+                gm = tandem.library.games.get(gid)
+                return self.send(200, {'items': thor_pro.discover_patches_for_game(gm, tandem.library.roots, HOME)})
+            if path == '/api/voice':
+                return self.send(200, thor_pro.VOICE.status())
+            if path == '/api/propad':
+                return self.send(200, thor_pro.PROPAD.status())
             if path == '/api/translate':
                 from urllib.parse import parse_qs
                 qs = parse_qs(urlparse(self.path).query)
@@ -4002,6 +4064,71 @@ def handler(tandem):
                     gid, data.get('idx'), str(data.get('desc') or ''), str(data.get('code') or ''), gm))
             if path == '/api/netplay':
                 return self.send(200, thor_features.set_netplay(str(data.get('mode') or 'off'), str(data.get('host_ip') or '')))
+            if path == '/api/airplay':
+                act = str(data.get('action') or 'toggle')
+                scr = str(data.get('screen') or 'bottom')
+                if act == 'stop' or (act == 'toggle' and thor_pro.AIRPLAY.running()):
+                    return self.send(200, thor_pro.AIRPLAY.stop())
+                return self.send(200, thor_pro.AIRPLAY.start(scr, game_running=bool(tandem.run)))
+            if path == '/api/patch':
+                gid = str(data.get('id') or '')
+                gm = tandem.library.games.get(gid)
+                res = thor_pro.apply_rom_patch(gm, str(data.get('patch') or ''), str(data.get('tag') or ''))
+                if res.get('ok'):
+                    tandem.library.scan()
+                    tandem.publish('library')
+                return self.send(200, res)
+            if path == '/api/ach_pin':
+                gid = str(data.get('id') or (tandem.run or {}).get('id', ''))
+                title_p = str(data.get('title') or '').strip()
+                if not gid or not title_p:
+                    return self.send(400, {'error': 'Ungültige Anfrage.'})
+                with tandem.lock:
+                    pins = tandem.saved.setdefault('ach_pins', {}).setdefault(gid, [])
+                    if title_p in pins:
+                        pins.remove(title_p)
+                    else:
+                        pins.insert(0, title_p)
+                        del pins[3:]
+                    tandem.save()
+                return self.send(200, {'ok': True, 'pinned': list(pins)})
+            if path == '/api/voice':
+                act = str(data.get('action') or 'status')
+                gid = str(data.get('id') or (tandem.run or {}).get('id', ''))
+                if act == 'start':
+                    return self.send(200, thor_pro.VOICE.start_record())
+                if act == 'stop':
+                    res = thor_pro.VOICE.stop_and_transcribe(public_config()['lang'])
+                    if not res.get('ok'):
+                        return self.send(200, res)
+                    txt = res['text']
+                    mode = str(data.get('mode') or 'note')
+                    if mode == 'note':
+                        cur_n = companion.notes_get(gid)
+                        prev_t = (cur_n.get('text') or '').rstrip()
+                        stamp = time.strftime('%H:%M')
+                        merged = (prev_t + '\n' if prev_t else '') + f'[🎙️ {stamp}] {txt}'
+                        saved_n = companion.notes_save(gid, {'text': merged})
+                        return self.send(200, {'ok': True, 'text': txt, 'notes': saved_n, 'toast': f'🎙️ Notiert: {txt[:60]}'})
+                    gm = tandem.library.games.get(gid)
+                    hit = thor_pro.search_local_guides(gid, txt, gm)
+                    if hit:
+                        return self.send(200, {'ok': True, 'text': txt, 'hit': hit, 'toast': f'🎙️ Gefunden in {hit["title"]}'})
+                    wres = companion.guide_fetch_wiki(gid, txt, public_config()['lang'])
+                    return self.send(200, {'ok': True, 'text': txt, 'wiki': wres,
+                                           'toast': f'🎙️ Wiki geladen: {txt[:40]}' if wres.get('ok') else f'🎙️ Gesucht: {txt[:40]}'})
+                return self.send(200, thor_pro.VOICE.status())
+            if path == '/api/propad':
+                act = str(data.get('action') or 'status')
+                if act == 'target':
+                    return self.send(200, thor_pro.PROPAD.set_target(data.get('ip', '')))
+                if act == 'key':
+                    thor_pro.PROPAD.send_pkt({'k': 'key', 'ch': str(data.get('ch') or '')})
+                    return self.send(200, thor_pro.PROPAD.status())
+                if act == 'mouse':
+                    thor_pro.PROPAD.send_pkt({'k': 'mouse', 'dx': data.get('dx', 0), 'dy': data.get('dy', 0), 'click': data.get('click', '')})
+                    return self.send(200, thor_pro.PROPAD.status())
+                return self.send(200, thor_pro.PROPAD.status())
             if path == '/api/framegen': return self.send(200, frame_gen(bool(data.get('on'))))
             if path == '/api/hud':
                 lvl = data.get('level', 0)
@@ -4308,6 +4435,8 @@ def pair_handler(tandem):
         def do_GET(self):
             import hmac
             path = urlparse(self.path).path
+            if path == '/thor-pad.py':
+                return self.reply(200, thor_pro.RECEIVER_PY, 'text/x-python; charset=utf-8')
             if path.startswith('/clip/') and path.endswith('.mp4'):
                 tok = path[len('/clip/'):-4]
                 clip_p = thor_features.REPLAY.resolve_share_token(tok)
@@ -4742,6 +4871,9 @@ def main():
                         for k, v in dimmed.items(): set_raw(k, lit(k, v))
                         dimmed.clear()
             if tick % 3 == 0:
+                if tandem.run and thor_features.REPLAY.running() and thor_features.mem_available_gib() < 2.2:
+                    thor_features.REPLAY.stop()
+                    tandem.publish('toast', {'text': '🛡️ RAM-Schutz: 30s-Puffer pausiert (volle RAM-Reserve fürs Spiel).'})
                 cfg_w = load_config()
                 b = battery()
                 if b and not b.get('charging') and 0 < b.get('level', 100) <= 5:

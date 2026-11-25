@@ -1164,6 +1164,12 @@ def handle_upload(rfile, length, filename, kind, system, gid, roots, config_dir,
             rom_base = next((Path(r) for r in roots if os.access(r, os.W_OK)), HOME / 'ROMs')
         dest_dir = rom_base / 'switch/updates'
         dest_dir.mkdir(parents=True, exist_ok=True)
+    elif ext in ('.ips', '.bps', '.ups', '.xdelta', '.vcdiff'):
+        rom_base = next((Path(r) for r in roots if str(r).startswith(('/run/media', '/media')) and os.access(r, os.W_OK)), None)
+        if rom_base is None:
+            rom_base = next((Path(r) for r in roots if os.access(r, os.W_OK)), HOME / 'ROMs')
+        dest_dir = rom_base / 'patches'
+        dest_dir.mkdir(parents=True, exist_ok=True)
     else:
         sys_id = str(system or 'auto').strip().lower()
         if sys_id == 'auto':

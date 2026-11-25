@@ -18,6 +18,7 @@ def toggle(win):
         win.call('api/telemetry', then=lambda r: r and setattr(win, 'QTELE', r))
         win.call('api/airpods', then=lambda a: a and (setattr(win, 'AIRPODS', a), win.update()))
         win.call('api/replay', then=lambda rp: rp and setattr(win, 'REPLAY', rp))
+        win.call('api/airplay', then=lambda ap: ap and setattr(win, 'AIRPLAY_ST', ap))
     win.update()
 
 
@@ -437,7 +438,7 @@ def draw(win, p):
             rec_lbl = '■ Stopp' if rec else '● Video'
             win.button(p, b_rec, rec_lbl, lambda: (touched(win), record(win, not rec)), ('u', 1.52, 700 if rec else 600),
                        INK if rec else TEXT, WARN if rec else RAISED, None, 1.1)
-            win.button(p, b_shot, 'Foto', lambda: (touched(win), shot(win)), ('u', 1.52, 600), TEXT, RAISED, None, 1.1)
+            win.button(p, b_shot, 'Foto', lambda: (touched(win), shot(win)), ('u', 1.52, 600), TEXT, RAISED, None, 1.1, name='Bildschirmfoto')
             y += 9.0 * u + gap
         else:
             rc_full = QRectF(x0, y, cw, 8.8 * u)
@@ -483,6 +484,8 @@ def draw(win, p):
 
     # ---- Docked Bottom Action Bar ----
     fy = H - 2.2 * u - footer_h
+    ap_st = getattr(win, 'AIRPLAY_ST', None) or {}
+    ap_run = bool(ap_st.get('running'))
     f_acts = []
     if win.RUN:
         f_acts.append(('Zu Tandem', lambda: (close(win), win.post('api/pause')), RAISED, TEXT))
@@ -496,6 +499,10 @@ def draw(win, p):
     else:
         f_acts.append(('Zufallsspiel', lambda: (close(win), win.pick_random()), ui.faded(FOCUS, .18), FOCUS))
         f_acts.append(('Bildschirmschoner', lambda: (close(win), win.post('api/saver', {'open': True})), RAISED, TEXT))
+    f_acts.append(('■ AirPlay' if ap_run else '📱 AirPlay',
+                   lambda: (close(win), win.post('api/airplay', {'action': 'toggle', 'screen': 'bottom'},
+                                                 then=lambda r: r and win.toast(r.get('error') or r.get('text', '')))),
+                   ui.faded(LIVE, .22) if ap_run else RAISED, LIVE if ap_run else TEXT))
     f_acts.append(('Standby', lambda: (close(win), win.post('api/action', {'name': 'suspend'})), RAISED, TEXT))
     if win.RUN:
         f_acts.append(('Spiel beenden', lambda: (close(win), win.confirm_quit()), ui.faded(WARN, .18), WARN))

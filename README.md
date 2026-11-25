@@ -26,7 +26,26 @@ The interface speaks English or German (Settings › Look › Language; the inst
 
 ![Dual-Screen PC & Retro Library on AYN Thor](docs/screenshots/steam-library-dual.png)
 
-## New in 1.5.0 — Native AirPods AAP, 30s RAM Replay, Stream-Deck Macros, Cheats, Deep-Freeze & Heroic Bridge
+## New in 1.6.0 — Zero-Idle-RAM Suite: AirPlay, ROM Patcher, CHD/RVZ Shrinker, Cloud-Saves, Trophy Banners, Offline Whisper & Mac/PC Pro-Pad
+
+Engineered with a strict **0.0 MB background RAM budget** during gameplay (`mem_available_gib()` RAM guard + ephemeral one-shot workers):
+
+- **Apple AirPlay Receiver on Bottom or Top OLED (`thor_pro.py`, `ui/quick_view.py`):**
+  - Stream your iPhone, iPad, or Mac via **`📱 AirPlay`** directly onto the **bottom OLED** while your game keeps running at full FPS on top — or fullscreen on the top 120 Hz OLED (`Apps › AirPlay`). Starts `uxplay` strictly on demand and terminates by exact PID on exit (`0 MB` idle RAM).
+- **On-Device Non-Destructive ROM Patcher (`thor_pro.py`, `ui/tandem_ui.py`):**
+  - Built-in pure-Python **`.ips` / `.bps` / `.ups`** + **`xdelta3`** patcher right inside every retro game's `+` Options menu (`🧩 Apply ROM patch`) and drag-&-drop web uploader — creates a separate `[Patch]` game tile while keeping your original ROM 100 % untouched.
+- **Lossless `CHD` & `RVZ` Disc Shrinker (`thor_pro.py`, `ui/settings_view.py`):**
+  - Converts `.bin/.cue`, `.gdi`, `.iso`, and `.gcm` discs (PS1, PS2, PSP, Dreamcast, Saturn, GameCube, Wii) into verified lossless **`.chd` / `.rvz`** (`Settings › Library › Shrink games`), saving **40–65 % storage** (runs strictly outside gameplay on 2 Silver threads).
+- **Zero-Daemon Bidirectional Cloud-Saves (`saves.py`, `tandem.py`):**
+  - Sub-second pre-launch timestamp sync against your SSH/NAS target before a game starts (with automatic local conflict backups in `cloud-conflict-bak/`) — `0 MB` background RAM while playing.
+- **PS5/Xbox-Style Trophy Popup Banners & Pinned Target Achievements (`thor_pro.py`, `ui/tandem_ui.py`):**
+  - Animated gold **`🏆 TROPHY UNLOCKED`** banner with synthesized chime & dual LRA haptic pulse on the bottom OLED (never covering the top screen), plus tappable **`📌 Target`** pins for up to 3 open achievements per game.
+- **Ephemeral Offline Voice Notes & Voice Guide Search (`thor_pro.py`, `ui/decks/universal.py`):**
+  - Tap **`🎙️ Dictate`** in Notes or **`🎙️ Ask`** in Guides: records a short clip from the built-in mic and runs a one-shot Silver-core `faster-whisper` (`int8` CTranslate2, 0 € cloud) subprocess that inserts the German transcription or opens the matching guide passage and **immediately frees 100 % of its RAM**.
+- **Wireless "Thor as Pro-Controller + Touch-Deck" for Mac & Gaming-PC (`thor_pro.py`, `ui/decks/propad.py`):**
+  - Turns the AYN Thor into a 120 Hz Hall-effect wireless controller + multi-touch trackpad + desktop macro deck over Wi-Fi UDP (`8389`), with a 1-command Mac/PC receiver served directly at `http://<thor>:8378/thor-pad.py`.
+
+Earlier in 1.5.0 — Native AirPods AAP, 30s RAM Replay, Stream-Deck Macros, Cheats, Deep-Freeze & Heroic Bridge:
 
 - **Native Apple AirPods Support via AAP L2CAP `0x1001` & Gaming BT Audio Pro (`thor_airpods.py`, `ui/quick_view.py`, `ui/settings_view.py`, `ui/tandem_ui.py`):**
   - Direct pure-Python Bluetooth L2CAP `SOCK_SEQPACKET` (`PSM 0x1001`) Apple Accessory Protocol client — no iPhone/Mac required!

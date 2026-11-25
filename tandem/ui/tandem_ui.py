@@ -520,14 +520,21 @@ class Tandem(QRasterWindow):
             if not self.drag and isinstance(s.get('settings'), dict):
                 self.SET = {k: (v if v is not None else self.SET.get(k)) for k, v in s['settings'].items()}
         self.call('api/state', then=got)
+        if (self.side == 'bottom' and self.RUN and self.ACH and self.ACH.get('list')
+                and time.time() - getattr(self, '_ach_poll_at', 0) > 45):
+            self._ach_poll_at = time.time()
+            self.load_ach(refresh=True)
         self.update()  # the clock
 
     def load_sys(self, scan=False): self.call('api/system' + ('?scan' if scan else ''), then=lambda s: s and setattr(self, 'SYS', s))
 
-    def load_ach(self):
+    def load_ach(self, refresh=False):
         if self.side != 'bottom': return  # only the bottom screen shows achievements
+        if not refresh: self._ach_poll_at = time.time()
         def got(a):
-            if self.RUN: self.ACH = a or {'note': 'Erfolge konnten nicht geladen werden.'}
+            if not self.RUN: return
+            if refresh and not (a and a.get('list')): return
+            self.ACH = a or {'note': 'Erfolge konnten nicht geladen werden.'}
         self.call('api/achievements', then=got)
 
     # ---- first-run assistant: the service holds its state ({'open', 'step'}) and what it found (api/setup) ----------------
@@ -599,10 +606,21 @@ class Tandem(QRasterWindow):
         # must still be taken over, or the bottom screen keeps showing the library instead of the game's deck
         if kind not in ('library', 'config') and self.wake() and kind == 'key': return self.update()
         if kind == 'toast': return self.toast(m.get('text', ''))
+        if kind == 'trophy':
+            if self.side == 'bottom':
+                self.TROPHY = {'title': m.get('title', ''), 'desc': m.get('desc', ''), 'points': m.get('points', 0), 'at': time.time()}
+                self.haptic()
+                QTimer.singleShot(140, self.haptic)
+            return self.update()
         if kind == 'mute': self.MUTED = bool(m.get('muted')); return self.update()
         if kind == 'saves': self.SAVES = m.get('saves'); return self.update()
         if kind == 'sysbackup':
-            self.SYSBK = {'backups': m.get('backups') or {}, 'storage': m.get('storage') or {}, 'cleanup': m.get('cleanup') or {}}
+            self.SYSBK = {
+                'backups': m.get('backups') or {},
+                'storage': m.get('storage') or {},
+                'cleanup': m.get('cleanup') or {},
+                'compress': m.get('compress') or {},
+            }
             return self.update()
         if kind == 'updater':
             self.UPDC = {k: v for k, v in m.items() if k != 'kind'}
@@ -861,7 +879,9 @@ class Tandem(QRasterWindow):
             return col_items + sys_items + hid_items
         if S['tab'] == 2: return sorted((g for g in games if g['s'] == 'steam' and g['id'] not in hidden), key=lambda g: (g.get('inst') == 'no', g.get('inst') != 'load'))  # loading first, then installed, then the rest
         if S['tab'] == 4: return []
-        return [{'id': 'ai:claude', 't': 'Claude Code (Skip Permissions)', 's': 'app'},
+        return [{'id': 'propad', 't': 'Pro-Controller (Mac & PC)', 's': 'app'},
+                {'id': 'airplay:top', 't': 'AirPlay-Empfänger (Vollbild)', 's': 'app'},
+                {'id': 'ai:claude', 't': 'Claude Code (Skip Permissions)', 's': 'app'},
                 {'id': 'ai:agy', 't': 'Google Antigravity · agy (Skip Permissions)', 's': 'app'},
                 {'id': 'term', 't': 'Terminal', 's': 'app'}, *L['apps'],
                 *({'id': 'upd:' + e['id'], 't': e['name'] + (' aktualisieren' if e.get('installed') else ' installieren'), 's': 'app'} for e in L.get('extras') or []),
@@ -1174,6 +1194,7 @@ class Tandem(QRasterWindow):
         rows.append(('Favorit', '★ Ja' if is_fav else 'Nein', lambda: self.post('api/fav', {'id': gid})))
         rows.append(('🎨 Cover & Bild wählen', '', lambda: self._open_art_picker(g)))
         if s not in ('steam', 'port', 'app', 'term') and not g.get('native_engine'):
+            rows.append(('🧩 ROM-Patch anwenden (IPS/BPS)', '', lambda: self._open_patch_picker(g)))
             np_m = getattr(self, 'NETPLAY_MODE', 'off')
             np_lbl = 'Host aktiv' if np_m == 'host' else ('Beitreten' if np_m == 'join' else 'Aus')
             def _cycle_np():
@@ -1252,17 +1273,49 @@ class Tandem(QRasterWindow):
                                                            setattr(self, 'GAME_MENU', None) if (r or {}).get('ok') else None)))))
         return rows
 
+    def _open_patch_picker(self, g):
+        gm = self.GAME_MENU
+        if not gm: return
+        gm.update(patch_picker=True, patch_loading=True, patch_items=[], i=0)
+        self.update()
+        from urllib.parse import quote
+        def _got(r):
+            if self.GAME_MENU is not gm: return
+            gm['patch_loading'] = False
+            gm['patch_items'] = (r or {}).get('items') or []
+            self.update()
+        self.call(f'api/patch?id={quote(g["id"])}', then=_got)
+
+    def _patch_picker_rows(self, g):
+        gm = self.GAME_MENU or {}
+        rows = [('‹ Zurück zu Optionen', '', lambda: (gm.update(patch_picker=False, i=0), self.update()))]
+        if gm.get('patch_loading'):
+            rows.append(('Suche Patch-Dateien (.ips / .bps / .ups / .xdelta) …', '', lambda: None))
+        elif not gm.get('patch_items'):
+            rows.append(('Keine Patch-Dateien gefunden', 'In ROMs/patches oder Downloads ablegen', lambda: None))
+        else:
+            for pt in gm['patch_items']:
+                rows.append((pt['name'], f'{pt["kb"]:g} KB · Anwenden',
+                             lambda pp=pt['path']: (
+                                 self.toast('Wende ROM-Patch an …'),
+                                 self.post('api/patch', {'id': g['id'], 'patch': pp},
+                                           then=lambda r: (self.toast((r or {}).get('error') or (r or {}).get('text', '')),
+                                                           setattr(self, 'GAME_MENU', None) if (r or {}).get('ok') else None)))))
+        return rows
+
     def game_menu_key(self, a):
         gm = self.GAME_MENU
         if not gm: return
         g = next((x for x in self.L['games'] if x['id'] == gm['id']), None)
         if not g:
             self.GAME_MENU = None; return
-        rows = self._art_picker_rows(g) if gm.get('art_picker') else self._game_menu_rows(g)
+        rows = (self._art_picker_rows(g) if gm.get('art_picker')
+                else self._patch_picker_rows(g) if gm.get('patch_picker')
+                else self._game_menu_rows(g))
         if a == 'up': gm['i'] = (gm['i'] - 1) % len(rows)
         elif a == 'down': gm['i'] = (gm['i'] + 1) % len(rows)
-        elif a == 'back' and gm.get('art_picker'):
-            gm.update(art_picker=False, i=0)
+        elif a == 'back' and (gm.get('art_picker') or gm.get('patch_picker')):
+            gm.update(art_picker=False, patch_picker=False, i=0)
         elif a in ('back', 'close', 'menu'): self.GAME_MENU = None
         elif a == 'ok' and rows: rows[min(gm['i'], len(rows) - 1)][2]()
 
@@ -1784,10 +1837,10 @@ class Tandem(QRasterWindow):
         if self.xf is not None: rect = self.xf.mapRect(rect)  # a deck paints on a scaled stage: taps arrive in window pixels
         if not rect.isEmpty(): self.hits.append((rect, fn, drag, name))
 
-    def button(self, p, rect, label, fn, f, fg=TEXT, bg=RAISED, border=None, radius=1.2):
+    def button(self, p, rect, label, fn, f, fg=TEXT, bg=RAISED, border=None, radius=1.2, name=None):
         self.box(p, rect, min(rect.height() / 2, radius * 1.5 * self.u), bg, border)
         self.text(p, label, rect.x(), rect.y(), f, fg, rect.width(), 1, rect.height() / (f[1] * self.u))
-        self.hit(rect, fn, name=label)
+        self.hit(rect, fn, name=name or label)
 
     def icon(self, p, name, rect, color):
         if not QSvgRenderer: return
@@ -2002,8 +2055,40 @@ class Tandem(QRasterWindow):
             p.setBrush(rgba(255, 255, 255, .09))
             p.drawRoundedRect(pr, rad_p, rad_p)
         if self.TOAST and not (self.side == 'bottom' and (self.PROMPT or self.CONFIRM or self.POWER_OPEN)): self.draw_toast(p)
+        tr_pop = getattr(self, 'TROPHY', None)
+        if tr_pop and self.side == 'bottom':
+            age = time.time() - tr_pop['at']
+            if age < 5.5:
+                self.draw_trophy_banner(p, tr_pop, age)
+                QTimer.singleShot(40, self.update)
+            else:
+                self.TROPHY = None
         if self.OSD is not None: self.draw_osd(p)
         p.end()
+
+    def draw_trophy_banner(self, p, tr_pop, age):
+        """PS5/Xbox-style animated gold trophy unlock card on the bottom OLED (0% occlusion on top game screen)."""
+        u, W = self.u, self.width()
+        slide = min(1.0, age / 0.28) if age < 4.9 else max(0.0, (5.5 - age) / 0.6)
+        ease_s = 1 - (1 - slide) ** 3
+        bw, bh = min(W - 6 * u, 68 * u), 9.6 * u
+        bx = (W - bw) / 2
+        by = -bh + (bh + 2.4 * u) * ease_s
+        rect = QRectF(bx, by, bw, bh)
+        p.save()
+        p.setOpacity(max(0.0, min(1.0, ease_s)))
+        gold = QColor('#facc15')
+        self.box(p, rect.adjusted(0, .3 * u, 0, .4 * u), 2.2 * u, rgba(0, 0, 0, .65))
+        self.box(p, rect, 2.2 * u, QColor('#151822'), gold, .24 * u)
+        badge = QRectF(bx + 1.5 * u, by + 1.5 * u, 6.6 * u, 6.6 * u)
+        self.capsule(p, badge, faded(gold, .22), gold)
+        self.text(p, '🏆', badge.x(), badge.y(), ('u', 3.0, 700), gold, badge.width(), 1, 6.6 / 3.0)
+        pts = f' · +{tr_pop["points"]} Pkt.' if tr_pop.get('points') else ''
+        self.text(p, 'TROPHÄE FREIGESCHALTET' + pts, badge.right() + 1.6 * u, by + 1.3 * u, ('u', 1.35, 700, .1), gold, bw - 11 * u)
+        self.text(p, tr_pop.get('title', ''), badge.right() + 1.6 * u, by + 3.4 * u, ('u', 2.05, 700), TEXT, bw - 11 * u)
+        if tr_pop.get('desc'):
+            self.text(p, tr_pop['desc'], badge.right() + 1.6 * u, by + 6.1 * u, ('u', 1.48, 400), MUTED, bw - 11 * u)
+        p.restore()
 
     def draw_power(self, p):
         """Long-press power sheet: navigable with D-pad + A/B and by touch on the bottom screen."""
@@ -2728,7 +2813,9 @@ class Tandem(QRasterWindow):
         u, W, H = self.u, self.width(), self.height()
         x0, cw, bottom = 2.6 * u, W - 5.2 * u, H - 2.6 * u
         y = self.tabs(p, g['t'], [('Fertig', True, lambda: setattr(self, 'GAME_MENU', None))])
-        rows = self._art_picker_rows(g) if gm.get('art_picker') else self._game_menu_rows(g)
+        rows = (self._art_picker_rows(g) if gm.get('art_picker')
+                else self._patch_picker_rows(g) if gm.get('patch_picker')
+                else self._game_menu_rows(g))
         sel = max(0, min(gm['i'], len(rows) - 1))
         area = QRectF(x0, y, cw, bottom - y)
 
@@ -2864,19 +2951,42 @@ class Tandem(QRasterWindow):
         return self.button(p, QRectF(x0, bottom - 6.3 * u, cw, 6.3 * u), 'Spiel beenden', self.confirm_quit, ('u', 2.2, 600), WARN, faded(WARN, .14), None, 1.4)
 
     def achievements(self, p, y):
-        """The running game's RetroAchievements from y on; returns the y below them (for scroller())."""
+        """The running game's RetroAchievements from y on (with tappable 📌 target pins); returns the y below them."""
         A, u, x0, cw = self.ACH, self.u, 2.6 * self.u, self.width() - 5.2 * self.u
         f, w = ('u', 1.9), cw - 3.2 * u
         if A.get('note'): return y + self.text(p, A['note'], x0, y, ('u', 2), MUTED, cw, lh=1.45, lines=None)
+        pinned = set(A.get('pinned') or [])
+        items_all = A.get('list') or []
+        pin_items = [a for a in items_all if a.get('t') in pinned and not a.get('e')]
+        if pin_items:
+            self.text(p, '📌 ANGEHEFTETE ZIELE', x0, y, ('u', 1.4, 700, .09), FOCUS, cw)
+            y += 2.3 * u
+            for pa in pin_items:
+                pr = QRectF(x0, y, cw, 5.4 * u)
+                self.box(p, pr, 1.4 * u, faded(FOCUS, .12), faded(FOCUS, .55))
+                self.text(p, '📌 ' + pa['t'], x0 + 1.5 * u, y + .7 * u, ('u', 1.82, 700), TEXT, w - 7 * u)
+                self.text(p, pa.get('d') or '', x0 + 1.5 * u, y + 2.9 * u, ('u', 1.48, 400), MUTED, w - 2 * u)
+                t_pin = pa['t']
+                self.hit(pr, lambda t_p=t_pin: self.post('api/ach_pin', {'title': t_p}, then=lambda r: r and (A.update(pinned=r.get('pinned', [])), self.update())),
+                         name='achpin:' + t_pin)
+                y += 6.2 * u
+            y += .6 * u
         self.spans(p, x0, y, [(f'Erfolge {A["earned"]} / {A["total"]}', ('u', 2, 600), TEXT), (f' · {A["points"]} Punkte', ('u', 2), MUTED)], 1.45)
         y += 2 * u * 1.45 + u
-        for a in A.get('list') or []:
+        for a in items_all:
             rows = self.wrap(a.get('d') or '', f, w, None)
             h = (1 + len(rows)) * 1.9 * u * 1.3 + 2.2 * u
-            self.box(p, QRectF(x0, y, cw, h), 1.6 * u, PANEL)
-            self.text(p, ('✓ ' if a.get('e') else '') + a['t'], x0 + 1.6 * u, y + 1.1 * u, ('u', 1.9, 600), LIVE if a.get('e') else TEXT, w - 8 * u, lh=1.3)
+            ar = QRectF(x0, y, cw, h)
+            is_pin = a.get('t') in pinned and not a.get('e')
+            self.box(p, ar, 1.6 * u, PANEL, FOCUS if is_pin else None)
+            prefix = '✓ ' if a.get('e') else ('📌 ' if is_pin else '')
+            self.text(p, prefix + a['t'], x0 + 1.6 * u, y + 1.1 * u, ('u', 1.9, 600), LIVE if a.get('e') else (FOCUS if is_pin else TEXT), w - 8 * u, lh=1.3)
             self.text(p, str(a.get('p', '')), x0 + 1.6 * u, y + 1.1 * u, ('u', 1.9, 600), FOCUS, w, 2, 1.3)
             for n, row in enumerate(rows): self.text(p, row, x0 + 1.6 * u, y + 1.1 * u + (n + 1) * 1.9 * u * 1.3, f, MUTED, lh=1.3)
+            if not a.get('e') and a.get('t'):
+                t_a = a['t']
+                self.hit(ar, lambda t_p=t_a: self.post('api/ach_pin', {'title': t_p}, then=lambda r: r and (A.update(pinned=r.get('pinned', [])), self.update())),
+                         name='ach:' + t_a)
             y += h + u
         return y - u
 

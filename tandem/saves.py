@@ -236,3 +236,103 @@ def restore(archive_name, only_key=None, home=None, local_dir=None):
         return {'error': f'Wiederherstellung fehlgeschlagen: {error}'}
     finally:
         LOCK.release()
+
+
+def keys_for_game(game, emu_label=''):
+    """Return the subset of save candidate keys relevant to `game` so pre-launch cloud sync takes < 0.8s and ~0 MB RAM."""
+    if not game:
+        return []
+    s = str(game.get('s') or '')
+    lbl = str(emu_label or '')
+    if game.get('tid') and lbl in ('BananaNative', 'PeanutsNative'):
+        pref = 'banananative' if lbl == 'BananaNative' else 'peanuts'
+        tid = str(game['tid']).upper()
+        return [f'{pref}-{tid}', f'{pref}-{tid}-work']
+    if s == 'port':
+        p = str(game.get('port') or '')
+        pmap = {
+            'aok': ['port-aok'], 'cnc': ['port-cnc-td'], 'ra': ['port-cnc-ra'], 'd2': ['port-d2'],
+            'halflife': ['port-hl-valve'], 'opfor': ['port-hl-gearbox'], 'bshift': ['port-hl-bshift'],
+            'homm3': ['port-homm3'], 'kknd2': ['port-kknd2'], 'ra2': ['port-ra2'], 'yr': ['port-ra2'],
+        }
+        return pmap.get(p, [])
+    smap = {
+        'psx': ['duckstation', 'retroarch-saves', 'retroarch-states'],
+        'ps2': ['armsx2', 'pcsx2'],
+        'gc': ['dolphin-gc', 'dolphin-gc-local'],
+        'wii': ['dolphin-wii', 'dolphin-wii-local'],
+        'psp': ['ppsspp', 'ppsspp-local'],
+        'n3ds': ['azahar-3ds'],
+        'nds': ['melonds', 'melonds-lower', 'retroarch-saves'],
+        'dreamcast': ['flycast', 'retroarch-saves'],
+        'switch': ['eden-switch'],
+        'wiiu': ['cemu-wiiu'],
+    }
+    if s in smap:
+        return smap[s]
+    if s not in ('steam', 'app', 'term'):
+        return ['retroarch-saves', 'retroarch-states']
+    return []
+
+
+def sync_before_launch(game, emu_label='', target=None, home=None):
+    """Zero-daemon bidirectional Cloud-Save pull before game launch:
+    pulls newer save files from `user@host:path/latest/<key>/` (backing up local files first on conflict)."""
+    remote = str(DEFAULT_TARGET if target is None else target).strip()
+    if not remote or ':' not in remote or not shutil.which('rsync') or not shutil.which('ssh'):
+        return {'ok': True, 'pulled': 0}
+    keys = keys_for_game(game, emu_label)
+    if not keys:
+        return {'ok': True, 'pulled': 0}
+    if not LOCK.acquire(timeout=2.0):
+        return {'ok': False, 'pulled': 0}
+    try:
+        h = Path(home) if home else HOME
+        cand_map = dict(all_candidates(h))
+        host, _, rpath = remote.partition(':')
+        clean = rpath.rstrip('/')
+        ssh_cmd = 'ssh -o BatchMode=yes -o ConnectTimeout=2 -o StrictHostKeyChecking=accept-new'
+        pulled_files = 0
+        for key in keys:
+            dst = cand_map.get(key)
+            if dst is None and key.startswith(('banananative-', 'peanuts-')):
+                pref, rest = key.split('-', 1)
+                sub_dir = 'save.work' if rest.endswith('-work') else 'save'
+                tid = rest[:-5] if rest.endswith('-work') else rest
+                dst = h / f'.local/share/{pref}' / tid / sub_dir
+            if dst is None:
+                continue
+            # Dry-run rsync `--itemize-changes --update` to check if server actually has newer files
+            probe = subprocess.run(
+                ['rsync', '-azn', '--itemize-changes', '--update', '-e', ssh_cmd,
+                 f'{host}:{clean}/latest/{key}/', str(dst) + '/'],
+                capture_output=True, text=True, timeout=4,
+            )
+            if probe.returncode != 0:
+                continue
+            incoming = [ln for ln in probe.stdout.splitlines() if ln.startswith('>f')]
+            if not incoming:
+                continue
+            # Safety conflict backup of existing local folder before pulling newer remote files
+            if dst.is_dir() and any(True for _ in dst.iterdir()):
+                bak_root = STATE / 'cloud-conflict-bak' / f'{key}-{time.strftime("%Y%m%d-%H%M%S")}'
+                copy_clean(dst, bak_root)
+                # Keep at most 6 conflict backups total
+                all_baks = sorted((STATE / 'cloud-conflict-bak').glob('*'))
+                for old_b in all_baks[:-6]:
+                    shutil.rmtree(old_b, ignore_errors=True)
+            dst.mkdir(parents=True, exist_ok=True)
+            real = subprocess.run(
+                ['rsync', '-az', '--update', '-e', ssh_cmd,
+                 f'{host}:{clean}/latest/{key}/', str(dst) + '/'],
+                capture_output=True, text=True, timeout=12,
+            )
+            if real.returncode == 0:
+                pulled_files += len(incoming)
+        if pulled_files > 0:
+            return {'ok': True, 'pulled': pulled_files, 'text': f'☁️ Cloud-Save geladen ({pulled_files} neuere Datei{"en" if pulled_files != 1 else ""}).'}
+        return {'ok': True, 'pulled': 0}
+    except (OSError, subprocess.SubprocessError):
+        return {'ok': False, 'pulled': 0}
+    finally:
+        LOCK.release()

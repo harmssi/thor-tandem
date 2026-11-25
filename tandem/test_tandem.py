@@ -742,10 +742,11 @@ class English(unittest.TestCase):
     GERMAN = __import__('re').compile(r'[äöüÄÖÜß„]|\b(der|die|das|und|nicht|ist|kein|keine|mit|für|von|auf|noch|wird|bitte|Spiel|Spiele|starten|beenden|'
                                       r'Einstellungen|Taste|Tasten|Akku|Bildschirm|fehlt|gefunden|installiert|läuft|Suche|Fehler|Passwort|Konto)\b')
     FILES = ['tandem.py', 'thor.py', 'bluetooth.py', 'controls.py', 'saves.py', 'thor_storage.py', 'thor_updater.py',
-             'thor_airpods.py', 'thor_features.py', 'telemetry.py', 'companion.py', 'setup.py',
+             'thor_airpods.py', 'thor_features.py', 'thor_pro.py', 'telemetry.py', 'companion.py', 'setup.py',
              'ui/tandem_ui.py', 'ui/settings_view.py', 'ui/quick_view.py', 'ui/screensaver.py', 'ui/qr.py',
              'ui/decks/media.py', 'ui/decks/offline.py', 'ui/decks/youtube.py', 'ui/decks/plex.py', 'ui/decks/gallery.py',
-             'ui/decks/pack.py', 'ui/decks/mpv.py', 'ui/decks/universal.py', 'ui/decks/dualscreen.py', 'ui/decks/pcstream.py']
+             'ui/decks/pack.py', 'ui/decks/mpv.py', 'ui/decks/universal.py', 'ui/decks/dualscreen.py', 'ui/decks/pcstream.py',
+             'ui/decks/propad.py']
     KEEP = {'Tandem/0.1 (game launcher)', '<p><b>Die PIN stimmt nicht.</b></p>', 'ist', '7: kein 200',  # not shown, or translated as a whole (rules) or by the web page
             'Emulator fehlt (unter Apps oder im Armada Store installieren) – ', ' Installieren: Einstellungsseite › Gerät.', 'Passwort für ', 'keine Spiele',
             'Läuft · ', ' · Akku 7 %7', ' (lädt)', 'Angemeldet und eingetragen in: ', 'Einstellungen · ', ' · geschützt', ' Das Passwort tippst du unten ein.', ' · lädt',
@@ -1649,9 +1650,67 @@ class ThorStorageTests(unittest.TestCase):
         ext_pc = thor_features.discover_external_pc_games(h_home)
         self.assertEqual({g['store'] for g in ext_pc}, {'GOG', 'Epic'})
 
+        # v1.6.0: Zero-Idle-RAM Suite (IPS/BPS ROM Patcher, CHD/RVZ Scanner, Cloud-Save Keys, Trophy Unlocks & RAM Guard)
+        import thor_pro, saves, zlib, struct
+        self.assertGreater(thor_features.mem_available_gib(), 0.5)
+        # IPS patch roundtrip (normal hunk + RLE hunk)
+        rom_orig = b'HELLO_WORLD_ROM_DATA'
+        ips_patch = (b'PATCH'
+                     + (6).to_bytes(3, 'big') + (5).to_bytes(2, 'big') + b'DEUTS'  # overwrite offset 6..11
+                     + (16).to_bytes(3, 'big') + (0).to_bytes(2, 'big') + (4).to_bytes(2, 'big') + b'!'  # RLE 4x '!'
+                     + b'EOF')
+        self.assertEqual(thor_pro.apply_ips_bytes(rom_orig, ips_patch), b'HELLO_DEUTS_ROM_!!!!')
+        # BPS patch roundtrip (with CRC32 validation)
+        tgt_rom = b'DEUTSCH_ROM_DATA'
+        def _vint(n):
+            out_v = bytearray()
+            while True:
+                x = n & 0x7F
+                n >>= 7
+                if n == 0:
+                    out_v.append(x | 0x80)
+                    return bytes(out_v)
+                out_v.append(x)
+                n -= 1
+        bps_body = (b'BPS1' + _vint(len(rom_orig)) + _vint(len(tgt_rom)) + _vint(0)
+                    + _vint(((len(tgt_rom) - 1) << 2) | 1) + tgt_rom)
+        bps_crcs = struct.pack('<II', zlib.crc32(rom_orig) & 0xFFFFFFFF, zlib.crc32(tgt_rom) & 0xFFFFFFFF)
+        bps_full = bps_body + bps_crcs
+        bps_full += struct.pack('<I', zlib.crc32(bps_full) & 0xFFFFFFFF)
+        self.assertEqual(thor_pro.apply_bps_bytes(rom_orig, bps_full), tgt_rom)
+
+        # Non-destructive apply_rom_patch creates `[Deutsch]` sibling without modifying base ROM
+        p_rom = TMP / 'roms/gba/Mother3.gba'
+        p_ips = TMP / 'roms/gba/patches/Deutsch.ips'
+        touch(p_rom, '')
+        p_rom.write_bytes(rom_orig)
+        p_ips.parent.mkdir(parents=True, exist_ok=True)
+        p_ips.write_bytes(ips_patch)
+        pr_res = thor_pro.apply_rom_patch({'path': str(p_rom), 's': 'gba'}, str(p_ips))
+        self.assertTrue(pr_res['ok'] and Path(pr_res['path']).is_file())
+        self.assertEqual(p_rom.read_bytes(), rom_orig)  # original 100% untouched!
+
+        # CHD/RVZ compressible disc scanner
+        disc_root = TMP / 'disc-roms'
+        touch(disc_root / 'psx/SilentHill.bin', 'X' * 4096)
+        touch(disc_root / 'psx/SilentHill.cue', 'FILE "SilentHill.bin" BINARY\n  TRACK 01 MODE2/2352\n')
+        touch(disc_root / 'gc/WindWaker.iso', 'Y' * 8192)
+        cmp_scan = thor_pro.scan_compressible_roms([str(disc_root)])
+        self.assertEqual(cmp_scan['count'], 2)
+
+        # Trophy unlock detector (silent seed on first poll, fires only on newly unlocked trophies)
+        tr = thor_pro.TrophyTracker()
+        self.assertEqual(tr.check_new_unlocks('g1', {'list': [{'t': 'First Boss', 'e': True, 'p': 10}, {'t': 'Final Boss', 'e': False, 'p': 50}]}), [])
+        unlocked = tr.check_new_unlocks('g1', {'list': [{'t': 'First Boss', 'e': True, 'p': 10}, {'t': 'Final Boss', 'e': True, 'p': 50}]})
+        self.assertEqual([u['t'] for u in unlocked], ['Final Boss'])
+
+        # Pre-launch Cloud-Save key resolver
+        self.assertEqual(saves.keys_for_game({'s': 'gba', 't': 'Golden Sun'}, 'RetroArch'), ['retroarch-saves', 'retroarch-states'])
+        self.assertIn('banananative-0400486024DEC000', saves.keys_for_game({'s': 'switch', 'tid': '0400486024DEC000'}, 'BananaNative'))
+
         tandem.save_config({'speaker_dsp': 'cinema', 'ra_zerolag': True, 'ra_autoresume': True, 'ra_shader': 'sharp',
                             'rgb_mode': 'cover', 'replay_buffer': False, 'dock_pad_swap': True, 'bt_low_latency': True,
-                            'panel_hz': 120, 'auto_travel': False, 'ai_workdir': ''})
+                            'cloud_saves': True, 'panel_hz': 120, 'auto_travel': False, 'ai_workdir': ''})
 
 
 if __name__ == '__main__':

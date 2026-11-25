@@ -840,19 +840,28 @@ class Views(unittest.TestCase):
     def test_quick_menu(self):  # the Thor key: a menu on the bottom screen only, closed by its button or the key again
         top, bottom = self.top, self.bottom
         bottom.SET = {'bt': 50, 'bb': 50, 'vol': 50}
-        for win in (top, bottom): win.on_event({'kind': 'quick'})
-        self.assertIsNone(top.QUICK)
-        self.assertTrue(bottom.QUICK)
-        self.paint('quick')
-        names = [h[3] for h in bottom.hits]
-        for name in ('bt', 'bb', 'vol', 'Bildschirmfoto', 'Schließen'): self.assertIn(name, names)
-        slider = next(h for h in reversed(bottom.hits) if h[3] == 'bb')
-        slider[1](slider[0].left())
-        self.assertEqual(bottom.SET['bb'], 5)  # never fully dark
-        self.tap('Schließen')
-        self.assertIsNone(bottom.QUICK)
-        bottom.on_event({'kind': 'quick'}); bottom.on_event({'kind': 'quick'})
-        self.assertIsNone(bottom.QUICK)
+        try:
+            for win in (top, bottom): win.on_event({'kind': 'quick'})
+            self.assertIsNone(top.QUICK)
+            self.assertTrue(bottom.QUICK)
+            bottom.off['quick'] = 0
+            self.paint('quick')
+            names = [h[3] for h in bottom.hits]
+            slider = next(h for h in reversed(bottom.hits) if h[3] == 'bb')
+            slider[1](slider[0].left())
+            self.assertEqual(bottom.SET['bb'], 5)  # never fully dark
+            if bottom.maxoff.get('quick', 0) > 0:
+                bottom.off['quick'] = bottom.maxoff['quick']
+                self.paint('quick-bot')
+                names = list(dict.fromkeys(names + [h[3] for h in bottom.hits]))
+                bottom.off['quick'] = 0
+            for name in ('bt', 'bb', 'vol', 'Bildschirmfoto', 'Schließen'): self.assertIn(name, names)
+            self.tap('Schließen')
+            self.assertIsNone(bottom.QUICK)
+            bottom.on_event({'kind': 'quick'}); bottom.on_event({'kind': 'quick'})
+            self.assertIsNone(bottom.QUICK)
+        finally:
+            bottom.QUICK = None
 
     def test_power_menu_search_and_doze_guard(self):
         top, bottom = self.top, self.bottom
@@ -1309,6 +1318,20 @@ class Views(unittest.TestCase):
         self.app.processEvents()
         self.assertIsNone(bottom.QUICK)
 
+    @classmethod
+    def tearDownClass(cls):
+        for win in (getattr(cls, 'top', None), getattr(cls, 'bottom', None)):
+            if win is not None:
+                try:
+                    win.drop_deck()
+                    win.close()
+                except Exception:
+                    pass
+        if getattr(cls, 'app', None):
+            cls.app.processEvents()
+        cls.top = cls.bottom = None
+        super().tearDownClass()
+
 
 @unittest.skipUnless(ui, 'PySide6 fehlt')
 class CompanionDecksAndGameMenuTest(unittest.TestCase):
@@ -1541,6 +1564,26 @@ class CompanionDecksAndGameMenuTest(unittest.TestCase):
         w.AIRPODS = None
         w.QUICK = None
         w.RUN = None
+
+        # Verify v1.6.0 Pro-Controller Deck, Trophy Unlock Banner, Pinned Achievements & CHD/RVZ Shrinker Settings
+        from decks import propad
+        pp_deck = propad.Deck(w)
+        hpp = render(pp_deck, 'propad-deck')
+        self.assertTrue({'Mac / PC-IP setzen', 'Esc', 'F5 Save', 'Controller-Modus beenden'} <= set(hpp))
+        pp_deck.close()
+
+        w.TROPHY = {'title': 'Meister der Zeit', 'desc': 'Ziehe das Master-Schwert aus dem Zeitenfels.', 'points': 25, 'at': time.time() - 0.5}
+        pt_banner = ui.QPainter(img)
+        pt_banner.setRenderHints(ui.QPainter.RenderHint.Antialiasing | ui.QPainter.RenderHint.TextAntialiasing)
+        w.draw_trophy_banner(pt_banner, w.TROPHY, 0.5)
+        pt_banner.end()
+        w.TROPHY = None
+
+        w.SYSBK = {'compress': {'count': 2, 'total_mb': 1200.0, 'est_save_mb': 580.0,
+                                'items': [{'sys': 'psx', 'name': 'SilentHill.cue', 'path': '/roms/psx/SilentHill.cue', 'target': 'chd-cd', 'mb': 650.0}],
+                                'job': {'running': False, 'step': ''}}}
+        cmp_groups = ui.settings_view.groups(w, 'library>compress')
+        self.assertEqual([g[0] for g in cmp_groups], ['Übersicht', 'Aktion', 'Gefundene Discs'])
 
         w.GAME_MENU = {'id': 'g1', 'i': 0, 'art_picker': True, 'art_loading': False, 'art_has_custom': True,
                        'art_items': [{'label': 'Chrono Trigger · Libretro Cover', 'url': 'https://example.com/c.png', 'slot': 'cover'}]}

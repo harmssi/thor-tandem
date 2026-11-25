@@ -33,7 +33,7 @@ CATS = [  # id, title, icon, icon colour, what the top screen says while the lis
     ('onoff', 'Ein / Aus', 'off', '#ff453a', 'Standby, Neustart, Ausschalten und der Desktop.'),
 ]
 AREAS = [c for c in CATS if c]
-TITLES = {c[0]: c[1] for c in AREAS} | {'controls>map': 'Tastenbelegung', 'network>wifi': 'WLAN', 'bluetooth>dev': 'Gerät', 'library>restore': 'Wiederherstellen', 'library>stats': 'Spielzeit & Statistik', 'library>sysbackup': 'Linux- & Tandem-Backup', 'library>storage': 'Android- & Linux-Speicher', 'library>cleanup': 'Speicher-Bereinigung', 'updates>companions': 'Spiel-Begleiter', 'updates>apps': 'Emulatoren & Quellen', 'updates>native': 'Switch-Spiele nativ'}
+TITLES = {c[0]: c[1] for c in AREAS} | {'controls>map': 'Tastenbelegung', 'network>wifi': 'WLAN', 'bluetooth>dev': 'Gerät', 'library>restore': 'Wiederherstellen', 'library>stats': 'Spielzeit & Statistik', 'library>sysbackup': 'Linux- & Tandem-Backup', 'library>storage': 'Android- & Linux-Speicher', 'library>cleanup': 'Speicher-Bereinigung', 'library>compress': 'Spiele schrumpfen (CHD / RVZ)', 'updates>companions': 'Spiel-Begleiter', 'updates>apps': 'Emulatoren & Quellen', 'updates>native': 'Switch-Spiele nativ'}
 ICONS = {
     'screens': '<rect x="5" y="3" width="14" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="5" y="13" width="14" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/>',
     'light': '<circle cx="12" cy="12" r="4.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 2.5v2.6M12 18.9v2.6M2.5 12h2.6M18.9 12h2.6M5.3 5.3l1.8 1.8M16.9 16.9l1.8 1.8M5.3 18.7l1.8-1.8M16.9 7.1l1.8-1.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
@@ -533,6 +533,8 @@ def groups(win, page):
                     'fn': lambda: go_page(win, 'library>restore'), 'help': 'Älteren Spielstand aus den lokalen Sicherungsarchiven zurückspielen (legt vorher automatisch eine Sicherung an).'},
                    toggle('Automatisch sichern', CFG.get('save_auto', True), lambda v: config_set(win, save_auto=v),
                           'Sichert Spielstände im Hintergrund nach jedem beendeten Spiel.'),
+                   toggle('Echtzeit-Cloud-Saves (vor Start laden)', CFG.get('cloud_saves', True), lambda v: config_set(win, cloud_saves=v),
+                          'Prüft beim Spielstart in < 1 Sekunde ohne Hintergrund-Prozess (0 MB RAM), ob auf deinem Server ein neuerer Spielstand vom PC/Mac liegt, und lädt ihn mit lokalem Konflikt-Backup.'),
                    {'k': 'link', 't': 'Sicherungsziel', 'v': CFG.get('save_target') or 'nur Karte', 'fn': win.ask_save_target, 'bottom': True,
                     'help': 'SSH-Ziel im Heimnetz (z. B. benutzer@server:~/backups/thor-saves). Leer lassen für reine Kartensicherung.'}]
         SB = getattr(win, 'SYSBK', None) or {}
@@ -548,10 +550,19 @@ def groups(win, page):
         cl_mb = float(CL.get('total_mb') or 0)
         cl_val = (f'{cl_mb / 1024:.1f} GB frei machen'.replace('.', ',') if cl_mb >= 1024
                   else f'{round(cl_mb)} MB frei machen' if cl_mb >= 1 else 'sauber')
+        CMP = SB.get('compress') or {}
+        cmp_job = CMP.get('job') or {}
+        cmp_cnt = int(CMP.get('count') or 0)
+        cmp_save = float(CMP.get('est_save_mb') or 0)
+        cmp_val = (cmp_job.get('step') if cmp_job.get('running')
+                   else (f'~{cmp_save / 1024:.1f} GB sparen'.replace('.', ',') if cmp_save >= 1024 else f'{cmp_cnt} Discs (~{round(cmp_save)} MB)') if cmp_cnt else 'optimal gepackt')
         sys_rows = [
             {'k': 'link', 't': 'Speicher-Bereinigung', 'v': cl_val,
              'fn': lambda: go_page(win, 'library>cleanup'),
              'help': 'Findet verwaiste Steam-Proton-Prefixe deinstallierter Spiele, alte Shader-Caches und Papierkorb-Reste – ohne jemals Spielstände oder installierte Spiele anzufassen.'},
+            {'k': 'link', 't': 'Spiele schrumpfen (CHD / RVZ)', 'v': cmp_val,
+             'fn': lambda: go_page(win, 'library>compress'),
+             'help': 'Wandelt große .iso- und .bin/.cue-Spiele (PS1, PS2, PSP, Dreamcast, Saturn, GameCube, Wii) verlustfrei in .chd bzw. .rvz um – spart 40–65 % Platz bei 0 MB Hintergrund-RAM im Spiel.'},
             {'k': 'link', 't': 'Linux- & Tandem-Backup', 'v': bk_val,
              'fn': lambda: go_page(win, 'library>sysbackup'),
              'help': 'Integriertes System-Backup für Tandem, Emulatoren, Begleiter-Pakete, Ports und das komplette Linux-Home auf SD-Karte und SSH-Server.'},
@@ -611,6 +622,35 @@ def groups(win, page):
                           'help': 'Leert den Papierkorb und temporäre Download-Reste.'})
         return [('Analyse', ov_c, None),
                 ('Bereinigen', act_c, 'Installierte Spiele, Shortcuts, Emulatoren und Spielstände bleiben unangetastet.')]
+    if page == 'library>compress':
+        SB = getattr(win, 'SYSBK', None) or {}
+        CMP = SB.get('compress') or {}
+        job = CMP.get('job') or {}
+        items_c = CMP.get('items') or []
+        est_mb = float(CMP.get('est_save_mb') or 0)
+        est_lbl = f'~{est_mb / 1024:.1f} GB'.replace('.', ',') if est_mb >= 1024 else f'~{round(est_mb)} MB'
+        ov_cmp = [
+            {'k': 'info', 't': 'Unkomprimierte Disc-Spiele', 'v': str(CMP.get('count', 0)),
+             'help': 'Gefundene .bin/.cue-, .gdi-, .iso- und .gcm-Abbilder auf SD-Karte und internem Speicher.'},
+            {'k': 'info', 't': 'Geschätzte Ersparnis', 'v': est_lbl if items_c else '0 MB',
+             'help': 'CHD (PS1/PS2/PSP/Dreamcast/Saturn) und RVZ (GameCube/Wii) sind 100 % verlustfrei und laden in Emulatoren direkt.'},
+        ]
+        if job.get('running'):
+            ov_cmp.append({'k': 'info', 't': 'Aktiver Vorgang', 'v': job.get('step') or 'läuft …',
+                           'help': 'Läuft auf 2 Silberkernen mit minimalem RAM-Bedarf.'})
+        act_cmp = [
+            {'k': 'button', 't': 'Alle verlustfrei in CHD / RVZ umwandeln',
+             'v': est_lbl if items_c else 'alles gepackt',
+             'fn': lambda: (win.toast('Starte CHD/RVZ-Komprimierung …'),
+                            win.post('api/sysbackup', {'action': 'compress_roms'},
+                                     then=lambda r: (setattr(win, 'sysbk_at', 0),
+                                                     r and win.toast(r.get('error') or r.get('text', '')),
+                                                     win.update()))),
+             'help': 'Prüft jedes erzeugte .chd/.rvz per Verify-Check, bevor das unkomprimierte Original ersetzt wird (läuft nur außerhalb von Spielen = 0 MB RAM-Verbrauch beim Zocken).'},
+        ]
+        item_rows = [{'k': 'info', 't': it['name'], 'v': f'{it["mb"]:g} MB → .{it["target"].split("-")[0]}',
+                      'sub': it['sys'].upper(), 'help': it['path']} for it in items_c[:15]]
+        return [('Übersicht', ov_cmp, None), ('Aktion', act_cmp, None)] + ([('Gefundene Discs', item_rows, None)] if item_rows else [])
     if page == 'library>sysbackup':
         SB = getattr(win, 'SYSBK', None) or {}
         BK = SB.get('backups') or {}

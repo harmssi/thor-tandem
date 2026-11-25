@@ -1,5 +1,73 @@
 {
   "text": {
+    "Zu wenig freier RAM (< 2,4 GiB) – Replay-Puffer bleibt zum Schutz des Spiels aus.": "Too little free RAM (< 2.4 GiB) – Replay Buffer stays off to protect the game.",
+    "Zu wenig freier RAM (< 1,8 GiB) während dieses Spiels.": "Too little free RAM (< 1.8 GiB) during this game.",
+    "UxPlay ist noch nicht installiert.": "UxPlay is not installed yet.",
+    "AirPlay beendet (0 MB RAM).": "AirPlay stopped (0 MB RAM).",
+    "Ungültiger IPS-Header.": "Invalid IPS header.",
+    "Ungültiger BPS-Header.": "Invalid BPS header.",
+    "BPS-Patch ist beschädigt (CRC stimmt nicht).": "BPS patch is corrupted (CRC mismatch).",
+    "Basis-ROM passt nicht zum BPS-Patch (andere Revision/Region).": "Base ROM does not match the BPS patch (different revision/region).",
+    "Ziel-Prüfsumme nach BPS-Patch stimmt nicht.": "Target checksum mismatch after BPS patch.",
+    "Ungültiger UPS-Header.": "Invalid UPS header.",
+    "UPS-Patch ist beschädigt.": "UPS patch is corrupted.",
+    "Basis-ROM passt nicht zum UPS-Patch.": "Base ROM does not match the UPS patch.",
+    "Ziel-Prüfsumme nach UPS-Patch stimmt nicht.": "Target checksum mismatch after UPS patch.",
+    "Dieses Spiel besitzt keine ROM-Datei.": "This game does not have a ROM file.",
+    "ROM- oder Patch-Datei nicht gefunden.": "ROM or patch file not found.",
+    "Nicht unterstütztes Patch-Format (erlaubt: IPS, BPS, UPS, xdelta).": "Unsupported patch format (allowed: IPS, BPS, UPS, xdelta).",
+    "ZIP-Archiv ist leer.": "ZIP archive is empty.",
+    "ROM ist größer als 512 MB – bitte xdelta3 verwenden.": "ROM is larger than 512 MB – please use xdelta3.",
+    "Bitte erst das laufende Spiel beenden (spart RAM & I/O).": "Please quit the running game first (saves RAM & I/O).",
+    "Komprimierung läuft bereits.": "Compression is already running.",
+    "Keine unkomprimierten ISO/CUE-Spiele gefunden – alles schon optimal gepackt.": "No uncompressed ISO/CUE games found – everything is already packed.",
+    "Starte verlustfreie CHD/RVZ-Komprimierung …": "Starting lossless CHD/RVZ compression …",
+    "Keine Disc konnte umgewandelt werden.": "No disc could be converted.",
+    "Keine Sprache erkannt (bitte kurz während des Sprechens aufnehmen).": "No speech detected (please record briefly while speaking).",
+    "Offline-Whisper ist noch nicht eingerichtet.": "Offline Whisper is not set up yet.",
+    "Keine Sprache erkannt.": "No speech detected.",
+    "Ungültige Ziel-IP.": "Invalid target IP.",
+    "🎮 PRO-CONTROLLER & TOUCH-DECK (MAC / PC)": "🎮 PRO CONTROLLER & TOUCH DECK (MAC / PC)",
+    "Noch keine Mac-/PC-IP eingetragen": "No Mac/PC IP set yet",
+    "Mac / PC-IP setzen": "Set Mac / PC IP",
+    "IP-Adresse deines Mac oder PCs": "IP address of your Mac or PC",
+    "F11 Vollbild": "F11 Fullscreen",
+    "HALL-STICKS AKTIV  ·  MULTI-TOUCH TRACKPAD": "HALL STICKS ACTIVE  ·  MULTI-TOUCH TRACKPAD",
+    "Controller-Modus beenden": "Exit controller mode",
+    "🛡️ RAM-Schutz: 30s-Puffer pausiert (volle RAM-Reserve fürs Spiel).": "🛡️ RAM guard: 30s buffer paused (full RAM reserved for game).",
+    "Pro-Controller (Mac & PC)": "Pro Controller (Mac & PC)",
+    "AirPlay-Empfänger (Vollbild)": "AirPlay receiver (Fullscreen)",
+    "🧩 ROM-Patch anwenden (IPS/BPS)": "🧩 Apply ROM patch (IPS/BPS)",
+    "Suche Patch-Dateien (.ips / .bps / .ups / .xdelta) …": "Searching patch files (.ips / .bps / .ups / .xdelta) …",
+    "Keine Patch-Dateien gefunden": "No patch files found",
+    "In ROMs/patches oder Downloads ablegen": "Place in ROMs/patches or Downloads",
+    "Wende ROM-Patch an …": "Applying ROM patch …",
+    "TROPHÄE FREIGESCHALTET": "TROPHY UNLOCKED",
+    "📌 ANGEHEFTETE ZIELE": "📌 PINNED TARGETS",
+    "■ AirPlay": "■ AirPlay",
+    "📱 AirPlay": "📱 AirPlay",
+    "⏳ Erkenne …": "⏳ Recognizing …",
+    "⏹ Stopp": "⏹ Stop",
+    "🎙️ Diktieren": "🎙️ Dictate",
+    "🎙️ Frage": "🎙️ Ask",
+    "🎙️ Sprich jetzt … (erneut tippen zum Beenden)": "🎙️ Speak now … (tap again to finish)",
+    "⏳ Offline-Whisper transkribiert …": "⏳ Offline Whisper transcribing …",
+    "Spiele schrumpfen (CHD / RVZ)": "Shrink games (CHD / RVZ)",
+    "Echtzeit-Cloud-Saves (vor Start laden)": "Real-time cloud saves (sync before launch)",
+    "Prüft beim Spielstart in < 1 Sekunde ohne Hintergrund-Prozess (0 MB RAM), ob auf deinem Server ein neuerer Spielstand vom PC/Mac liegt, und lädt ihn mit lokalem Konflikt-Backup.": "Checks on game launch in < 1 second with no background daemon (0 MB RAM) whether a newer save from your PC/Mac exists on your server and pulls it with a local conflict backup.",
+    "optimal gepackt": "optimally packed",
+    "Wandelt große .iso- und .bin/.cue-Spiele (PS1, PS2, PSP, Dreamcast, Saturn, GameCube, Wii) verlustfrei in .chd bzw. .rvz um – spart 40–65 % Platz bei 0 MB Hintergrund-RAM im Spiel.": "Losslessly converts large .iso and .bin/.cue games (PS1, PS2, PSP, Dreamcast, Saturn, GameCube, Wii) to .chd or .rvz – saves 40–65% space with 0 MB background RAM during gameplay.",
+    "Unkomprimierte Disc-Spiele": "Uncompressed disc games",
+    "Gefundene .bin/.cue-, .gdi-, .iso- und .gcm-Abbilder auf SD-Karte und internem Speicher.": "Found .bin/.cue, .gdi, .iso and .gcm images on SD card and internal storage.",
+    "Geschätzte Ersparnis": "Estimated savings",
+    "CHD (PS1/PS2/PSP/Dreamcast/Saturn) und RVZ (GameCube/Wii) sind 100 % verlustfrei und laden in Emulatoren direkt.": "CHD (PS1/PS2/PSP/Dreamcast/Saturn) and RVZ (GameCube/Wii) are 100% lossless and load directly in emulators.",
+    "Läuft auf 2 Silberkernen mit minimalem RAM-Bedarf.": "Runs on 2 Silver cores with minimal RAM footprint.",
+    "Alle verlustfrei in CHD / RVZ umwandeln": "Convert all losslessly to CHD / RVZ",
+    "alles gepackt": "all packed",
+    "Starte CHD/RVZ-Komprimierung …": "Starting CHD/RVZ compression …",
+    "Prüft jedes erzeugte .chd/.rvz per Verify-Check, bevor das unkomprimierte Original ersetzt wird (läuft nur außerhalb von Spielen = 0 MB RAM-Verbrauch beim Zocken).": "Verifies every created .chd/.rvz before replacing the uncompressed original (runs strictly outside games = 0 MB RAM used while gaming).",
+    "Aktion": "Action",
+    "Gefundene Discs": "Found discs",
     "ANC aktiv": "ANC active",
     "Transparenz": "Transparency",
     "Adaptiv": "Adaptive",
@@ -2560,14 +2628,6 @@
       "{1} W live"
     ],
     [
-      "(.+) · (.+)",
-      "{1} · {2}"
-    ],
-    [
-      "(.+) …",
-      "{1} …"
-    ],
-    [
       "^(.+) installiert \\(wählbar unter Leistung › Turnip\\)\\.$",
       "\\1 installed (selectable under Performance › Turnip)."
     ],
@@ -2578,6 +2638,90 @@
     [
       "● (.+) → DEUTSCH  ·  (.+)",
       "● {1} → GERMAN  ·  {2}"
+    ],
+    [
+      "☁️ Cloud-Save geladen \\((.+)\\)\\.",
+      "☁️ Cloud save loaded ({1})."
+    ],
+    [
+      "📱 AirPlay „AYN Thor“ aktiv \\((.+)\\) – am iPhone/Mac auswählen\\.",
+      "📱 AirPlay “AYN Thor” active ({1}) – select on iPhone/Mac."
+    ],
+    [
+      "AirPlay konnte nicht starten: (.+)",
+      "AirPlay could not start: {1}"
+    ],
+    [
+      "xdelta3 fehlgeschlagen: (.+)",
+      "xdelta3 failed: {1}"
+    ],
+    [
+      "✓ Gepatchte ROM erstellt: (.+)",
+      "✓ Patched ROM created: {1}"
+    ],
+    [
+      "💿 (\\d+) Spiele in CHD/RVZ umgewandelt \\((.+) Speicher gespart\\)\\.",
+      "💿 {1} games converted to CHD/RVZ ({2} saved)."
+    ],
+    [
+      "Starte CHD/RVZ-Schrumpfer für (\\d+) Spiele im Hintergrund …",
+      "Starting CHD/RVZ shrinker for {1} games in the background …"
+    ],
+    [
+      "Mikrofon nicht verfügbar: (.+)",
+      "Microphone not available: {1}"
+    ],
+    [
+      "Transkription fehlgeschlagen: (.+)",
+      "Transcription failed: {1}"
+    ],
+    [
+      "Spracherkennung fehlgeschlagen: (.+)",
+      "Speech recognition failed: {1}"
+    ],
+    [
+      "Verbunden mit Ziel (.+)",
+      "Connected to target {1}"
+    ],
+    [
+      "Ziel: (.+)  ·  (\\d+) Pakete",
+      "Target: {1}  ·  {2} packets"
+    ],
+    [
+      "Mac/PC-Empfänger \\(1 Befehl\\): (.+)",
+      "Mac/PC receiver (1 command): {1}"
+    ],
+    [
+      "🎙️ Notiert: (.+)",
+      "🎙️ Noted: {1}"
+    ],
+    [
+      "🎙️ Gefunden in (.+)",
+      "🎙️ Found in {1}"
+    ],
+    [
+      "🎙️ Wiki geladen: (.+)",
+      "🎙️ Wiki loaded: {1}"
+    ],
+    [
+      "🎙️ Gesucht: (.+)",
+      "🎙️ Searched: {1}"
+    ],
+    [
+      "(.+) KB · Anwenden",
+      "{1} KB · Apply"
+    ],
+    [
+      "TROPHÄE FREIGESCHALTET · \\+(\\d+) Pkt\\.",
+      "TROPHY UNLOCKED · +{1} pts"
+    ],
+    [
+      "~(.+) GB sparen",
+      "Save ~{1} GB"
+    ],
+    [
+      "(\\d+) Discs \\(~(.+) MB\\)",
+      "{1} discs (~{2} MB)"
     ],
     [
       "🎧 AirPods: (.+)",
@@ -2666,6 +2810,14 @@
     [
       "^Ungültiges Turnip-Paket: (.+)$",
       "Invalid Turnip package: \\1"
+    ],
+    [
+      "(.+) · (.+)",
+      "{1} · {2}"
+    ],
+    [
+      "(.+) …",
+      "{1} …"
     ]
   ]
 }

@@ -77,6 +77,8 @@ class Deck:
         self.macros_loaded = False
         self.cheats = {'items': [], 'can_fetch': False}
         self.cheats_loaded = False
+        self.voice_rec = False
+        self.voice_busy = False
         from decks import translator
         self.tr_view = translator.TranslatorView(self)
         if w.memo.pop('open_translate', False):
@@ -479,7 +481,13 @@ class Deck:
             p.restore()
             return
 
-        # Checklist & Text mode
+        # Checklist & Text mode (+ Offline Whisper Voice Note button)
+        b_mic = QRectF(x0 + cw - 36.5 * u, y, 15.5 * u, 4.6 * u)
+        w.capsule(p, b_mic, ui.WARN if self.voice_rec else ui.RAISED, None if self.voice_rec else ui.LINE)
+        mic_lbl = '⏳ Erkenne …' if self.voice_busy else ('⏹ Stopp' if self.voice_rec else '🎙️ Diktieren')
+        w.text(p, mic_lbl, b_mic.x(), b_mic.y(), ('u', 1.65, 700 if self.voice_rec else 600),
+               ui.INK if self.voice_rec else ui.TEXT, b_mic.width(), 1, 4.6 / 1.65)
+        w.hit(b_mic, lambda: self._toggle_voice('note'), name='voice_note')
         b_add = QRectF(x0 + cw - 20 * u, y, 20 * u, 4.6 * u)
         w.capsule(p, b_add, ui.FOCUS)
         w.text(p, '+ Punkt', b_add.x(), b_add.y(), ('u', 1.8, 700), ui.INK, b_add.width(), 1, 4.6 / 1.8)
@@ -624,7 +632,13 @@ class Deck:
                 w.scroller(p, 'uguide:' + og['name'], inner, draw_txt)
             return
 
-        w.text(p, 'Karten & Komplettlösungen', x0, y, ('u', 2.6, 700, -.02), ui.TEXT, cw * .55)
+        w.text(p, 'Karten & Komplettlösungen', x0, y, ('u', 2.45, 700, -.02), ui.TEXT, cw * .44)
+        b_vmic = QRectF(x0 + cw - 48.5 * u, y - .2 * u, 11.6 * u, 4.6 * u)
+        w.capsule(p, b_vmic, ui.WARN if self.voice_rec else ui.RAISED, None if self.voice_rec else ui.LINE)
+        w.text(p, '⏳ …' if self.voice_busy else ('⏹ Stopp' if self.voice_rec else '🎙️ Frage'),
+               b_vmic.x(), b_vmic.y(), ('u', 1.62, 700 if self.voice_rec else 600),
+               ui.INK if self.voice_rec else ui.TEXT, b_vmic.width(), 1, 4.6 / 1.62)
+        w.hit(b_vmic, lambda: self._toggle_voice('guide'), name='voice_guide')
         b_wiki = QRectF(x0 + cw - 36 * u, y - .2 * u, 18.5 * u, 4.6 * u)
         b_ask = QRectF(x0 + cw - 16.5 * u, y - .2 * u, 16.5 * u, 4.6 * u)
         w.capsule(p, b_wiki, ui.FOCUS)
@@ -983,3 +997,33 @@ class Deck:
             return cy
 
         w.scroller(p, 'ucheats', area, draw_cht)
+
+    def _toggle_voice(self, mode='note'):
+        if self.voice_busy:
+            return
+        self.w.haptic()
+        if not self.voice_rec:
+            self.voice_rec = True
+            self.w.toast('🎙️ Sprich jetzt … (erneut tippen zum Beenden)')
+            self._bg_post('api/voice', {'id': self.gid, 'action': 'start'},
+                          lambda r: (r and r.get('error')) and (setattr(self, 'voice_rec', False), self.w.toast(r['error'])))
+            return
+        self.voice_rec = False
+        self.voice_busy = True
+        self.w.toast('⏳ Offline-Whisper transkribiert …')
+        def _done(r):
+            self.voice_busy = False
+            if not r:
+                return self.w.toast('Keine Antwort.')
+            if r.get('error'):
+                return self.w.toast(r['error'])
+            if r.get('notes'):
+                self.notes = r['notes']
+            if r.get('hit'):
+                h = r['hit']
+                self.open_guide = {'name': h['name'], 'title': h['title'], 'kind': 'text', 'text': h['excerpt'], 'font': 2.05}
+            elif r.get('wiki') and r['wiki'].get('items'):
+                self.guides = r['wiki']['items']
+            self.w.toast(r.get('toast') or r.get('text', ''))
+            self.w.update()
+        self._bg_post('api/voice', {'id': self.gid, 'action': 'stop', 'mode': mode}, _done)
