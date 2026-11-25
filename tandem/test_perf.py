@@ -126,7 +126,9 @@ class PerfEngineTest(unittest.TestCase):
         self.assertEqual(env_b12['DM_GRAPHICS_SCALE'], '2')
         self.assertEqual(env_b12['DM_VK_MESH'], '0')
         self.assertEqual(env_b12['DM_VK_DIRECT_GMEM'], '0')
-        self.assertEqual(env_b12['DM_VK_CS_ASYNC'], '0')
+        self.assertEqual(env_b12['DM_VK_CS_ASYNC'], '1')
+        self.assertEqual(env_b12['DM_VK_CS_WAIT_MS'], '12')
+        self.assertEqual(env_b12['DM_VK_IMG_PSI'], '0')
         self.assertEqual(env_b12['DM_VK_PSO_SLOTS'], '4')
         mem16 = self.root / 'meminfo16'
         mem16.write_text('MemTotal:       16000000 kB\nMemAvailable:   12000000 kB\n')

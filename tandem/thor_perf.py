@@ -560,16 +560,20 @@ def game_env(base_env=None, opt=None, system='', fex_mode='fast', turnip_driver=
             env.setdefault('DM_MEM_FILEBACK', '0')
             env.setdefault('DM_VK_LOW_RAM', '0')
         if engine_label == 'BananaNative' or system == 'banananative':
-            # Prevent Adreno 740 white-out bugs: disable experimental VK_EXT_mesh_shader, sparse non-coherent GMEM,
-            # async compute skips, and PSI eviction of persistent GPU-written auto-exposure/tonemap render targets
+            # Prevent Adreno 740 white-out bugs while keeping shader/mesh-compute streaming stutter-free:
+            # disable experimental VK_EXT_mesh_shader, sparse non-coherent GMEM, and PSI eviction of GPU-written
+            # auto-exposure targets; build >12ms mesh/effect compute shaders asynchronously off vk-replay
             env.setdefault('DM_VK_MESH', '0')
             env.setdefault('DM_VK_DIRECT_GMEM', '0')
-            env.setdefault('DM_VK_CS_ASYNC', '0')
+            env.setdefault('DM_VK_CS_ASYNC', '1')
+            env.setdefault('DM_VK_CS_WAIT_MS', '12')
+            env.setdefault('DM_VK_PSO_ASYNC', '4')
             env.setdefault('DM_VK_IMG_PSI', '0')
         env.setdefault('DM_VK_PSO_SLOTS', '4')
         if (os.cpu_count() or 0) >= 8:
-            env.setdefault('DM_VK_AFF_ALL', '0x78')
-            env.setdefault('DM_VK_AFF_REPLAY', '0x80')
+            env.setdefault('DM_VK_AFF_ALL', '120')
+            env.setdefault('DM_VK_AFF_REPLAY', '128')
+            env.setdefault('DM_VK_AFF_BG', '63')
 
     # 8. Big-Core topology hint for Wine/Proton when pinned to cores 3-7
     if opt.get('cores', 'big') == 'big' and (os.cpu_count() or 0) >= 8:
