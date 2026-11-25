@@ -542,6 +542,8 @@ def game_env(base_env=None, opt=None, system='', fex_mode='fast', turnip_driver=
         env['DISABLE_LSFGVK'] = '1'
         if opt.get('framegen') is not None:
             env.setdefault('NX_FRAMEGEN', '1' if opt.get('framegen') else '0')
+            if opt.get('framegen'):
+                env.setdefault('DM_LSFG_MIN_FPS', '5')
         if res_h == 720:
             env.setdefault('DM_OPMODE', 'handheld')
             env.setdefault('DM_GRAPHICS_SCALE', '2')
@@ -558,13 +560,15 @@ def game_env(base_env=None, opt=None, system='', fex_mode='fast', turnip_driver=
             env.setdefault('DM_MEM_FILEBACK', '0')
             env.setdefault('DM_VK_LOW_RAM', '0')
         if engine_label == 'BananaNative' or system == 'banananative':
-            # Prevent Adreno 740 white-out bugs: disable experimental VK_EXT_mesh_shader, sparse non-coherent GMEM, and async compute skips
+            # Prevent Adreno 740 white-out bugs: disable experimental VK_EXT_mesh_shader, sparse non-coherent GMEM,
+            # async compute skips, and PSI eviction of persistent GPU-written auto-exposure/tonemap render targets
             env.setdefault('DM_VK_MESH', '0')
             env.setdefault('DM_VK_DIRECT_GMEM', '0')
             env.setdefault('DM_VK_CS_ASYNC', '0')
+            env.setdefault('DM_VK_IMG_PSI', '0')
         env.setdefault('DM_VK_PSO_SLOTS', '4')
         if (os.cpu_count() or 0) >= 8:
-            env.setdefault('DM_VK_AFF_ALL', '0xf8')
+            env.setdefault('DM_VK_AFF_ALL', '0x78')
             env.setdefault('DM_VK_AFF_REPLAY', '0x80')
 
     # 8. Big-Core topology hint for Wine/Proton when pinned to cores 3-7
