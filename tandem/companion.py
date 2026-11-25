@@ -1278,7 +1278,7 @@ def discover_native_packs(roots=(), home=None):
                 if tid in seen_tids:
                     continue
                 seen_tids.add(tid)
-                title = meta.get('name') or game_dir.name
+                title = re.sub(r'\s*\((?:PeanutsNative|BananaNative)\)\s*$', '', (meta.get('name') or game_dir.name)).strip()
                 icon = next((str(p) for p in sorted(game_dir.glob('*.png')) if p.stem.lower() != 'box'), None)
                 box = next((str(p) for p in sorted(game_dir.iterdir())
                             if p.is_file() and p.stem.lower() == 'box' and p.suffix.lower() in ('.png', '.jpg', '.jpeg', '.webp')), None)
@@ -1289,7 +1289,7 @@ def discover_native_packs(roots=(), home=None):
                     continue
                 out.append({
                     'tid': tid,
-                    'title': f'{title} ({label})',
+                    'title': title,
                     'raw_title': title,
                     'engine': label,
                     'dir': str(game_dir),
@@ -1323,15 +1323,20 @@ def peanuts_catalog(home=None):
     return cat
 
 
-def _switch_keys_path(home=None):
+def _switch_keys_path(home=None, roots=()):
     h = Path(home) if home else HOME
-    for p in (h / '.local/share/eden/keys/prod.keys', h / '.switch/prod.keys'):
+    cands = [
+        h / '.switch/prod.keys',
+        h / '.local/share/banananative/keys/prod.keys',
+        h / '.local/share/eden/keys/prod.keys',
+    ] + [Path(r).parent / 'BIOS/switch/prod.keys' for r in (roots or ())]
+    for p in cands:
         if p.is_file():
             return p
     return None
 
 
-def _probe_title_id(rom_path, home=None):
+def _probe_title_id(rom_path, home=None, roots=()):
     """Extract 16-hex Switch base title ID from filename `[0100...]` or via fast `nximport_cli probe`."""
     p = Path(rom_path)
     m = re.search(r'\[([0-9A-Fa-f]{16})\]', p.name)
@@ -1347,12 +1352,12 @@ def _probe_title_id(rom_path, home=None):
         return _PROBE_CACHE[ckey]
     h = Path(home) if home else HOME
     cli = h / '.local/opt/peanuts/builder/peanuts/.build/nximport/nximport_cli'
-    keys = _switch_keys_path(h)
+    keys = _switch_keys_path(h, roots)
     tid = ''
     if cli.is_file() and keys:
         try:
             r = subprocess.run([str(cli), '--keys', str(keys), 'probe', str(p)],
-                               capture_output=True, text=True, timeout=5)
+                               capture_output=True, text=True, timeout=6)
             m2 = re.search(r'\bapp\s+([0-9a-fA-F]{16})\b', r.stdout)
             if m2:
                 tid = m2.group(1).upper()
@@ -1362,51 +1367,133 @@ def _probe_title_id(rom_path, home=None):
     return tid
 
 
+def ensure_provisional_switch_profile(rom_path, tid, title_hint='', home=None, roots=()):
+    """Ensure `dm/games/<TID>/game.tsv` exists in the Peanuts builder. If `<TID>` is not yet in the curated 77-game
+    catalog, auto-generate a provisional profile using Peanuts' own `nximport_cli` + `profile_guess.py` so ANY Switch
+    game can be converted and run natively via `nxhost_generic` without needing an emulator."""
+    h = Path(home) if home else HOME
+    tid = str(tid or '').strip().upper()
+    if not re.fullmatch(r'[0-9A-F]{16}', tid):
+        return False
+    broot = h / '.local/opt/peanuts/builder'
+    gdir = broot / 'dm/games' / tid
+    if (gdir / 'game.tsv').is_file():
+        return True
+    cli = broot / 'peanuts/.build/nximport/nximport_cli'
+    keys = _switch_keys_path(h, roots)
+    guess_py = broot / 'dm/games/profile_guess.py'
+    if not (cli.is_file() and keys and guess_py.is_file()):
+        return False
+    import tempfile
+    try:
+        with tempfile.TemporaryDirectory(prefix=f'pn-prof-{tid}-') as tmp:
+            tdir = Path(tmp)
+            nup = tdir / f'{tid}.nup'
+            r = subprocess.run([str(cli), '--keys', str(keys), 'pack', str(nup), str(rom_path)],
+                               capture_output=True, text=True, timeout=300)
+            if r.returncode != 0 or not nup.is_file():
+                return False
+            code = (
+                'import sys; from pathlib import Path\n'
+                f'broot = Path({str(broot)!r}); nup = Path({str(nup)!r}); tid = {tid!r}; name = {str(title_hint or tid)!r}\n'
+                'sys.path[:0] = [str(broot / "dm/games"), str(broot / "dm/tools")]\n'
+                'import profile_guess as pg, nup_read\n'
+                'img = nup_read.open_nup(str(nup))\n'
+                'ex_dir = nup.parent / "ExeFS"; ex_dir.mkdir(exist_ok=True)\n'
+                'for fn in img.exefs_files(): (ex_dir / fn).write_bytes(img.read_exefs(fn))\n'
+                'man = nup.parent / "romfs_manifest.tsv"\n'
+                'with man.open("w", encoding="utf-8") as f:\n'
+                '    f.write("# path\\tbytes\\tfirst 32 bytes (hex)\\n")\n'
+                '    for pth, sz, hd in pg.romfs_files(img.romfs):\n'
+                '        f.write(f"{pth}\\t{sz}\\t{hd.hex()}\\n")\n'
+                'facts = pg.facts_of(ex_dir, man)\n'
+                'guessed = dict(pg.guess(facts))\n'
+                'lines = [f"# Auto-generated provisional profile for {name} ({tid})", f"title_id\\t{tid}", f"program_id\\t{tid}", f"name\\t{name}"]\n'
+                'for k, (val, why) in guessed.items():\n'
+                '    if k not in ("title_id", "program_id", "name") and val is not None:\n'
+                '        lines.append(f"# {why}"); lines.append(f"{k}\\t{val}")\n'
+                'out_d = broot / "dm/games" / tid; out_d.mkdir(parents=True, exist_ok=True)\n'
+                '(out_d / "game.tsv").write_text("\\n".join(lines) + "\\n", encoding="utf-8")\n'
+            )
+            py = h / '.local/share/peanuts/packer/venv/bin/python'
+            interp = str(py) if py.is_file() else sys.executable
+            subprocess.run([interp, '-c', code], capture_output=True, text=True, timeout=120)
+            if (gdir / 'game.tsv').is_file():
+                tsv = broot / 'peanuts/games.tsv'
+                if tsv.is_file() and tid not in tsv.read_text(encoding='utf-8', errors='ignore'):
+                    with tsv.open('a', encoding='utf-8') as f:
+                        f.write(f'{tid}\t{title_hint or tid}\t\tno\tauto\ttandem\n')
+                return True
+    except Exception:
+        pass
+    # Minimal universal Switch-1 NVN fallback profile if nup_read layout differs
+    try:
+        gdir.mkdir(parents=True, exist_ok=True)
+        (gdir / 'game.tsv').write_text(
+            f'# Auto-generated universal profile for {title_hint or tid}\n'
+            f'title_id\t{tid}\nprogram_id\t{tid}\nname\t{title_hint or tid}\n'
+            'modules\tmain sdk\nmem_reserve\t0x100000000\nmem_alias\t0x10000000\nmem_stack\t0x10000000\napp_pool\t0xCD500000\n',
+            encoding='utf-8',
+        )
+        tsv = broot / 'peanuts/games.tsv'
+        if tsv.is_file() and tid not in tsv.read_text(encoding='utf-8', errors='ignore'):
+            with tsv.open('a', encoding='utf-8') as f:
+                f.write(f'{tid}\t{title_hint or tid}\t\tno\tauto\ttandem\n')
+        return True
+    except OSError:
+        return False
+
+
 def switch_native_info(games_dict, roots=(), home=None):
-    """Status of BananaNative & Peanuts Native plus convertible Switch 1 games on the device."""
+    """Status of BananaNative & Peanuts Native plus all Switch games (converted & pending) on the device."""
     h = Path(home) if home else HOME
     bn_ver = _runtime_version(h / '.local/opt/bananative/AppDir/usr/share/banananative/source')
     pn_ver = _runtime_version(h / '.local/opt/peanuts/AppDir/usr/share/banananative/source')
-    builder_ok = (h / '.local/opt/peanuts/builder/peanuts/scripts/peanuts_build.py').is_file() and bool(_switch_keys_path(h))
+    generic_ok = (h / '.local/opt/peanuts/AppDir/usr/bin/nxhost_generic').is_file()
+    builder_ok = (h / '.local/opt/peanuts/builder/peanuts/scripts/peanuts_build.py').is_file() and bool(_switch_keys_path(h, roots))
     cat = peanuts_catalog(h)
-    packed_tids = {p['tid'] for p in discover_native_packs(roots, h)}
-    # Also check existing BananaNative/Peanuts packs in ~/Games/BananaNative
+    packed_packs = discover_native_packs(roots, h)
+    packed_tids = {p['tid'] for p in packed_packs}
     for wdir in (h / 'Games/BananaNative').glob('*/*-work'):
         packed_tids.add(wdir.name.split('-')[0].upper())
 
-    # Scan uploaded update files in ROMs/switch/updates and <SD>/Switch-Updates
     upd_tids = set()
     for r in roots:
         for udir in (Path(r) / 'switch/updates', Path(r).parent / 'Switch-Updates'):
             if udir.is_dir():
                 for uf in udir.iterdir():
                     if uf.is_file() and uf.suffix.lower() in ('.nsp', '.nsz', '.xci', '.xcz'):
-                        ut = _probe_title_id(uf, h)
+                        ut = _probe_title_id(uf, h, roots)
                         if ut:
                             upd_tids.add(ut)
 
+    seen_tids = set()
     candidates = []
     for g in sorted(games_dict.values(), key=lambda x: x.get('t', '').lower()):
-        if g.get('s') != 'switch' or not g.get('path'):
+        if g.get('s') != 'switch' and g.get('native_engine') not in ('PeanutsNative', 'BananaNative'):
             continue
-        tid = _probe_title_id(g['path'], h)
-        if not tid:
+        tid = (str(g.get('tid') or '').upper()
+               or (_probe_title_id(g['path'], h, roots) if g.get('path') else ''))
+        if not tid or tid in seen_tids:
             continue
+        seen_tids.add(tid)
         sup = cat.get(tid)
-        host_ok = (h / f'.local/opt/peanuts/AppDir/usr/bin/nxhost_{tid}').is_file()
+        is_conv = bool(g.get('direct') or tid in packed_tids)
+        host_ok = generic_ok or is_conv or (h / f'.local/opt/peanuts/AppDir/usr/bin/nxhost_{tid}').is_file()
         candidates.append({
             'id': g['id'],
             't': g['t'],
             'tid': tid,
-            'supported': bool(sup),
+            'supported': bool(sup or generic_ok or is_conv),
             'host_ready': host_ok,
-            'companion': bool(sup and sup.get('companion')),
-            'converted': tid in packed_tids,
+            'companion': bool((sup and sup.get('companion')) or resolve_native_companion(g)),
+            'converted': is_conv,
             'has_update': tid in upd_tids,
         })
     return {
         'banana_version': bn_ver,
         'peanuts_version': pn_ver,
+        'generic_host': generic_ok,
         'catalog_count': len(cat),
         'builder_ready': builder_ok,
         'games': candidates,
@@ -1414,102 +1501,167 @@ def switch_native_info(games_dict, roots=(), home=None):
     }
 
 
-def switch_native_convert(game, roots=(), home=None, on_done=None):
-    """Start background conversion of a Switch 1 dump into a native Peanuts Native pack."""
-    if _NATIVE_JOB['running']:
-        return {'error': f'Umwandlung läuft bereits für „{_NATIVE_JOB["title"]}“.'}
-    if not game or game.get('s') != 'switch' or not game.get('path'):
-        return {'error': 'Kein Switch-Spiel gewählt.'}
+def _convert_switch_sync(game, roots=(), home=None):
+    """Run one Switch -> Native conversion synchronously inside worker thread. Returns (ok_bool, message)."""
     h = Path(home) if home else HOME
+    rom_file = game.get('path') or game.get('rom_path')
+    if not rom_file or not Path(rom_file).is_file():
+        return False, 'Keine Switch-ROM-Datei (.nsp / .xci) zum Umwandeln gefunden.'
     builder = h / '.local/opt/peanuts/builder/peanuts/scripts/peanuts_build.py'
-    keys = _switch_keys_path(h)
+    keys = _switch_keys_path(h, roots)
     packer_env = h / '.local/share/peanuts/packer'
+    importer = h / '.local/opt/peanuts/builder/peanuts/.build/nximport/nximport_cli'
     if not builder.is_file() or not keys or not (packer_env / 'venv/bin/python').is_file():
-        return {'error': 'Peanuts-Builder oder prod.keys fehlt auf dem Thor.'}
-    tid = _probe_title_id(game['path'], h)
-    if not tid or tid not in peanuts_catalog(h):
-        return {'error': 'Dieses Switch-Spiel wird von Peanuts Native noch nicht unterstützt.'}
+        return False, 'Peanuts-Builder oder prod.keys fehlt auf dem Thor.'
+    tid = str(game.get('tid') or '').upper() or _probe_title_id(rom_file, h, roots)
+    if not tid:
+        return False, f'Konnte keine Switch Title-ID aus „{Path(rom_file).name}“ lesen.'
+    cat = peanuts_catalog(h)
+    generic_ok = (h / '.local/opt/peanuts/AppDir/usr/bin/nxhost_generic').is_file()
+    if tid not in cat:
+        if not (generic_ok and ensure_provisional_switch_profile(rom_file, tid, game.get('t', ''), h, roots)):
+            return False, f'„{game.get("t", tid)}“ ({tid}) wird von Peanuts Native noch nicht unterstützt.'
 
-    # Find any matching update/DLC NSPs in ROMs/switch/updates or <SD>/Switch-Updates
-    inputs = [str(game['path'])]
-    seen_inp = {str(Path(game['path']).resolve())}
+    inputs = [str(rom_file)]
+    seen_inp = {str(Path(rom_file).resolve())}
     for r in roots:
-        for udir in (Path(r) / 'switch/updates', Path(r).parent / 'Switch-Updates'):
+        for udir in (Path(r) / 'switch/updates', Path(r).parent / 'Switch-Updates', Path(r).parent / 'ROMs-Extra/switch'):
             if udir.is_dir():
                 for uf in sorted(udir.iterdir()):
                     if uf.is_file() and uf.suffix.lower() in ('.nsp', '.nsz', '.xci', '.xcz'):
                         rp = str(uf.resolve())
-                        if rp not in seen_inp and _probe_title_id(uf, h) == tid:
+                        if rp not in seen_inp and _probe_title_id(uf, h, roots) == tid:
                             seen_inp.add(rp)
                             inputs.append(str(uf))
 
-    # Choose destination with >= 18 GB free (prefer SD card Games/PeanutsNative, else ~/Games/PeanutsNative)
-    safe_folder = re.sub(r'[^A-Za-z0-9._-]+', '_', game['t']).strip('_') or tid
+    safe_folder = re.sub(r'[^A-Za-z0-9._-]+', '_', game.get('t') or tid).strip('_') or tid
     dest_root = None
     for cand in ([Path(r).parent / 'Games/PeanutsNative' for r in roots if str(r).startswith(('/run/media', '/media'))]
                  + [h / 'Games/PeanutsNative']):
         try:
             cand.parent.mkdir(parents=True, exist_ok=True)
-            if shutil.disk_usage(cand.parent).free >= (16 << 30):
+            if shutil.disk_usage(cand.parent).free >= (12 << 30):
                 dest_root = cand / safe_folder
                 break
         except OSError:
             continue
     if dest_root is None:
-        return {'error': 'Mindestens 16 GB freier Speicherplatz für die native Umwandlung erforderlich.'}
+        return False, 'Mindestens 12 GB freier Speicherplatz für die native Umwandlung erforderlich.'
 
-    _NATIVE_JOB.update(running=True, id=game['id'], title=game['t'], step='Starte Import (.nup) …', error='', done_at=0)
+    _NATIVE_JOB.update(running=True, id=game['id'], title=game.get('t', tid), step='Starte Import (.nup) …', error='', done_at=0)
+    dest_root.mkdir(parents=True, exist_ok=True)
+    env = {
+        **os.environ,
+        'DOTNET_ROOT': str(packer_env / 'dotnet'),
+        'DOTNET_MULTILEVEL_LOOKUP': '0',
+        'PATH': f'{h / ".local/bin"}:{packer_env / "dotnet"}:{os.environ.get("PATH", "/usr/bin:/bin")}',
+        'XLATE': str(h / '.local/opt/peanuts/builder/dm/gfx/tools/dmsh_xlate_bin/dmsh_xlate-linux'),
+        **({'NX_IMPORTER': str(importer)} if importer.is_file() else {}),
+    }
+    cmd = [
+        'nice', '-n', '19',
+        str(packer_env / 'venv/bin/python'),
+        str(builder),
+        *inputs,
+        '--keys', str(keys),
+        '--nup', str(dest_root),
+        '--any-version',
+        *(['--importer', str(importer)] if importer.is_file() else []),
+        '--', '-j', '3', '-J', '4', '--shader-python', sys.executable,
+    ]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
+    last_line = ''
+    for line in proc.stdout:
+        s = line.strip()
+        if not s:
+            continue
+        last_line = s
+        if 'shader' in s.lower():
+            _NATIVE_JOB['step'] = 'Übersetze Vulkan-Shader …'
+        elif 'rewrite' in s.lower() or 'patched' in s.lower():
+            _NATIVE_JOB['step'] = 'Schreibe ARM64-Code nativ um …'
+        elif 'nup' in s.lower() or 'unpack' in s.lower():
+            _NATIVE_JOB['step'] = 'Entpacke & baue .nup-Container …'
+    rc = proc.wait()
+    if rc != 0:
+        _NATIVE_JOB.update(running=False, error=last_line or f'Fehlercode {rc}', step='Fehlgeschlagen')
+        return False, f'Umwandlung fehlgeschlagen: {_NATIVE_JOB["error"][:120]}'
+
+    # Generate runtime profile.bin + seed.bin for instant universal nxhost_generic startup & remove intermediate SPIR-V scratch
+    pack_out = dest_root / f'{tid}-work/android-pack'
+    gen_py = h / '.local/opt/peanuts/builder/dm/peanuts/profile/gen_runtime_profile.py'
+    if pack_out.is_dir() and gen_py.is_file():
+        subprocess.run([sys.executable, str(gen_py), 'profile', tid, str(pack_out / 'profile.bin')],
+                       capture_output=True, timeout=15)
+        subprocess.run([sys.executable, str(gen_py), 'seed', tid, str(pack_out / 'seed.bin')],
+                       capture_output=True, timeout=15)
+    shutil.rmtree(dest_root / f'{tid}-work/android-shaders', ignore_errors=True)
+    _NATIVE_JOB.update(running=False, step='Fertig!', error='', done_at=int(time.time()))
+    return True, f'„{game.get("t", tid)}“ ist jetzt als natives Switch-Spiel bereit!'
+
+
+def switch_native_convert(game, roots=(), home=None, on_done=None):
+    """Start background conversion of a Switch dump into a native Peanuts Native pack."""
+    if _NATIVE_JOB['running']:
+        return {'error': f'Umwandlung läuft bereits für „{_NATIVE_JOB["title"]}“.'}
+    if not game or (game.get('s') != 'switch' and not game.get('rom_path')):
+        return {'error': 'Kein Switch-Spiel gewählt.'}
 
     def worker():
         try:
-            dest_root.mkdir(parents=True, exist_ok=True)
-            env = {
-                **os.environ,
-                'DOTNET_ROOT': str(packer_env / 'dotnet'),
-                'DOTNET_MULTILEVEL_LOOKUP': '0',
-                'PATH': f'{h / ".local/bin"}:{packer_env / "dotnet"}:{os.environ.get("PATH", "/usr/bin:/bin")}',
-                'XLATE': str(h / '.local/opt/peanuts/builder/dm/gfx/tools/dmsh_xlate_bin/dmsh_xlate-linux'),
-            }
-            cmd = [
-                str(packer_env / 'venv/bin/python'),
-                str(builder),
-                *inputs,
-                '--keys', str(keys),
-                '--nup', str(dest_root),
-                '--any-version',
-                '--', '-j', '4', '-J', '6', '--shader-python', sys.executable,
-            ]
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
-            last_line = ''
-            for line in proc.stdout:
-                s = line.strip()
-                if not s:
-                    continue
-                last_line = s
-                if 'shader' in s.lower():
-                    _NATIVE_JOB['step'] = 'Übersetze Vulkan-Shader …'
-                elif 'rewrite' in s.lower() or 'patched' in s.lower():
-                    _NATIVE_JOB['step'] = 'Schreibe ARM64-Code nativ um …'
-                elif 'nup' in s.lower() or 'unpack' in s.lower():
-                    _NATIVE_JOB['step'] = 'Entpacke & baue .nup-Container …'
-            rc = proc.wait()
-            if rc != 0:
-                _NATIVE_JOB.update(running=False, error=last_line or f'Fehlercode {rc}', step='Fehlgeschlagen')
-                if on_done:
-                    on_done(False, f'Umwandlung fehlgeschlagen: {_NATIVE_JOB["error"][:120]}')
-                return
-            # Free intermediate SPIR-V build scratch (~1-3.5 GB) now that dmsh_vk.lib is inside android-pack
-            shutil.rmtree(dest_root / f'{tid}-work/android-shaders', ignore_errors=True)
-            _NATIVE_JOB.update(running=False, step='Fertig!', error='', done_at=int(time.time()))
-            if on_done:
-                on_done(True, f'„{game["t"]}“ ist jetzt als natives Switch-Spiel bereit!')
+            ok, msg = _convert_switch_sync(game, roots, home)
         except Exception as e:
             _NATIVE_JOB.update(running=False, error=str(e), step='Fehlgeschlagen')
-            if on_done:
-                on_done(False, f'Umwandlung fehlgeschlagen: {e}')
+            ok, msg = False, f'Umwandlung fehlgeschlagen: {e}'
+        if on_done:
+            on_done(ok, msg)
 
     threading.Thread(target=worker, daemon=True).start()
     return {'ok': True, 'text': f'Native Umwandlung für „{game["t"]}“ im Hintergrund gestartet.'}
+
+
+_AUTO_CONV_LOCK = threading.Lock()
+
+
+def auto_convert_pending_switch(get_games_fn, roots=(), home=None, is_idle=None, on_converted=None):
+    """Autonomously convert any unconverted Switch ROMs in `ROMs/switch` whenever Thor is idle (never during gameplay)."""
+    if not _AUTO_CONV_LOCK.acquire(blocking=False):
+        return
+    def loop():
+        try:
+            h = Path(home) if home else HOME
+            if not (h / '.local/opt/peanuts/builder/peanuts/scripts/peanuts_build.py').is_file():
+                return
+            if not _switch_keys_path(h, roots):
+                return
+            while True:
+                if is_idle and not is_idle():
+                    time.sleep(15)
+                    continue
+                if _NATIVE_JOB['running']:
+                    time.sleep(10)
+                    continue
+                packed_tids = {p['tid'] for p in discover_native_packs(roots, h)}
+                for wdir in (h / 'Games/BananaNative').glob('*/*-work'):
+                    packed_tids.add(wdir.name.split('-')[0].upper())
+                pending = []
+                for g in (get_games_fn() or {}).values():
+                    if g.get('s') == 'switch' and g.get('path') and not g.get('direct'):
+                        tid = str(g.get('tid') or '').upper() or _probe_title_id(g['path'], h, roots)
+                        if tid and tid not in packed_tids:
+                            pending.append((tid, g))
+                if not pending:
+                    break
+                _tid, target_g = pending[0]
+                ok, msg = _convert_switch_sync(target_g, roots, h)
+                if on_converted:
+                    on_converted(ok, msg)
+                if not ok:
+                    break
+                time.sleep(2)
+        finally:
+            _AUTO_CONV_LOCK.release()
+    threading.Thread(target=loop, daemon=True).start()
 
 
 # ---- GBADuo v1.0.1 Companion Catalog, Multi-Region Matcher & Automatic Pack Sync -------------------------------------

@@ -245,9 +245,8 @@ def keys_for_game(game, emu_label=''):
     s = str(game.get('s') or '')
     lbl = str(emu_label or '')
     if game.get('tid') and lbl in ('BananaNative', 'PeanutsNative'):
-        pref = 'banananative' if lbl == 'BananaNative' else 'peanuts'
         tid = str(game['tid']).upper()
-        return [f'{pref}-{tid}', f'{pref}-{tid}-work']
+        return [f'banananative-{tid}', f'banananative-{tid}-work', f'peanuts-{tid}', f'peanuts-{tid}-work']
     if s == 'port':
         p = str(game.get('port') or '')
         pmap = {

@@ -133,8 +133,8 @@ class Scan(unittest.TestCase):
         self.assertTrue(payload['systems']['psx']['cover'] and payload['systems']['psx']['hero'])
         self.assertIsNone(payload['systems']['gba']['cover'])
         self.assertIn('RetroArch', payload['systems']['gba']['missing'])
-        self.assertIn('Eden', payload['systems']['switch']['missing'])
-        self.assertEqual(payload['extras'][0]['installed'], False)
+        self.assertIn('Peanuts Native', payload['systems']['switch']['missing'])
+        self.assertEqual(payload['extras'], [])
         self.assertNotIn('path', payload['games'][0])
 
 
@@ -262,7 +262,7 @@ class Launch(unittest.TestCase):
     def test_missing_emulator(self):
         t = make()
         gid = next(g['id'] for g in t.library.games.values() if g['s'] == 'switch')
-        self.assertIn('Eden', t.launch(gid)['error'])
+        self.assertIn('Peanuts Native', t.launch(gid)['error'])
         self.assertIsNone(t.run)
 
 
@@ -436,8 +436,8 @@ class FirstRun(unittest.TestCase):
         self.assertEqual(info['folders'][0]['root'], str(SD / 'ROMs'))
         self.assertEqual({s['name']: s['n'] for s in info['folders'][0]['systems']}, {'PlayStation': 1, 'Game Boy Advance': 1, 'Switch': 1})
         missing = {m['s']: m for m in info['missing']}
-        self.assertEqual(sorted(missing), ['gba', 'switch'])  # DuckStation is there (the stand-in), RetroArch and Eden are not
-        self.assertEqual((missing['gba']['store'], missing['switch']['store'], missing['switch']['extra']), ('retroarch', None, 'eden'))
+        self.assertEqual(sorted(missing), ['gba', 'switch'])  # DuckStation is there (the stand-in), RetroArch and PeanutsNative are not
+        self.assertEqual((missing['gba']['store'], missing['switch']['store'], missing['switch']['extra']), ('retroarch', None, None))
         self.assertFalse(info['install'])  # no Armada Store here
         self.assertIn('Passwort', tandem.install_missing(t)['error'])  # cannot install by itself: says what to do instead
         self.assertEqual(tandem.setup_command(t, {'step': 3})['step'], 3)
@@ -1035,10 +1035,26 @@ class CompanionAndLibraryUpgradesTest(unittest.TestCase):
         touch(nhome / 'Games/PeanutsNative/DiabloIII/box.png', 'box')
         npacks = companion.discover_native_packs([], nhome)
         self.assertEqual(len(npacks), 1)
-        self.assertEqual((npacks[0]['tid'], npacks[0]['engine']), ('01001B300B9BE000', 'PeanutsNative'))
+        self.assertEqual((npacks[0]['tid'], npacks[0]['engine'], npacks[0]['title']),
+                         ('01001B300B9BE000', 'PeanutsNative', 'Diablo III: Eternal Collection'))
         self.assertTrue(npacks[0]['cover'].endswith('icon.png') and npacks[0]['box'].endswith('box.png'))
         sinfo = companion.switch_native_info({'s1': {'id': 's1', 't': 'Diablo III', 's': 'switch', 'path': '/tmp/Diablo [01001B300B9BE000].nsp'}}, [], nhome)
         self.assertEqual((sinfo['peanuts_version'], sinfo['catalog_count'], sinfo['games'][0]['converted']), ('0.1.6-1', 1, True))
+        # Deduplication in Library.scan(): a Switch ROM in ROMs/switch is absorbed into its native pack (no duplicate tile)
+        dedup_root = TMP / 'dedup-roms'
+        touch(dedup_root / 'switch/Diablo III [01001B300B9BE000].nsp', 'nsp')
+        touch(dedup_root / 'switch/New Unconverted Game [0100ABCDEF000000].nsp', 'nsp')
+        old_home = tandem.HOME
+        tandem.HOME = nhome
+        try:
+            dlib = tandem.Library([str(dedup_root)], nhome / '.local/share/Steam')
+            dgames = dlib.scan()
+        finally:
+            tandem.HOME = old_home
+        sw_titles = {g['t']: g for g in dgames.values() if g['s'] == 'switch'}
+        self.assertEqual(set(sw_titles), {'Diablo III: Eternal Collection', 'New Unconverted Game'})
+        self.assertTrue(sw_titles['Diablo III: Eternal Collection'].get('direct'))
+        self.assertTrue(sw_titles['New Unconverted Game'].get('needs_native'))
 
         cands = tandem._box_candidates('Chrono Trigger (Uncensored)')
         self.assertIn('Chrono Trigger (Germany)', cands)

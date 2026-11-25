@@ -1,5 +1,24 @@
 {
   "text": {
+    "iiSU Aero OLED": "iiSU Aero OLED",
+    "iiSU Pearl": "iiSU Pearl",
+    "Weiterspielen": "Continue",
+    "Live-Stand": "Live state",
+    "Überrasch mich": "Surprise me",
+    "Zufälliges Spiel aus deiner Sammlung": "Random game from your library",
+    "3D-Kosmos-Schaufenster öffnen": "Open 3D Cosmos Showcase",
+    "Kacheln zeigt ein zoombares Poster-Raster; Bühne präsentiert die Spiele groß in der Mitte als gleitendes Karussell.": "Tiles shows a zoomable poster grid; Stage showcases games large in the centre as a sliding carousel.",
+    "Raster-Größe (3DS-Zoom)": "Grid size (3DS zoom)",
+    "3 Groß": "3 Large",
+    "4 Mittel": "4 Medium",
+    "5 Standard": "5 Standard",
+    "6 Kompakt": "6 Compact",
+    "Stufenloser Konsolen-Zoom für die quadratischen Kacheln (3 bis 6 Spalten) wie am Nintendo 3DS & iiSU.": "Console zoom for the square tiles (3 to 6 columns) like Nintendo 3DS & iiSU.",
+    "Start-Pods (Cocoon-Dashboard)": "Home Pods (Cocoon dashboard)",
+    "Zeigt oben auf dem Start-Tab interaktive Bento-Pods für Weiterspielen (mit Live-Szene & Fortschritt), Zufalls-Tipp und Sammlung.": "Shows interactive Bento Pods at the top of the Home tab for Continue (with live scene & progress), Random Pick, and Collection.",
+    "3D-Spielehüllen & Modul-Vorschau": "3D game cases & cartridge preview",
+    "Präsentiert auf dem oberen 120-Hz-OLED schwebende 3D-Spielehüllen im Originalformat samt herausgleitendem Spielmodul bzw. Disc (iiSU-Stil).": "Showcases floating 3D retail cases in their original aspect ratio with a sliding game cartridge or disc on the top 120 Hz OLED (iiSU style).",
+    "Flüssige Feder-Physik für Cover, Fokusring, 3D-Hüllen und Scharnier-Aurora, oder reduzierte Bewegung.": "Fluid spring physics for covers, focus ring, 3D cases, and hinge aurora, or reduced motion.",
     "Lüfter 0 dB": "Fan 0 dB",
     "0 dB": "0 dB",
     "0 dB Lautlos": "0 dB Silent",
@@ -1686,7 +1705,24 @@
     "Abgelehnt: keine gültige ARM64-glibc-Bibliothek (Android/Bionic ausgeschlossen).": "Rejected: not a valid ARM64 glibc library (Android/Bionic excluded).",
     "Turnip-Treiber ist bereits aktuell.": "Turnip driver is already up to date.",
     "Keine vorherige Turnip-Version (.prev) vorhanden.": "No previous Turnip version (.prev) available.",
-    "Vorheriger Turnip-Treiber wiederhergestellt.": "Previous Turnip driver restored."
+    "Vorheriger Turnip-Treiber wiederhergestellt.": "Previous Turnip driver restored.",
+    "Peanuts Native ist nicht installiert": "Peanuts Native is not installed",
+    "Switch Nativ (Banana & Peanuts)": "Switch Native (Banana & Peanuts)",
+    "Switch Nativ": "Switch Native",
+    "Native Switch-Engines": "Native Switch Engines",
+    "Jetzt umwandeln": "Convert now",
+    "Nativ AOT": "Native AOT",
+    "Keine Switch-ROM-Datei (.nsp / .xci) zum Umwandeln gefunden.": "No Switch ROM file (.nsp / .xci) found to convert.",
+    "Mindestens 12 GB freier Speicherplatz für die native Umwandlung erforderlich.": "At least 12 GB of free storage is required for native conversion.",
+    "Führt Switch-Spiele direkt als native ARM64- & Vulkan-Programme ohne Emulator aus.": "Runs Switch games directly as native ARM64 & Vulkan programs without an emulator.",
+    "Native ARM64-Engine für Switch- und Switch-2-Spiele mit täglichem Auto-Update.": "Native ARM64 engine for Switch and Switch 2 games with daily auto-updates.",
+    "Switch-Spiele selbstständig umwandeln": "Convert Switch games automatically",
+    "Wandelt neue Switch-Spiele (.nsp / .xci / .nsz) in ROMs/switch im Leerlauf vollautomatisch in native Spiele um – ein Emulator wird nicht mehr benötigt.": "Automatically converts new Switch games (.nsp / .xci / .nsz) in ROMs/switch into native games while idle – no emulator needed.",
+    "Alle Switch-Spiele laufen zu 100 % nativ ohne Emulator und werden im Leerlauf selbstständig umgewandelt.": "All Switch games run 100% natively without an emulator and are converted automatically while idle.",
+    "Switch-Spiele auf deinem Thor": "Switch games on your Thor",
+    "Neue Spiele in ROMs/switch werden im Leerlauf automatisch nativ umgewandelt; Updates (.nsp) liegen optional unter Switch-Updates.": "New games in ROMs/switch are converted natively while idle; updates (.nsp) can be placed in Switch-Updates.",
+    "Bereits vollständig in ein natives ARM64-Spiel umgewandelt – startet sofort ohne Emulator.": "Already converted into a native ARM64 game – launches instantly without an emulator.",
+    "Startet die native ARM64- & Vulkan-Shader-Umwandlung sofort im Hintergrund.": "Starts the native ARM64 & Vulkan shader conversion immediately in the background."
   },
   "rules": [
     [
@@ -1732,6 +1768,26 @@
     [
       "„(.+)“ ist jetzt als natives Switch-Spiel bereit!",
       "“{1}” is now ready as a native Switch game!"
+    ],
+    [
+      "„(.+)“ wird automatisch nativ umgewandelt – gleich spielbereit!",
+      "“{1}” is being converted natively – ready to play shortly!"
+    ],
+    [
+      "Konnte keine Switch Title-ID aus „(.+)“ lesen\\.",
+      "Could not read a Switch Title ID from “{1}”."
+    ],
+    [
+      "„(.+)“ \\((.+)\\) wird von Peanuts Native noch nicht unterstützt\\.",
+      "“{1}” ({2}) is not yet supported by Peanuts Native."
+    ],
+    [
+      "Universal-Host aktiv · (\\d+) Profile",
+      "Universal host active · {1} profiles"
+    ],
+    [
+      "(\\d+) nativ bereit",
+      "{1} natively ready"
     ],
     [
       "Umwandlung fehlgeschlagen: (.+)",
@@ -2852,6 +2908,18 @@
     [
       "Handbuch \\((.+)\\)",
       "Manual ({1})"
+    ],
+    [
+      "Kurz-Tipp: (.+)",
+      "Short pick: {1}"
+    ],
+    [
+      "(\\d+) Spiele bereit",
+      "{1} games ready"
+    ],
+    [
+      "(.+) gespielt · Kosmos starten",
+      "{1} played · Start Cosmos"
     ],
     [
       "^Ungültiges Turnip-Paket: (.+)$",

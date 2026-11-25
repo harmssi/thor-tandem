@@ -1,0 +1,23 @@
+{
+  "name": "iiSU Pearl",
+  "colors": {
+    "bg": "#edf2f8",
+    "panel": "#ffffff",
+    "raised": "#dfe7f2",
+    "line": "#c5d2e3",
+    "text": "#111827",
+    "muted": "#4b5b73",
+    "accent": "#0284c7",
+    "live": "#059669",
+    "warn": "#e11d48"
+  },
+  "gradient": ["#0ea5e9", "#6366f1"],
+  "fonts": {
+    "ui": ["Inter", "Adwaita Sans", "Noto Sans"],
+    "display": ["Inter", "Adwaita Sans", "Noto Sans"],
+    "body": ["Inter", "Adwaita Sans", "Noto Sans"]
+  },
+  "radius": 1.38,
+  "glow": 0.65,
+  "gameAccent": true
+}

@@ -33,7 +33,7 @@ CATS = [  # id, title, icon, icon colour, what the top screen says while the lis
     ('onoff', 'Ein / Aus', 'off', '#ff453a', 'Standby, Neustart, Ausschalten und der Desktop.'),
 ]
 AREAS = [c for c in CATS if c]
-TITLES = {c[0]: c[1] for c in AREAS} | {'controls>map': 'Tastenbelegung', 'network>wifi': 'WLAN', 'bluetooth>dev': 'Gerät', 'library>restore': 'Wiederherstellen', 'library>stats': 'Spielzeit & Statistik', 'library>sysbackup': 'Linux- & Tandem-Backup', 'library>storage': 'Android- & Linux-Speicher', 'library>cleanup': 'Speicher-Bereinigung', 'library>compress': 'Spiele schrumpfen (CHD / RVZ)', 'updates>companions': 'Spiel-Begleiter', 'updates>apps': 'Emulatoren & Quellen', 'updates>native': 'Switch-Spiele nativ'}
+TITLES = {c[0]: c[1] for c in AREAS} | {'controls>map': 'Tastenbelegung', 'network>wifi': 'WLAN', 'bluetooth>dev': 'Gerät', 'library>restore': 'Wiederherstellen', 'library>stats': 'Spielzeit & Statistik', 'library>sysbackup': 'Linux- & Tandem-Backup', 'library>storage': 'Android- & Linux-Speicher', 'library>cleanup': 'Speicher-Bereinigung', 'library>compress': 'Spiele schrumpfen (CHD / RVZ)', 'updates>companions': 'Spiel-Begleiter', 'updates>apps': 'Emulatoren & Quellen', 'updates>native': 'Switch Nativ (Banana & Peanuts)'}
 ICONS = {
     'screens': '<rect x="5" y="3" width="14" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="5" y="13" width="14" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/>',
     'light': '<circle cx="12" cy="12" r="4.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 2.5v2.6M12 18.9v2.6M2.5 12h2.6M18.9 12h2.6M5.3 5.3l1.8 1.8M16.9 16.9l1.8 1.8M5.3 18.7l1.8-1.8M16.9 7.1l1.8-1.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
@@ -543,14 +543,25 @@ def groups(win, page):
     if page == 'look':
         rows = [{'k': 'check', 't': t['name'], 'on': t['id'] == ui.THEME['id'], 'fn': lambda t=t: set_theme(win, t['id']), 'help': 'Farben und Stil der Oberfläche auf beiden Bildschirmen.'}
                 for t in CFG.get('themes') or []]
+        cur_cols = int(CFG.get('grid_cols') or 5)
         disp = [choice('Ansicht', [('grid', 'Kacheln'), ('stage', 'Bühne')], CFG.get('view_mode') or 'grid',
                        lambda v: config_set(win, view_mode=v),
-                       'Kacheln zeigt ein 5-Spalten-Raster; Bühne präsentiert die Spiele groß in der Mitte als gleitendes Karussell.'),
+                       'Kacheln zeigt ein zoombares Poster-Raster; Bühne präsentiert die Spiele groß in der Mitte als gleitendes Karussell.'),
+                choice('Raster-Größe (3DS-Zoom)', [(3, '3 Groß'), (4, '4 Mittel'), (5, '5 Standard'), (6, '6 Kompakt')],
+                       cur_cols if cur_cols in (3, 4, 5, 6) else 5,
+                       lambda v: config_set(win, grid_cols=v),
+                       'Stufenloser Konsolen-Zoom für die quadratischen Kacheln (3 bis 6 Spalten) wie am Nintendo 3DS & iiSU.'),
+                toggle('Start-Pods (Cocoon-Dashboard)', CFG.get('home_pods', False),
+                       lambda v: config_set(win, home_pods=v),
+                       'Zeigt oben auf dem Start-Tab interaktive Bento-Pods für Weiterspielen (mit Live-Szene & Fortschritt), Zufalls-Tipp und Sammlung.'),
+                toggle('3D-Spielehüllen & Modul-Vorschau', CFG.get('showcase_3d', True),
+                       lambda v: config_set(win, showcase_3d=v),
+                       'Präsentiert auf dem oberen 120-Hz-OLED schwebende 3D-Spielehüllen im Originalformat samt herausgleitendem Spielmodul bzw. Disc (iiSU-Stil).'),
                 toggle('Plattform-Rahmen', CFG.get('overlays', True), lambda v: (win.comp_cache.clear(), config_set(win, overlays=v)),
                        'Legt farbige Konsolen-Rahmen und Plattform-Abzeichen (Cocoon) um die Spiele-Cover.'),
                 choice('Animationen', [('full', 'Flüssig'), ('reduced', 'Reduziert')], CFG.get('motion') or 'full',
                        lambda v: config_set(win, motion=v),
-                       'Flüssige Übergänge für Cover, Fokusring und Karussell, oder reduzierte Bewegung.')]
+                       'Flüssige Feder-Physik für Cover, Fokusring, 3D-Hüllen und Scharnier-Aurora, oder reduzierte Bewegung.')]
         return [('Darstellung', disp, None),
                 ('Thema', rows, 'Die Hervorhebung nimmt im Spiel die Farbe des Covers an, wenn das Thema es vorsieht.'),
                 ('Sprache', [choice('Sprache / Language', [('de', 'Deutsch'), ('en', 'English')], CFG.get('lang') or 'de', lambda v: config_set(win, lang=v),
@@ -868,14 +879,15 @@ def groups(win, page):
         ]
         out = [(None, rows, 'Quelle: ' + (CFG.get('update_url') or 'keine') if CFG.get('update_url') is not None else None),
                ('Begleiter & Paketquellen', hub_rows, None)]
-        if SN.get('banana_version') or SN.get('peanuts_version') or any(g.get('supported') for g in (SN.get('games') or [])):
+        if SN.get('banana_version') or SN.get('peanuts_version') or (SN.get('games') or []):
+            n_conv = sum(1 for g in (SN.get('games') or []) if g.get('converted'))
             nat_rows = [
-                {'k': 'link', 't': 'Switch-Spiele nativ umwandeln',
-                 'v': (SN.get('job') or {}).get('step') if (SN.get('job') or {}).get('running') else f'{sum(1 for g in (SN.get("games") or []) if g.get("supported"))} kompatibel',
+                {'k': 'link', 't': 'Switch Nativ (Banana & Peanuts)',
+                 'v': (SN.get('job') or {}).get('step') if (SN.get('job') or {}).get('running') else f'{n_conv} nativ bereit',
                  'fn': lambda: go_page(win, 'updates>native'),
-                 'help': 'Zeigt kompatible Switch-Spiele auf der Karte und wandelt sie direkt auf dem Thor in native Pakete um.'},
+                 'help': 'Alle Switch-Spiele laufen zu 100 % nativ ohne Emulator und werden im Leerlauf selbstständig umgewandelt.'},
             ]
-            out.append(('Erweitert', nat_rows, None))
+            out.append(('Switch Nativ', nat_rows, None))
         return out
     if page == 'updates>companions':
         UC = getattr(win, 'UPDC', None) or {}
@@ -998,24 +1010,42 @@ def groups(win, page):
     if page == 'updates>native':
         SN = getattr(win, 'SWNAT', None) or {}
         job = SN.get('job') or {}
+        eng_rows = [
+            {'k': 'info', 't': 'Peanuts Native',
+             'v': ('✓ ' + str(SN['peanuts_version'])) if SN.get('peanuts_version') else 'nicht installiert',
+             'sub': f'Universal-Host aktiv · {SN.get("catalog_count", 0)} Profile' if SN.get('generic_host') else '',
+             'help': 'Führt Switch-Spiele direkt als native ARM64- & Vulkan-Programme ohne Emulator aus.'},
+            {'k': 'info', 't': 'BananaNative',
+             'v': ('✓ ' + str(SN['banana_version'])) if SN.get('banana_version') else 'nicht installiert',
+             'help': 'Native ARM64-Engine für Switch- und Switch-2-Spiele mit täglichem Auto-Update.'},
+            toggle('Switch-Spiele selbstständig umwandeln', CFG.get('auto_switch_native', True),
+                   lambda v: config_set(win, auto_switch_native=v),
+                   'Wandelt neue Switch-Spiele (.nsp / .xci / .nsz) in ROMs/switch im Leerlauf vollautomatisch in native Spiele um – ein Emulator wird nicht mehr benötigt.'),
+        ]
         j_rows = []
         if job.get('running'):
             j_rows.append({'k': 'info', 't': job.get('title', ''), 'v': job.get('step', 'läuft …'), 'help': 'Umwandlung läuft im Hintergrund weiter.'})
         elif job.get('error'):
             j_rows.append({'k': 'info', 't': 'Letzter Lauf', 'v': 'Fehler', 'sub': job['error'][:80], 'help': job['error']})
-        cand = [g for g in (SN.get('games') or []) if g.get('supported')]
-        c_rows = [{
-            'k': 'button',
-            't': g['t'],
-            'v': '✓ Nativ bereit' if g.get('converted') else ('Umwandeln' if g.get('host_ready') else 'Profil bereit'),
-            'sub': ('Mit Begleiter · ' if g.get('companion') else '') + ('Update erkannt' if g.get('has_update') else 'Basis-Dump'),
-            'fn': lambda gid=g['id']: win.post('api/switch_native', {'id': gid},
-                                               then=lambda r: (setattr(win, 'swnat_at', 0), r and win.toast(r.get('error') or r.get('text', '')))),
-            'help': 'Startet die native ARM64- & Vulkan-Shader-Umwandlung im Hintergrund (dauert je nach Spiel ca. 5–25 Min.).',
-        } for g in cand]
-        return ([('Aktiver Auftrag', j_rows, None)] if j_rows else []) + [
-            ('Kompatible Switch-Spiele auf deinem Thor', c_rows or [{'k': 'info', 't': 'Keine passenden Switch-Spiele gefunden', 'v': '', 'help': 'Lege .nsp- oder .xci-Dateien in ROMs/switch ab.'}],
-             'Updates (.nsp) kannst du optional im Web-Dashboard unter Bibliothek › Switch-Update hochladen.')]
+        cand = list(SN.get('games') or [])
+        c_rows = []
+        for g in cand:
+            sub_txt = ('Mit Begleiter · ' if g.get('companion') else '') + ('Update erkannt' if g.get('has_update') else 'Nativ AOT')
+            if g.get('converted'):
+                c_rows.append({
+                    'k': 'info', 't': g['t'], 'v': '✓ Nativ bereit', 'sub': sub_txt,
+                    'help': 'Bereits vollständig in ein natives ARM64-Spiel umgewandelt – startet sofort ohne Emulator.',
+                })
+            else:
+                c_rows.append({
+                    'k': 'button', 't': g['t'], 'v': 'Jetzt umwandeln', 'sub': sub_txt,
+                    'fn': lambda gid=g['id']: win.post('api/switch_native', {'id': gid},
+                                                       then=lambda r: (setattr(win, 'swnat_at', 0), r and win.toast(r.get('error') or r.get('text', '')))),
+                    'help': 'Startet die native ARM64- & Vulkan-Shader-Umwandlung sofort im Hintergrund.',
+                })
+        return [('Native Switch-Engines', eng_rows, None)] + ([('Aktiver Auftrag', j_rows, None)] if j_rows else []) + [
+            ('Switch-Spiele auf deinem Thor', c_rows or [{'k': 'info', 't': 'Keine passenden Switch-Spiele gefunden', 'v': '', 'help': 'Lege .nsp- oder .xci-Dateien in ROMs/switch ab.'}],
+             'Neue Spiele in ROMs/switch werden im Leerlauf automatisch nativ umgewandelt; Updates (.nsp) liegen optional unter Switch-Updates.')]
     if page == 'about':
         B = win.BATT
         ai_rows = [

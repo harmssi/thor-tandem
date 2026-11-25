@@ -1,0 +1,23 @@
+{
+  "name": "iiSU Aero OLED",
+  "colors": {
+    "bg": "#04060c",
+    "panel": "#101726",
+    "raised": "#182236",
+    "line": "#283652",
+    "text": "#f4f8ff",
+    "muted": "#94a6c4",
+    "accent": "#38bdf8",
+    "live": "#2dd4bf",
+    "warn": "#fb7185"
+  },
+  "gradient": ["#38bdf8", "#818cf8"],
+  "fonts": {
+    "ui": ["Inter", "Adwaita Sans", "Noto Sans"],
+    "display": ["Inter", "Adwaita Sans", "Noto Sans"],
+    "body": ["Inter", "Adwaita Sans", "Noto Sans"]
+  },
+  "radius": 1.32,
+  "glow": 0.95,
+  "gameAccent": true
+}

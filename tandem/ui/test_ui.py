@@ -582,6 +582,15 @@ class Looks(unittest.TestCase):
         self.assertEqual((ui.FOCUS.name(), ui.INK.name()), ('#00cc66', '#07080b'))
         ui.apply_theme(ui.read_theme('toravo'))
         self.assertEqual(ui.FOCUS.name(), '#ffb23e')
+        # iiSU Aero OLED & iiSU Pearl flagship themes + spring physics
+        aero = ui.read_theme('iisu-aero')
+        pearl = ui.read_theme('iisu-pearl')
+        self.assertEqual((aero['name'], aero['colors']['accent']), ('iiSU Aero OLED', '#38bdf8'))
+        self.assertEqual(pearl['name'], 'iiSU Pearl')
+        ui.apply_theme(pearl)
+        self.assertTrue(ui.iisu_fx.is_light())
+        ui.apply_theme(ui.read_theme('toravo'))
+        self.assertFalse(ui.iisu_fx.is_light())
 
     def test_game_accent(self):
         red, grey = [(200, 30, 40)] * 300 + [(20, 20, 20)] * 200 + [(240, 240, 240)] * 76, [(90, 90, 90)] * 500 + [(200, 30, 40)] * 5
@@ -1013,7 +1022,7 @@ class Views(unittest.TestCase):
         game = socketserver.ThreadingUnixStreamServer(path, FakeAok)
         threading.Thread(target=game.serve_forever, daemon=True).start()
         bottom.RUN['port'] = {'deck': 'aok', 'socket': path}
-        self.paint('aok'); self.wait(lambda: bottom.deck and bottom.deck.map is not None and bottom.deck.icons.get((50706, 3)))
+        self.paint('aok'); self.wait(lambda: bottom.deck and getattr(bottom.deck, 'map', None) is not None and bottom.deck.icons.get((50706, 3)))
         self.paint('aok-commands')
         self.assertEqual((bottom.deck.map.width(), bottom.deck.icons[50706, 3].pixel(0, 0), bottom.deck.art), (4, 0xFF00FF00, None))
         self.tap('Dorfzentrum'); self.tap('command1'); self.tap('faster'); self.wait(lambda: FakeAok.commands == ['cmd 5 0 0', 'cmd 1 1 0', 'cmd 15 1 0'])

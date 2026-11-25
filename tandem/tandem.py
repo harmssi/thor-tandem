@@ -119,7 +119,7 @@ SYSTEMS = {
     'doom': ('DOOM', 0, 'wad iwad pwad', [('RetroArch', ra('prboom'))]),
     'quake': ('Quake', 25, 'pak', [('RetroArch', ra('tyrquake'))]),
     'pico8': ('PICO-8', 325, 'p8 png zip', [('RetroArch', ra('fake08', 'retro8'))]),
-    'switch': ('Switch', 355, 'nsp xci nsz', [('Eden', app('Eden*.AppImage', '-f', '-g'))]),  # not in the Armada Store: Tandem's own updater fetches it
+    'switch': ('Switch', 355, 'nsp xci nsz', [('PeanutsNative', ('cmd', '.local/opt/peanuts/AppDir/AppRun', ()))]),
     'port': ('Ports', 28, '', []),  # no folder of ROMs: the games in PORTS
 }
 # Native ports: games built for this device (ports/<folder>/build.sh), which install.sh puts next to Tandem's own folder.
@@ -270,6 +270,9 @@ def has_flatpak(ref): return any((d / ref).is_dir() for d in FLATPAK_DIRS)
 def resolve(kind, target, args):
     """Command prefix for one emulator/app, or (None, reason)."""
     if kind == 'cmd':
+        if '/' in target:
+            cand = target if target.startswith('/') else str(HOME / target)
+            return ([cand, *args], None) if os.access(cand, os.X_OK) else (None, 'Peanuts Native ist nicht installiert')
         path = which(target)
         return ([path, *args], None) if path else (None, f'{target} ist nicht installiert')
     if kind == 'appimage':
@@ -796,6 +799,7 @@ class Library:
                      'cover': art(f'{appid}p.png') or art(f'{appid}p.jpg'), 'hero': art(f'{appid}_hero.png') or art(f'{appid}_hero.jpg'),
                      **({'logo': sc_logo} if sc_logo else {})}
             if direct:
+                entry['t'] = re.sub(r'\s*\((?:PeanutsNative|BananaNative)\)\s*$', '', name).strip() or name
                 entry['direct'] = direct
                 entry['native_engine'] = 'PeanutsNative' if 'peanuts' in direct[0].lower() else 'BananaNative'
                 sc_tid = ''
@@ -841,6 +845,21 @@ class Library:
                   **({'box': np_box} if np_box else {}), **({'logo': hi_logo} if hi_logo else {})}
             if hi_shot and hi_shot != ng['hero']: ng['shot'] = hi_shot
             games[nid] = ng
+        native_by_tid = {g['tid'].upper(): g for g in games.values() if g.get('tid') and g.get('direct')}
+        for gid in [k for k, g in games.items() if g.get('s') == 'switch' and g.get('path') and not g.get('direct')]:
+            g = games[gid]
+            tid = companion._probe_title_id(g['path'], HOME, self.roots)
+            if tid:
+                g['tid'] = tid
+            if tid and tid in native_by_tid:
+                nat = native_by_tid[tid]
+                nat.setdefault('rom_path', g['path'])
+                for mk in ('cover', 'box', 'hero', 'logo', 'shot', 'video', 'desc', 'genre', 'dev', 'year', 'ttb'):
+                    if g.get(mk) and not nat.get(mk):
+                        nat[mk] = g[mk]
+                del games[gid]
+            else:
+                g['needs_native'] = True
         for port, (title, folder, _, deck) in PORTS.items():
             if not (PORTS_DIR / folder / 'run').is_file(): continue
             own = PORTS_DIR / folder / 'dist/art/cover.png'  # art the port brings itself (no Steam release to borrow from)
@@ -1027,6 +1046,22 @@ class Tandem:
                 self.publish('toast', {'text': f'Begleiter automatisch eingerichtet: {", ".join(changes[:3])}.'})
         threading.Thread(target=work, daemon=True).start()
 
+    def auto_convert_switch_bg(self):
+        """Autonomously convert any unconverted Switch .nsp/.xci/.nsz ROMs into native ARM64 packs while idle."""
+        if self.dry or not load_config().get('auto_switch_native', True):
+            return
+        def _on_conv(ok, msg, _gid):
+            if ok:
+                self.library.scan()
+                self.publish('library')
+            if msg:
+                self.publish('toast', {'text': msg})
+        companion.auto_convert_pending_switch(
+            lambda: self.library.games, self.library.roots, HOME,
+            is_idle=lambda: not self.run and not DOZE,
+            on_converted=_on_conv,
+        )
+
     def ask_swkbd(self, data):
         with self.lock:
             if self.swkbd:
@@ -1136,6 +1171,16 @@ class Tandem:
                 if game['t'] == 'WoW Forever' and not self.dry: wow_login()  # its own login, as under Android (no Battle.net hand-over on ARM64)
                 if game.get('keys'): game = {**game, 'layout': region_layout()}; run_quiet(['setxkbmap', game['layout']])  # as for the terminal
             if not label: return {'error': cmd}
+            if game.get('s') == 'switch' and not game.get('direct'):
+                if not self.dry:
+                    def _on_c(ok, msg):
+                        if ok:
+                            self.library.scan()
+                            self.publish('library')
+                        if msg:
+                            self.publish('toast', {'text': msg})
+                    companion.switch_native_convert(game, self.library.roots, HOME, _on_c)
+                return {'error': f'„{game["t"]}“ wird automatisch nativ umgewandelt – gleich spielbereit!'}
             assigned_pack = self.saved.get('pack_assign', {}).get(gid)
             if label == 'RetroArch':
                 pack, pack_other, pack_cands = (find_pack_info(game, assigned=assigned_pack) if self.dry
@@ -2794,6 +2839,9 @@ def save_config(data):
     if data.get('lang') in ('de', 'en'): config['lang'] = data['lang']
     if data.get('theme') in [t['id'] for t in themes()]: config['theme'] = data['theme']
     if data.get('view_mode') in ('grid', 'stage'): config['view_mode'] = data['view_mode']
+    if data.get('grid_cols') in (3, 4, 5, 6): config['grid_cols'] = int(data['grid_cols'])
+    if isinstance(data.get('home_pods'), bool): config['home_pods'] = data['home_pods']
+    if isinstance(data.get('showcase_3d'), bool): config['showcase_3d'] = data['showcase_3d']
     if isinstance(data.get('overlays'), bool): config['overlays'] = data['overlays']
     if data.get('motion') in ('full', 'reduced'): config['motion'] = data['motion']
     if data.get('rest_min') in (0, 1, 3, 5, 10): config['rest_min'] = data['rest_min']
@@ -2848,6 +2896,7 @@ def save_config(data):
         thor_airpods.MANAGER.set_ear_pause(data['airpods_ear_pause'])
     if isinstance(data.get('auto_update'), bool): config['auto_update'] = data['auto_update']
     if isinstance(data.get('auto_companions'), bool): config['auto_companions'] = data['auto_companions']
+    if isinstance(data.get('auto_switch_native'), bool): config['auto_switch_native'] = data['auto_switch_native']
     travel_changed = None
     if isinstance(data.get('travel_mode'), bool) and data['travel_mode'] != config.get('travel_mode', False):
         config['travel_mode'] = data['travel_mode']
@@ -3065,6 +3114,7 @@ def public_config():
             'cloud_saves': bool(config.get('cloud_saves', True)),
             'auto_update': config.get('auto_update', True),
             'auto_companions': config.get('auto_companions', True),
+            'auto_switch_native': bool(config.get('auto_switch_native', True)),
             'travel_mode': bool(config.get('travel_mode', False)),
             'auto_travel': bool(config.get('auto_travel', False)),
             'auto_eco_games': bool(config.get('auto_eco_games', True)),
@@ -3079,6 +3129,9 @@ def public_config():
             'ai_workdir': config.get('ai_workdir', ''),
             'save_target': config.get('save_target', saves.DEFAULT_TARGET),
             'view_mode': config.get('view_mode') if config.get('view_mode') in ('grid', 'stage') else 'grid',
+            'grid_cols': int(config['grid_cols']) if config.get('grid_cols') in (3, 4, 5, 6) else 5,
+            'home_pods': bool(config.get('home_pods', False)),
+            'showcase_3d': bool(config.get('showcase_3d', True)),
             'overlays': config.get('overlays', True),
             'motion': config.get('motion') if config.get('motion') in ('full', 'reduced') else 'full',
             'kb_layout': config.get('kb_layout', ''), 'kb_haptics': config.get('kb_haptics', True),
@@ -3148,15 +3201,8 @@ def achievements(game):
     return progress[1]
 
 
-# Emulators the Armada Store does not carry. Tandem fetches them from the project's own release page and keeps them current.
-EXTRAS = {'eden': {'name': 'Eden (Switch)', 'api': 'https://git.eden-emu.dev/api/v1/repos/eden-emu/eden/releases?limit=1',
-                   'asset': r'^Eden-Linux-v[\d.]+-aarch64-gcc-standard\.AppImage$', 'file': 'Eden.AppImage',
-                   'keys': ('BIOS/switch', '.local/share/eden/keys'), 'slot': 'eden'},
-          # The project's nightly builds: same program file, so choosing one replaces the other. The release there has
-          # no attached files; the download address stands in its text.
-          'eden-nightly': {'name': 'Eden (Switch) Nightly', 'api': 'https://git.eden-emu.dev/api/v1/repos/eden-ci/nightly/releases?limit=1',
-                           'body': r'https://nightly\.eden-emu\.dev/[\w./-]+aarch64-gcc-standard\.AppImage', 'file': 'Eden.AppImage',
-                           'keys': ('BIOS/switch', '.local/share/eden/keys'), 'slot': 'eden'}}
+# Switch games run 100 % natively via Peanuts Native & BananaNative (Eden emulator retired).
+EXTRAS = {}
 
 
 def extras_state():
@@ -3565,7 +3611,7 @@ def setup_info(tandem):
     for system in sorted({g['s'] for g in games}):
         if emulator(system)[0]: continue
         label = SYSTEMS[system][3][0][0] if SYSTEMS[system][3] else ''
-        missing.append({'s': system, 'name': SYSTEMS[system][0], 'n': sum(1 for g in games if g['s'] == system), 'emu': label, 'store': STORE_IDS.get(label), 'extra': 'eden' if label == 'Eden' else None})
+        missing.append({'s': system, 'name': SYSTEMS[system][0], 'n': sum(1 for g in games if g['s'] == system), 'emu': label, 'store': STORE_IDS.get(label), 'extra': None})
     config = public_config()
     return {'folders': folders, 'missing': missing, 'install': install_possible(), 'ra_user': config['ra_user'], 'ra_login': config['ra_login'],
             'wifi': system_info(tandem.library.roots)['ssid'], 'layout': region_layout()}
@@ -4123,7 +4169,11 @@ def handler(tandem):
                     tandem.publish('key', {'a': a})
                 return self.send(200, {'ok': True})
             if path == '/api/launch':
-                result = tandem.launch(str(data.get('id', '')))
+                gid_l = str(data.get('id', ''))
+                gm_l = tandem.library.games.get(gid_l)
+                if gm_l and gm_l.get('s') not in ('app', 'term'):
+                    tandem.publish('launch_fx', {'title': gm_l.get('t', ''), 'id': gid_l})
+                result = tandem.launch(gid_l)
                 if 'error' in result: tandem.publish('toast', {'text': result['error']})
                 elif not result['tracked']: tandem.publish('toast', {'text': result.get('text') or 'Gestartet – zurück geht es über die Home-Taste.'})
                 return self.send(200, result)
@@ -4513,6 +4563,7 @@ def handler(tandem):
                 tandem.library.scan()
                 new = scrape(list(tandem.library.games.values()))  # only games still without a cover are asked for
                 if new: tandem.library.scan()
+                tandem.auto_convert_switch_bg()
                 tandem.publish('library')
                 return self.send(200, {'games': len(tandem.library.games), 'covers': new})
             self.send(404, {'error': 'unbekannt'})
@@ -4633,6 +4684,7 @@ def pair_handler(tandem):
                                               tandem.library.roots, CONFIG.parent, set(SYSTEMS))
                 if res.get('ok'):
                     tandem.library.scan(); tandem.publish('library')
+                    tandem.auto_convert_switch_bg()
                     tandem.publish('toast', {'text': res['text']})
                 return self.reply(200, res, 'application/json')
             raw = self.rfile.read(min(int(self.headers.get('Content-Length') or 0), 262144))
@@ -4681,6 +4733,7 @@ def pair_handler(tandem):
                 tandem.library.scan()
                 if scrape(list(tandem.library.games.values())): tandem.library.scan()
                 tandem.sync_gba_packs_bg(force=False)
+                tandem.auto_convert_switch_bg()
                 tandem.publish('library'); result = {'text': f'{len(tandem.library.games)} Spiele gefunden.'}
             elif what == 'update':
                 result = {'text': update_extra(data.get('id') if data.get('id') in EXTRAS else 'eden', tandem.library.roots)}; tandem.publish('library')
@@ -4980,6 +5033,9 @@ def main():
             tandem.publish('library')
     if not args.dry_run:
         threading.Thread(target=sync_protondb_bg, daemon=True).start()
+        t_sw_auto = threading.Timer(12.0, tandem.auto_convert_switch_bg)
+        t_sw_auto.daemon = True
+        t_sw_auto.start()
         thor_airpods.MANAGER.start(tandem)
         def _init_silent_endurance():
             thor_perf.ensure_audio_powersave(HOME)

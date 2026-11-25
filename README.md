@@ -26,7 +26,20 @@ The interface speaks English or German (Settings › Look › Language; the inst
 
 ![Dual-Screen PC & Retro Library on AYN Thor](docs/screenshots/steam-library-dual.png)
 
-## New in 1.7.0 — Silent 0-RPM & Max Battery Endurance Suite (`0 MB` Extra RAM)
+## New in 1.8.0 — iiSU × Cocoon Unified Square Visual Edition (`0 MB` Extra Bloat · Pure Native `QPainter`)
+
+- **Unified `1:1` Square Cocoon × iiSU Tile Grid Across All Tabs & Zoom Levels (`ui/tandem_ui.py`, `ui/iisu_fx.py`):**
+  - Strictly symmetrical **`1:1` square squircle tiles** across `Start`, `Systems`, `Steam`, `Apps`, and every console view at all zoom levels (`3 · 4 · 5 · 6` columns), featuring full-bleed cover framing (zero blurred sidebars), native Cocoon platform frames/badges, and luminous two-tone platform-hue gradient rims.
+- **Cohesive Full-Width Glass Console Menu Bar & Symmetrical Top Header (`ui/iisu_fx.py`, `ui/tandem_ui.py`):**
+  - Bottom screen features a single edge-aligned **Liquid-Glass Console Dock** (`L · Tabs · R` + authored SVG action capsule for Search, View Mode, Grid Zoom, Random & Options) aligned pixel-for-pixel with the square tile grid, mirrored by a matching **Top-Screen Channel & Status Header** on the exact same horizontal axis.
+- **iiSU-Style Floating 3D Retail Cases + Cartridge / Optical Disc Pop-Out (`ui/iisu_fx.py`, `ui/tandem_ui.py`):**
+  - Showcases every game on the top 120 Hz AMOLED in its **authentic 3D retail packaging** (crimson Switch case, GBA/SNES box, PS1 jewel case, PS2/GC keep-case) with sculpted spine bevel, smooth radial shadow, diagonal Aero glass sheen, Living-Moment PIP, and an **animated Game Cartridge / Switch Card / Iridescent Optical Disc** sliding out from behind the case.
+- **Dual-Screen "Hinge-Bridge" Aurora Continuity & 2 Flagship Themes (`ui/themes/iisu-aero.json`, `ui/themes/iisu-pearl.json`):**
+  - Twin two-tone aurora plumes derived from the selected game's cover flow seamlessly across the physical clamshell hinge (`:0` ↔ `:1`), paired with **`iiSU Aero OLED`** (true AMOLED deep ink `#04060c` + sky-cyan glass) and **`iiSU Pearl`** (daylight porcelain & frosted pearl cards), bouncy spring physics (`0 %` CPU at rest), optional Cocoon Bento Pods, authored vector console silhouettes, and a **360 ms Console Launch Ceremony** (`0 ms` added launch wait).
+- **100 % Emulator-Free Switch Pipeline — Autonomous Native Conversion (`companion.py`, `tandem.py`):**
+  - Retires legacy Switch emulation (`Eden`) completely in favour of **Peanuts Native `0.1.8-1`** (`nxhost_generic` Universal Runtime-Profile Host + 77+ profiles + automatic provisional profiling) and **BananaNative `0.3.53-preview`**; automatically deduplicates Switch titles and converts any newly added `.nsp` / `.xci` / `.nsz` in `ROMs/switch` into a native ARM64 + Vulkan AOT game in the background while idle.
+
+Earlier in 1.7.0 — Silent 0-RPM & Max Battery Endurance Suite (`0 MB` Extra RAM):
 
 - **True `0 dB / 0 RPM` Semi-Passive Fan Curves & Smooth Hysteresis (`os/power-profiles.conf`, `thor.py`, `thor_perf.py`):**
   - Cuts fan power completely (`pwm1_enable=3`, **`0 RPM`**) below `52–56 °C` across menu, Standby, 2D/retro games & guides, with `3×` gentler ramp-up (`12`) and thermal-mass smoothing (`0.72`) so brief loading spikes never trigger fan noise, plus a dedicated **`0 dB`** quick-toggle in Quick Menu & Settings.

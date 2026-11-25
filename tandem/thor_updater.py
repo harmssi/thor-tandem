@@ -95,14 +95,6 @@ APPIMAGE_FEEDS = (
         'systems': ('wiiu',),
     },
     {
-        'id': 'eden',
-        'name': 'Eden (Switch)',
-        'api': 'https://git.eden-emu.dev/api/v1/repos/eden-emu/eden/releases?limit=1',
-        'asset': r'^Eden-Linux-v[\d.]+-aarch64-gcc-standard\.AppImage$',
-        'file': 'Eden.AppImage',
-        'systems': ('switch',),
-    },
-    {
         'id': 'rpcs3',
         'name': 'RPCS3 (PS3)',
         'api': 'https://api.github.com/repos/RPCS3/rpcs3-binaries-linux-arm64/releases?per_page=10',
