@@ -545,6 +545,7 @@ def game_env(base_env=None, opt=None, system='', fex_mode='fast', turnip_driver=
         min_ram_kb = 14_500_000 if engine_label == 'BananaNative' or system == 'banananative' else 10_000_000
         if mt_kb >= min_ram_kb and not opt.get('force_fileback'):
             env.setdefault('DM_MEM_FILEBACK', '0')
+            env.setdefault('DM_VK_LOW_RAM', '0')
         if engine_label == 'BananaNative' or system == 'banananative':
             # Disable experimental Turnip 27.0 VK_EXT_mesh_shader (causes Adreno 740 UCHE translation fault / white-out in OoT)
             env.setdefault('DM_VK_MESH', '0')

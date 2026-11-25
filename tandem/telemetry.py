@@ -6,13 +6,14 @@ from pathlib import Path
 
 import thor
 
-BGM_SOCKET = Path(f'/tmp/tandem-bgm-{os.getuid()}.sock')
+BGM_SOCKET = Path(os.environ.get('XDG_RUNTIME_DIR') or f'/tmp') / f'tandem-bgm-{os.getuid()}.sock'
 ERA_BGM_DIR = Path(__file__).resolve().parent / 'ui/bgm'
 ERA_TRACKS = {'8bit': 'era-8bit.ogg', '16bit': 'era-16bit.ogg', 'modern': 'era-modern.ogg'}
 LOCK = threading.Lock()
+_BGM_LOCK = threading.Lock()
 _CPU_PREV = [0, 0]
 _HIST = {'watts': deque(maxlen=36), 'cpu': deque(maxlen=36), 'temp': deque(maxlen=36), 'at': 0.0}
-_BGM = {'proc': None, 'track': '', 'playlist': [], 'idx': 0, 'paused': False, 'vol': 65, 'loop': False, 'era_auto': False, 'era_path': ''}
+_BGM = {'proc': None, 'backend': '', 'path': '', 'track': '', 'playlist': [], 'idx': 0, 'paused': False, 'vol': 65, 'loop': False, 'era_auto': False, 'era_path': '', 'suspended': False}
 
 
 def _read_int(path):
@@ -263,14 +264,94 @@ def music_tracks(extra_dirs=()):
 
 
 def _bgm_ipc(*cmd):
-    if not BGM_SOCKET.exists(): return None
-    try:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
-            s.settimeout(1.0)
-            s.connect(str(BGM_SOCKET))
-            s.sendall(json.dumps({'command': list(cmd)}).encode() + b'\n')
-            return json.loads(s.recv(4096).splitlines()[0])
-    except (OSError, ValueError, IndexError): return None
+    for sock_p in (BGM_SOCKET, Path(f'/tmp/tandem-bgm-{os.getuid()}.sock')):
+        if not sock_p.exists():
+            continue
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+                s.settimeout(0.6)
+                s.connect(str(sock_p))
+                s.sendall(json.dumps({'command': list(cmd)}).encode() + b'\n')
+                raw = s.recv(4096)
+                return json.loads(raw.splitlines()[0]) if raw else {'ok': True}
+        except (OSError, ValueError, IndexError):
+            continue
+    return None
+
+
+def _kill_stray_bgm_pids():
+    """Terminate any orphaned tandem-bgm player (e.g. Flatpak bwrap mpv or ffplay) by exact PID only."""
+    import signal as _sig
+    if os.environ.get('QT_QPA_PLATFORM') == 'offscreen' or not os.path.isdir('/proc'):
+        return
+    skip = {os.getpid(), os.getppid()}
+    targets = []
+    for entry in os.listdir('/proc'):
+        if not entry.isdigit():
+            continue
+        pid = int(entry)
+        if pid in skip:
+            continue
+        try:
+            comm = Path(f'/proc/{pid}/comm').read_text(errors='ignore').strip()
+            if comm not in ('mpv', 'ffplay', 'bwrap'):
+                continue
+            cmd = Path(f'/proc/{pid}/cmdline').read_bytes()
+            if b'tandem-bgm' in cmd or (comm == 'ffplay' and b'TANDEM_BGM_PROC=1' in Path(f'/proc/{pid}/environ').read_bytes()):
+                targets.append(pid)
+        except OSError:
+            continue
+    for pid in targets:
+        try:
+            os.kill(pid, _sig.SIGTERM)
+        except OSError:
+            pass
+    if targets:
+        time.sleep(0.05)
+        for pid in targets:
+            try:
+                os.kill(pid, _sig.SIGKILL)
+            except OSError:
+                pass
+
+
+def _stop_bgm_locked():
+    import signal as _sig
+    p = _BGM['proc']
+    backend = _BGM.get('backend', '')
+    _BGM.update(proc=None, backend='', path='', track='', paused=False, loop=False, era_auto=False, era_path='')
+    if backend == 'mpv':
+        _bgm_ipc('quit')
+    if p is not None and p.poll() is None:
+        try:
+            os.killpg(p.pid, _sig.SIGTERM)
+        except OSError:
+            try: p.terminate()
+            except OSError: pass
+        try:
+            p.wait(timeout=0.15)
+        except subprocess.TimeoutExpired:
+            try: os.killpg(p.pid, _sig.SIGKILL)
+            except OSError:
+                try: p.kill()
+                except OSError: pass
+            threading.Thread(target=p.wait, daemon=True).start()
+    _kill_stray_bgm_pids()
+    BGM_SOCKET.unlink(missing_ok=True)
+    Path(f'/tmp/tandem-bgm-{os.getuid()}.sock').unlink(missing_ok=True)
+
+
+def stop_all_bgm(suspend=True, dry=False):
+    """Immediately silence and terminate all Tandem menu/background music before entering or resuming a game."""
+    if dry or os.environ.get('QT_QPA_PLATFORM') == 'offscreen':
+        with _BGM_LOCK:
+            _BGM['suspended'] = bool(suspend)
+            _BGM.update(proc=None, backend='', path='', track='', paused=False, loop=False, era_auto=False, era_path='')
+        return {'ok': True, 'playing': False}
+    with _BGM_LOCK:
+        _BGM['suspended'] = bool(suspend)
+        _stop_bgm_locked()
+    return {'ok': True, 'playing': False}
 
 
 def bgm_playing():
@@ -282,66 +363,115 @@ def bgm_status():
     p = _BGM['proc']
     alive = bool(p and p.poll() is None)
     if not alive:
-        _BGM['track'], _BGM['era_auto'], _BGM['era_path'] = '', False, ''
+        _BGM['backend'], _BGM['path'], _BGM['track'], _BGM['era_auto'], _BGM['era_path'] = '', '', '', False, ''
     return {'playing': alive and not _BGM['paused'] and bool(_BGM['track']), 'paused': bool(alive and _BGM['paused']),
             'track': _BGM['track'], 'vol': _BGM['vol'], 'loop': bool(_BGM.get('loop')),
             'era_auto': bool(_BGM.get('era_auto')), 'tracks': music_tracks()[:80], 'streams': audio_streams()}
 
 
+def _spawn_ffplay_locked(path, vol, loop):
+    env = {
+        **os.environ,
+        'XDG_RUNTIME_DIR': os.environ.get('XDG_RUNTIME_DIR') or f'/run/user/{os.getuid()}',
+        'TANDEM_BGM_PROC': '1',
+        'PULSE_PROP': 'application.name=tandem-bgm media.name=tandem-bgm media.role=music',
+        'PIPEWIRE_PROPS': '{ media.name = "tandem-bgm" node.name = "tandem-bgm" application.name = "tandem-bgm" }',
+    }
+    env.pop('SDL_AUDIODRIVER', None)
+    cmd = ['ffplay', '-nodisp', '-vn', '-sn', '-loglevel', 'quiet',
+           '-loop', '0' if loop else '1', '-autoexit', '-volume', str(max(0, min(100, int(vol)))), str(path)]
+    return subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                            start_new_session=True, env=env)
+
+
 def bgm_control(action, path='', vol=None, loop=False, era_auto=False):
     """action: 'play' | 'toggle' | 'next' | 'prev' | 'stop' | 'vol'."""
-    if action == 'vol' and vol is not None:
-        _BGM['vol'] = max(0, min(100, int(vol)))
-        _bgm_ipc('set_property', 'volume', _BGM['vol'])
-        return bgm_status()
-    if action == 'stop':
-        p = _BGM['proc']
-        _BGM.update(proc=None, track='', paused=False, loop=False, era_auto=False, era_path='')
-        if p and p.poll() is None:
-            p.terminate()
-            threading.Thread(target=p.wait, daemon=True).start()
-        BGM_SOCKET.unlink(missing_ok=True)
-        return bgm_status()
-    tracks = music_tracks()
-    if action in ('next', 'prev') and tracks:
-        cur = next((i for i, t in enumerate(tracks) if t['title'] == _BGM['track']), 0)
-        pick = tracks[(cur + (1 if action == 'next' else -1)) % len(tracks)]
-        action, path, loop, era_auto = 'play', pick['path'], False, False
-    if action == 'toggle':
-        if _BGM['proc'] and _BGM['proc'].poll() is None:
-            _BGM['paused'] = not _BGM['paused']
-            _bgm_ipc('set_property', 'pause', _BGM['paused'])
-            return bgm_status()
-        if tracks:
-            action, path, loop, era_auto = 'play', tracks[0]['path'], False, False
-        else:
-            return {**bgm_status(), 'error': 'Keine Musikdateien in ~/Music oder auf der Karte (Music/) gefunden.'}
-    if action == 'play' and path:
-        if not os.path.isfile(path) and not path.startswith(('http://', 'https://')):
-            return {'error': 'Datei nicht gefunden.'}
-        if vol is not None:
+    import signal as _sig
+    with _BGM_LOCK:
+        if action == 'vol' and vol is not None:
             _BGM['vol'] = max(0, min(100, int(vol)))
-        if not (_BGM['proc'] and _BGM['proc'].poll() is None):
-            BGM_SOCKET.unlink(missing_ok=True)
-            cmd = (['mpv'] if shutil.which('mpv') else ['flatpak', 'run', 'io.mpv.Mpv']) + [
-                '--no-video', '--idle=yes', '--really-quiet', '--gapless-audio=yes',
-                f'--loop-file={"inf" if loop else "no"}', f'--volume={_BGM["vol"]}',
-                '--audio-client-name=tandem-bgm', f'--input-ipc-server={BGM_SOCKET}']
-            try: _BGM['proc'] = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-            except OSError as e: return {'error': f'Musik-Player nicht verfügbar ({e}).'}
-            for _ in range(25):
-                if BGM_SOCKET.exists(): break
-                time.sleep(0.08)
-        _bgm_ipc('set_property', 'loop-file', 'inf' if loop else 'no')
-        _bgm_ipc('set_property', 'volume', _BGM['vol'])
-        _bgm_ipc('loadfile', path, 'replace')
-        _bgm_ipc('set_property', 'pause', False)
-        _BGM['paused'] = False
-        _BGM['loop'] = bool(loop)
-        _BGM['era_auto'] = bool(era_auto)
-        _BGM['era_path'] = str(path) if era_auto else ''
-        _BGM['track'] = Path(path).stem.replace('_', ' ') if not path.startswith('http') else path
-    return bgm_status()
+            if _BGM.get('backend') == 'mpv':
+                _bgm_ipc('set_property', 'volume', _BGM['vol'])
+            elif _BGM['proc'] and _BGM['proc'].poll() is None:
+                for st in audio_streams():
+                    if st.get('bgm'):
+                        set_stream_volume(st['id'], _BGM['vol'])
+            return bgm_status()
+        if action == 'stop':
+            _stop_bgm_locked()
+            return bgm_status()
+        tracks = music_tracks()
+        if action in ('next', 'prev') and tracks:
+            cur = next((i for i, t in enumerate(tracks) if t['title'] == _BGM['track']), 0)
+            pick = tracks[(cur + (1 if action == 'next' else -1)) % len(tracks)]
+            action, path, loop, era_auto = 'play', pick['path'], False, False
+        if action == 'toggle':
+            p = _BGM['proc']
+            if p and p.poll() is None:
+                _BGM['paused'] = not _BGM['paused']
+                if _BGM.get('backend') == 'mpv':
+                    _bgm_ipc('set_property', 'pause', _BGM['paused'])
+                else:
+                    try: os.killpg(p.pid, _sig.SIGSTOP if _BGM['paused'] else _sig.SIGCONT)
+                    except OSError: pass
+                return bgm_status()
+            if tracks:
+                action, path, loop, era_auto = 'play', tracks[0]['path'], False, False
+            else:
+                return {**bgm_status(), 'error': 'Keine Musikdateien in ~/Music oder auf der Karte (Music/) gefunden.'}
+        if action == 'play' and path:
+            if era_auto and _BGM.get('suspended'):
+                return bgm_status()
+            if not os.path.isfile(path) and not path.startswith(('http://', 'https://')):
+                return {'error': 'Datei nicht gefunden.'}
+            if vol is not None:
+                _BGM['vol'] = max(0, min(100, int(vol)))
+            # Prefer native mpv (IPC), else native ffplay (zero Flatpak bwrap orphaning!), else Flatpak mpv
+            if shutil.which('mpv'):
+                if _BGM.get('backend') != 'mpv' or not (_BGM['proc'] and _BGM['proc'].poll() is None):
+                    _stop_bgm_locked()
+                    cmd = ['mpv', '--no-video', '--idle=yes', '--really-quiet', '--gapless-audio=yes',
+                           f'--loop-file={"inf" if loop else "no"}', f'--volume={_BGM["vol"]}',
+                           '--audio-client-name=tandem-bgm', f'--input-ipc-server={BGM_SOCKET}']
+                    try:
+                        _BGM['proc'] = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                                        stderr=subprocess.DEVNULL, start_new_session=True)
+                        _BGM['backend'] = 'mpv'
+                    except OSError as e:
+                        return {'error': f'Musik-Player nicht verfügbar ({e}).'}
+                    for _ in range(25):
+                        if BGM_SOCKET.exists(): break
+                        time.sleep(0.05)
+                _bgm_ipc('set_property', 'loop-file', 'inf' if loop else 'no')
+                _bgm_ipc('set_property', 'volume', _BGM['vol'])
+                _bgm_ipc('loadfile', path, 'replace')
+                _bgm_ipc('set_property', 'pause', False)
+            elif shutil.which('ffplay'):
+                _stop_bgm_locked()
+                try:
+                    _BGM['proc'] = _spawn_ffplay_locked(path, _BGM['vol'], loop)
+                    _BGM['backend'] = 'ffplay'
+                except OSError as e:
+                    return {'error': f'Musik-Player nicht verfügbar ({e}).'}
+            else:
+                _stop_bgm_locked()
+                cmd = ['flatpak', 'run', '--filesystem=xdg-run', 'io.mpv.Mpv',
+                       '--no-video', '--really-quiet', '--gapless-audio=yes',
+                       f'--loop-file={"inf" if loop else "no"}', f'--volume={_BGM["vol"]}',
+                       '--audio-client-name=tandem-bgm', f'--input-ipc-server={BGM_SOCKET}', str(path)]
+                try:
+                    _BGM['proc'] = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                                    stderr=subprocess.DEVNULL, start_new_session=True)
+                    _BGM['backend'] = 'mpv'
+                except OSError as e:
+                    return {'error': f'Musik-Player nicht verfügbar ({e}).'}
+            _BGM['path'] = str(path)
+            _BGM['paused'] = False
+            _BGM['loop'] = bool(loop)
+            _BGM['era_auto'] = bool(era_auto)
+            _BGM['era_path'] = str(path) if era_auto else ''
+            _BGM['track'] = Path(path).stem.replace('_', ' ') if not path.startswith('http') else path
+        return bgm_status()
 
 
 def era_bgm_path(era='modern', bgm_file=''):
@@ -357,25 +487,33 @@ def era_bgm_path(era='modern', bgm_file=''):
 def sync_era_bgm(era='modern', bgm_file='', enabled=True, vol=32, suspend_for_game=False, dry=False):
     """Start, seamlessly switch, or zero-RAM stop the loopable Era menu soundtrack (`8bit`, `16bit`, `modern`)."""
     if dry or os.environ.get('QT_QPA_PLATFORM') == 'offscreen':
+        with _BGM_LOCK:
+            _BGM['suspended'] = bool(suspend_for_game)
         return {'ok': True, 'dry': True}
-    p = _BGM['proc']
-    alive = bool(p and p.poll() is None)
     if not enabled or suspend_for_game:
-        if alive and _BGM.get('era_auto'):
-            bgm_control('stop')
+        with _BGM_LOCK:
+            _BGM['suspended'] = bool(suspend_for_game)
+            if suspend_for_game or _BGM.get('era_auto') or (_BGM['proc'] and _BGM['proc'].poll() is None and not _BGM.get('track')):
+                _stop_bgm_locked()
         return {'ok': True, 'playing': False}
-    # Respect manual user music playback from ~/Music
-    if alive and not _BGM.get('era_auto') and _BGM.get('track'):
-        return {'ok': True, 'user_music': True}
-    target = era_bgm_path(era, bgm_file)
-    if not target:
-        return {'ok': False, 'missing': True}
-    t_str = str(target)
-    v_clamped = max(5, min(100, int(vol)))
-    if alive and _BGM.get('era_auto') and _BGM.get('era_path') == t_str and not _BGM.get('paused'):
-        if _BGM.get('vol') != v_clamped:
-            bgm_control('vol', vol=v_clamped)
-        return {'ok': True, 'playing': True, 'track': _BGM['track']}
+    with _BGM_LOCK:
+        _BGM['suspended'] = False
+        p = _BGM['proc']
+        alive = bool(p and p.poll() is None)
+        # Respect manual user music playback from ~/Music while in menus
+        if alive and not _BGM.get('era_auto') and _BGM.get('track'):
+            return {'ok': True, 'user_music': True}
+        target = era_bgm_path(era, bgm_file)
+        if not target:
+            return {'ok': False, 'missing': True}
+        t_str = str(target)
+        v_clamped = max(5, min(100, int(vol)))
+        if alive and _BGM.get('era_auto') and _BGM.get('era_path') == t_str and not _BGM.get('paused'):
+            if _BGM.get('vol') != v_clamped:
+                _BGM['vol'] = v_clamped
+                if _BGM.get('backend') == 'mpv':
+                    _bgm_ipc('set_property', 'volume', v_clamped)
+            return {'ok': True, 'playing': True, 'track': _BGM['track']}
     bgm_control('play', path=t_str, vol=v_clamped, loop=True, era_auto=True)
     return {'ok': True, 'playing': bgm_playing(), 'track': _BGM['track']}
 
@@ -768,6 +906,22 @@ def stop_speaker_dsp():
     return {'ok': True, 'mode': 'off'}
 
 
+def ensure_speaker_sink_ready():
+    """When toravo_speaker_dsp sits in front of the hardware speaker sink, keep the underlying
+    hardware speaker sink unmuted at unity (1.00) so volume/mute on @DEFAULT_AUDIO_SINK@ always works."""
+    if os.environ.get('QT_QPA_PLATFORM') == 'offscreen' or not shutil.which('wpctl'):
+        return
+    try:
+        st = subprocess.run(['wpctl', 'status'], capture_output=True, text=True, timeout=2).stdout
+        sids = _parse_sink_ids(st)
+        spk = sids.get('speaker')
+        if spk and sids.get('dsp'):
+            subprocess.run(['wpctl', 'set-mute', str(spk), '0'], capture_output=True, timeout=2)
+            subprocess.run(['wpctl', 'set-volume', str(spk), '1.00'], capture_output=True, timeout=2)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
 def apply_speaker_dsp(mode='cinema'):
     """Start or switch the Thor Speaker Audio-DSP filter-chain ('off', 'cinema', 'clear', 'night')."""
     mode = str(mode or 'off').lower()
@@ -801,6 +955,10 @@ def apply_speaker_dsp(mode='cinema'):
         pass
     stop_speaker_dsp()
     with _DSP_LOCK:
+        if sids0.get('speaker'):
+            # Ensure hardware speaker sink underneath toravo_speaker_dsp is never stuck muted or double-attenuated
+            subprocess.run(['wpctl', 'set-mute', str(sids0['speaker']), '0'], capture_output=True, timeout=2)
+            subprocess.run(['wpctl', 'set-volume', str(sids0['speaker']), '1.00'], capture_output=True, timeout=2)
         env = {**os.environ, 'XDG_RUNTIME_DIR': os.environ.get('XDG_RUNTIME_DIR') or f'/run/user/{os.getuid()}'}
         try:
             proc = subprocess.Popen(['pipewire', '-c', str(conf_path)], stdin=subprocess.DEVNULL,
@@ -830,6 +988,7 @@ def apply_speaker_dsp(mode='cinema'):
             except (OSError, subprocess.SubprocessError):
                 pass
         if dsp_id:
+            subprocess.run(['wpctl', 'set-mute', str(dsp_id), '0'], capture_output=True, timeout=2)
             if cur_vol is not None:
                 subprocess.run(['wpctl', 'set-volume', str(dsp_id), f'{cur_vol:.2f}'], capture_output=True, timeout=2)
             if not headphones_active():

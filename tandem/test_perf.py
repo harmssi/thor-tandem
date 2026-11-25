@@ -154,6 +154,13 @@ class PerfEngineTest(unittest.TestCase):
         self.assertEqual(wh_env['VKD3D_FRAME_RATE'], '40')
         self.assertEqual(wh_env['PROTON_DXVK_LOWLATENCY'], '0')
         self.assertEqual(wh_env['PIPEWIRE_LATENCY'], '512/48000')
+        # 16 GB Thor Max disables file-backed flash thrashing & low-RAM clamp for BananaNative, while 12 GB keeps fileback safety
+        mem16 = self.root / 'meminfo-16g'
+        mem16.write_text('MemTotal:       15800000 kB\nMemAvailable:   11400000 kB\n')
+        bn_env = thor_perf.game_env({}, {}, 'banananative', engine_label='BananaNative', meminfo=mem16)
+        self.assertEqual(bn_env['DM_MEM_FILEBACK'], '0')
+        self.assertEqual(bn_env['DM_VK_LOW_RAM'], '0')
+        self.assertEqual(bn_env['DM_VK_MESH'], '0')
         # WirePlumber 3s audio codec suspend drop-in
         ahome = self.root / 'audio-home'
         wp_conf = thor_perf.ensure_audio_powersave(ahome)

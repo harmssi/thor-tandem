@@ -52,24 +52,36 @@ def draw(win, p):
 
     # Backdrop
     p.fillRect(0, 0, W, H, ui.faded(INK, .95))
+    ui.iisu_fx.draw_era_backdrop(win, p)
+    ui.iisu_fx.draw_hinge_bridge(win, p, 'bottom')
     g = ui.QLinearGradient(0, 0, 0, 26 * u)
     g.setColorAt(0, ui.faded(FOCUS, .12)); g.setColorAt(1, ui.faded(FOCUS, 0))
     p.fillRect(QRectF(0, 0, W, 26 * u), ui.QBrush(g))
     win.hit(QRectF(0, 0, W, H), lambda: touched(win))
 
+    def _card(rect, rad=1.7, border=None, tint=0.0):
+        ui.iisu_fx.glass_card(win, p, rect, rad * u, border_color=border, shadow=False, accent_tint=tint)
+
     x0, cw = 2.6 * u, W - 5.2 * u
     f_sec = ('u', 1.38, 700, .09)
     f_btn = ('u', 1.82, 600)
+    era = ui.iisu_fx.era_mode()
 
     # ---- Top Header Bar ----
     hy = 2.0 * u
     badge = QRectF(x0, hy, 12.2 * u, 4.6 * u)
-    win.capsule(p, badge, ui.faded(FOCUS, .18), ui.faded(FOCUS, .45))
+    if era in ('8bit', '16bit'):
+        _card(badge, 1.4, ui.faded(FOCUS, .65), 0.16)
+    else:
+        win.capsule(p, badge, ui.faded(FOCUS, .18), ui.faded(FOCUS, .45))
     win.text(p, 'THOR', badge.x(), badge.y(), ('u', 1.75, 700, .14), FOCUS, badge.width(), 1, 4.6 / 1.75)
 
     close_w = win.width_of('Schließen', ('u', 1.8, 600)) + 3.4 * u
     close_r = QRectF(x0 + cw - close_w, hy, close_w, 4.6 * u)
-    win.capsule(p, close_r, RAISED, LINE)
+    if era in ('8bit', '16bit'):
+        _card(close_r, 1.4, LINE)
+    else:
+        win.capsule(p, close_r, RAISED, LINE)
     win.text(p, 'Schließen', close_r.x(), close_r.y(), ('u', 1.8, 600), TEXT, close_w, 1, 4.6 / 1.8)
     win.hit(close_r, lambda: close(win), name='Schließen')
 
@@ -111,14 +123,16 @@ def draw(win, p):
     def seg_row(rx, ry, rw, rh, items, active_color=FOCUS):
         """Segmented pill control inside a card: [(label, fn, is_active, hit_name)]."""
         track = QRectF(rx, ry, rw, rh)
-        win.box(p, track, 1.2 * u, INK, LINE)
+        kr = max(.2 * u, 1.2 * u * ui.THEME['radius'])
+        ir_rad = max(.18 * u, 1.0 * u * ui.THEME['radius'])
+        win.box(p, track, kr, INK, LINE)
         iw = (rw - .5 * u) / max(1, len(items))
         for idx, item in enumerate(items):
             lbl, fn, on = item[0], item[1], item[2]
             hname = item[3] if len(item) > 3 else lbl
             ir = QRectF(rx + .25 * u + idx * iw, ry + .25 * u, iw, rh - .5 * u)
             if on:
-                win.box(p, ir, 1.0 * u, active_color)
+                win.box(p, ir, ir_rad, active_color)
             win.text(p, lbl, ir.x(), ir.y(), ('u', 1.72, 700 if on else 500),
                      INK if on else TEXT, ir.width(), 1, ir.height() / (1.72 * u))
             win.hit(ir, lambda fn=fn: (win.ui_haptic(), touched(win), fn()), name=hname)
@@ -133,13 +147,13 @@ def draw(win, p):
         card_h1 = 9.2 * u
         hud_card = QRectF(x0, y, col_w, card_h1)
         night_card = QRectF(x0 + col_w + gap, y, col_w, card_h1)
-        win.box(p, hud_card, 1.7 * u, PANEL, LINE)
+        _card(hud_card)
         win.text(p, 'FPS-FENSTER (OBEN)', hud_card.x() + 1.6 * u, y + 1.1 * u, f_sec, FOCUS, col_w - 3.2 * u)
         cur_hud = int(win.CFG.get('hud_level') or 0)
         seg_row(hud_card.x() + 1.2 * u, y + 3.5 * u, col_w - 2.4 * u, 4.5 * u,
                 [(lbl, lambda lv=lv: set_hud(win, lv), cur_hud == lv, f'hud:{lbl}') for lv, lbl in HUD_OPTS], LIVE if cur_hud else FOCUS)
 
-        win.box(p, night_card, 1.7 * u, PANEL, LINE)
+        _card(night_card)
         win.text(p, 'NACHTMODUS', night_card.x() + 1.6 * u, y + 1.1 * u, f_sec, MUTED, col_w - 3.2 * u)
         cur_night = win.CFG.get('night_mode') or 'off'
         seg_row(night_card.x() + 1.2 * u, y + 3.5 * u, col_w - 2.4 * u, 4.5 * u,
@@ -154,21 +168,21 @@ def draw(win, p):
         tcard = QRectF(x0, y, col3_w, card_h1)
         hzcard = QRectF(x0 + col3_w + gap, y, col3_w, card_h1)
         chgcard = QRectF(x0 + 2 * (col3_w + gap), y, col3_w, card_h1)
-        win.box(p, tcard, 1.7 * u, PANEL, LIVE if travel_on else LINE)
+        _card(tcard, border=LIVE if travel_on else None)
         win.text(p, 'AKKU UNTERWEGS', tcard.x() + 1.4 * u, y + 1.1 * u, f_sec, LIVE if travel_on else MUTED, col3_w - 2.8 * u)
         seg_row(tcard.x() + 1.0 * u, y + 3.5 * u, col3_w - 2.0 * u, 4.5 * u,
                 [('Normal', lambda: cfg_set(win, travel_mode=False), not travel_on, 'travel:off'),
                  ('Unterwegs', lambda: cfg_set(win, travel_mode=True), travel_on, 'travel:on')],
                 LIVE if travel_on else FOCUS)
 
-        win.box(p, hzcard, 1.7 * u, PANEL, LINE)
+        _card(hzcard)
         win.text(p, 'DISPLAY OBEN', hzcard.x() + 1.4 * u, y + 1.1 * u, f_sec, MUTED, col3_w - 2.8 * u)
         seg_row(hzcard.x() + 1.0 * u, y + 3.5 * u, col3_w - 2.0 * u, 4.5 * u,
                 [('120 Hz', lambda: cfg_set(win, travel_mode=False, panel_hz=120), cur_hz == 120, 'hz:120'),
                  ('60 Hz', lambda: cfg_set(win, panel_hz=60), cur_hz == 60, 'hz:60')])
 
         cur_cl = int(perf.get('charge_limit') or 100)
-        win.box(p, chgcard, 1.7 * u, PANEL, LIVE if cur_cl < 100 else LINE)
+        _card(chgcard, border=LIVE if cur_cl < 100 else None)
         win.text(p, 'BYPASS-LIMIT', chgcard.x() + 1.4 * u, y + 1.1 * u, f_sec, LIVE if cur_cl < 100 else MUTED, col3_w - 2.8 * u)
         seg_row(chgcard.x() + 1.0 * u, y + 3.5 * u, col3_w - 2.0 * u, 4.5 * u,
                 [('Aus', lambda: send(win, 'charge_limit', 100), cur_cl >= 100, 'cl:100'),
@@ -179,10 +193,9 @@ def draw(win, p):
 
         # ---- 1c. 0-dB Flüster-Modus (FIFO · 40 FPS @ 120 Hz), Unten aus & Flugmodus ----
         whisp_on = bool(win.CFG.get('whisper_mode'))
-        fly_st = getattr(win, 'AIRPLANE_ST', None) or {}
-        fly_on = bool(fly_st.get('on'))
+        fly_on = bool((getattr(win, 'AIRPLANE_ST', None) or {}).get('on'))
         sc_card = QRectF(x0, y, cw, 8.6 * u)
-        win.box(p, sc_card, 1.7 * u, PANEL, LIVE if (whisp_on or fly_on) else LINE)
+        _card(sc_card, border=LIVE if (whisp_on or fly_on) else None)
         win.text(p, 'RUHE & MAXIMALE AKKULAUFZEIT (0 DB)', x0 + 1.6 * u, y + 1.0 * u, f_sec,
                  LIVE if (whisp_on or fly_on) else MUTED, cw - 3.2 * u)
         bw3 = (cw - 4.0 * u) / 3
@@ -209,7 +222,7 @@ def draw(win, p):
             rh = 4.9 * u
             dsp_extra = 5.4 * u
             scard_h = len(s_rows) * rh + dsp_extra + 1.4 * u
-            win.box(p, QRectF(x0, y, cw, scard_h), 1.8 * u, PANEL, LINE)
+            _card(QRectF(x0, y, cw, scard_h), 1.8)
             sy = y + .7 * u
             muted = getattr(win, 'MUTED', False)
             for idx, (key, label) in enumerate(s_rows):
@@ -253,7 +266,7 @@ def draw(win, p):
             is_ap = bool(ap.get('is_airpods'))
             ap_h = (13.4 if (ap_on and is_ap) else 7.8) * u
             ap_card = QRectF(x0, y, cw, ap_h)
-            win.box(p, ap_card, 1.8 * u, PANEL, LIVE if ap_on else LINE)
+            _card(ap_card, 1.8, border=LIVE if ap_on else None)
             hdr_ap = '🎧 AIRPODS · NATIVE AAP' if is_ap else '🎧 BLUETOOTH-KOPFHÖRER'
             win.text(p, hdr_ap, x0 + 1.6 * u, y + 1.0 * u, f_sec, LIVE if ap_on else MUTED, cw * .48)
             pods = ap.get('pods') or {}
@@ -291,7 +304,7 @@ def draw(win, p):
         cur_era = ui.iisu_fx.era_mode()
         ebgm_on = bool(win.CFG.get('era_bgm', True))
         era_card = QRectF(x0, y, cw, card_h1)
-        win.box(p, era_card, 1.7 * u, PANEL, LINE)
+        _card(era_card, tint=0.10)
         win.text(p, 'KONSOLEN-ÄRA & MENÜ-MUSIK (TORAVO STUDIO)', x0 + 1.6 * u, y + 1.1 * u, f_sec, FOCUS, cw - 3.2 * u)
         seg_w_era = cw - 19.8 * u
         seg_row(x0 + 1.2 * u, y + 3.5 * u, seg_w_era, 4.5 * u,
@@ -317,7 +330,7 @@ def draw(win, p):
         if recents:
             rc_h = 14.8 * u
             rcard = QRectF(x0, y, cw, rc_h)
-            win.box(p, rcard, 1.8 * u, PANEL, LINE)
+            _card(rcard, 1.8)
             win.text(p, 'SCHNELLWECHSEL · LETZTE SPIELE', x0 + 1.6 * u, y + 1.0 * u, f_sec, MUTED, cw - 3.2 * u)
             rw_item = (cw - 2.4 * u - 3 * 1.0 * u) / 4
             rh_item = 10.3 * u
@@ -363,7 +376,7 @@ def draw(win, p):
             pcard_h = 3.2 * u + rows_n * 5.4 * u + (.6 * u if not win.RUN else 0)
             pcard = QRectF(x0, y, cw, pcard_h)
             hyper_on = bool(eng.get('hyperdrive'))
-            win.box(p, pcard, 1.8 * u, PANEL, LIVE if hyper_on else LINE)
+            _card(pcard, 1.8, border=LIVE if hyper_on else None)
             hdr_lbl = ('⚡ HYPERDRIVE AKTIV · DIESES SPIEL' if win.RUN else '⚡ HYPERDRIVE AKTIV · ENGINE') if hyper_on else ('LEISTUNG & HARDWARE (DIESES SPIEL)' if win.RUN else 'LEISTUNG & HARDWARE')
             win.text(p, hdr_lbl, x0 + 1.6 * u, y + 1.0 * u, f_sec, LIVE if hyper_on else MUTED, cw - 3.2 * u)
             py = y + 3.3 * u
@@ -431,7 +444,7 @@ def draw(win, p):
         if rgb:
             rc_left = QRectF(x0, y, col_w, 9.0 * u)
             rc_right = QRectF(x0 + col_w + gap, y, col_w, 9.0 * u)
-            win.box(p, rc_left, 1.7 * u, PANEL, LINE)
+            _card(rc_left)
             win.text(p, 'STICK-BELEUCHTUNG', rc_left.x() + 1.6 * u, y + 1.0 * u, f_sec, MUTED, col_w - 13 * u)
             rm_opts = (('cover', 'Spiel-Farbe'), ('ambilight', 'Ambilight'), ('battery', 'Akku'), ('thermal', 'Temp'), ('static', 'Fest'))
             cur_rm = win.CFG.get('rgb_mode') or ('cover' if win.CFG.get('rgb_sync', True) else 'static')
@@ -464,7 +477,7 @@ def draw(win, p):
                         lambda hc=hex_c: (touched(win), send(win, 'rgb', {'color': hc, 'enabled': True})), name='qrgb:' + cname)
                 sx += 3.85 * u
 
-            win.box(p, rc_right, 1.7 * u, PANEL, LINE)
+            _card(rc_right)
             win.text(p, 'AUFNAHME & 30S-CLIP', rc_right.x() + 1.6 * u, y + 1.0 * u, f_sec, MUTED, col_w - 13 * u)
             rp_on = bool(win.CFG.get('replay_buffer', False))
             rp_pill = QRectF(rc_right.right() - 11.8 * u, y + .65 * u, 10.6 * u, 2.3 * u)
@@ -488,7 +501,7 @@ def draw(win, p):
             y += 9.0 * u + gap
         else:
             rc_full = QRectF(x0, y, cw, 8.8 * u)
-            win.box(p, rc_full, 1.7 * u, PANEL, LINE)
+            _card(rc_full)
             win.text(p, 'AUFNAHME & 30S-CLIP', x0 + 1.6 * u, y + 1.0 * u, f_sec, MUTED, cw - 3.2 * u)
             bw_r = (cw - 4.4 * u) / 3
             rec_lbl = '■ Aufnahme stoppen' if rec else '● Aufnahme starten'

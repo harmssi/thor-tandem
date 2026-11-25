@@ -800,6 +800,8 @@ class Views(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         base.setUpModule()
+        (tandem.STATE / 'state.json').unlink(missing_ok=True)
+        (tandem.CONFIG).unlink(missing_ok=True)
         library = tandem.Library([str(base.SD / 'ROMs')], base.HOME / '.local/share/Steam')
         library.scan()
         cls.service = tandem.Tandem(library, dry=True)
@@ -1679,6 +1681,59 @@ class CompanionDecksAndGameMenuTest(unittest.TestCase):
                 w.deck.close()
         finally:
             w.RUN, w.deck, w.deck_name = old_run, old_deck, old_dname
+
+        # Immediate style/era frame refresh (zero async cache pop-in) + Ocarina Start/Save button
+        from decks import zelda_decks
+        w.RUN = {'id': 'steam2336363822', 'tid': '0400486024DEC000', 't': 'Ocarina of Time',
+                 's': 'steam', 'emu': 'BananaNative', 'since': int(time.time()) - 400, 'companion': 'oot', 'direct': True}
+        oot_d = zelda_decks.Deck(w)
+        oot_hits = render(oot_d, 'oot-save-check')
+        self.assertIn('oot_btn:PLUS', oot_hits)
+        self.assertIn('oot_btn:MINUS', oot_hits)
+        oot_d.close()
+        w.RUN = None
+
+        # Verify framed_cover() composites Cocoon platform frame synchronously on the very first paint after 8-Bit -> Modern switch
+        ov_dir = base.TMP / 'ov-sync'
+        ov_dir.mkdir(exist_ok=True)
+        mask_img = QImage(64, 64, QImage.Format.Format_ARGB32_Premultiplied)
+        mask_img.fill(ui.QColor(255, 255, 255, 255))
+        mask_img.fill(0)
+        mp = ui.QPainter(mask_img)
+        mp.fillRect(8, 8, 48, 48, ui.QColor(255, 255, 255, 255))
+        mp.end()
+        over_img = QImage(64, 64, QImage.Format.Format_ARGB32_Premultiplied)
+        over_img.fill(0)
+        op = ui.QPainter(over_img)
+        op.fillRect(0, 0, 64, 6, ui.QColor(255, 40, 80, 255))
+        op.end()
+        mask_p, over_p = ov_dir / 'mask.png', ov_dir / 'overlay.png'
+        mask_img.save(str(mask_p), 'PNG')
+        over_img.save(str(over_p), 'PNG')
+        m_tok, o_tok = 'ov-test/mask.png', 'ov-test/overlay.png'
+        old_ovs = dict(w.L.get('overlays') or {})
+        old_fetch = ui.fetch
+        ui.fetch = lambda pth, data=None, addr=None: mask_p.read_bytes() if pth == m_tok else (over_p.read_bytes() if pth == o_tok else old_fetch(pth, data, addr))
+        try:
+            w.L.setdefault('overlays', {})['psx'] = {'mask': m_tok, 'overlay': o_tok}
+            w.ov_raw.clear()
+            w.ov_cache.clear()
+            w.comp_cache.clear()
+            ui.settings_view.set_era(w, '8bit')
+            self.assertEqual(ui.THEME['id'], 'era-8bit')
+            sample_cov = QImage(64, 64, QImage.Format.Format_ARGB32_Premultiplied)
+            sample_cov.fill(ui.QColor(20, 120, 220, 255))
+            _, framed_8b = w.framed_cover({'s': 'psx', 'cover': 'cov-test'}, sample_cov, 64)
+            self.assertFalse(framed_8b)
+            # Switch to Modern with empty caches: first call MUST return framed=True immediately (no async miss)
+            ui.settings_view.set_era(w, 'modern')
+            self.assertEqual(ui.iisu_fx.era_mode(), 'modern')
+            comp_1st, framed_mod = w.framed_cover({'s': 'psx', 'cover': 'cov-test'}, sample_cov, 64)
+            self.assertTrue(framed_mod, 'First paint after switching to Modern must apply platform frame immediately')
+            self.assertEqual(comp_1st.pixelColor(32, 2).red(), 255)
+        finally:
+            ui.fetch = old_fetch
+            w.L['overlays'] = old_ovs
 
 
 if __name__ == '__main__':

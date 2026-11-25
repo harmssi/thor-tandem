@@ -2298,13 +2298,14 @@ class MomentTracker:
     the best non-menu pre-quit scene to `~/.local/state/tandem/moments/<gid>.jpg` when the game exits."""
 
 def capture_screen_frame(out_path, display=None, wayland='gamescope-0'):
-    """Capture one screenshot frame into `out_path` using gamescopectl, ArmadaOS X11 ffmpeg x11grab, or ImageMagick."""
+    """Capture one screenshot frame into `out_path` using gamescopectl, Gamescope X11 active window, or x11grab."""
     out = Path(out_path)
     out.unlink(missing_ok=True)
     rt_dir = os.environ.get('XDG_RUNTIME_DIR') or f'/run/user/{os.getuid()}'
     dpy = display or os.environ.get('DISPLAY') or ':0'
+    base_env = {**os.environ, 'DISPLAY': dpy, 'XDG_RUNTIME_DIR': rt_dir}
     if shutil.which('gamescopectl') and (dpy == ':0' or not display):
-        env = {**os.environ, 'XDG_RUNTIME_DIR': rt_dir, 'WAYLAND_DISPLAY': wayland}
+        env = {**base_env, 'WAYLAND_DISPLAY': wayland}
         try:
             subprocess.run(['gamescopectl', 'screenshot', str(out)], env=env,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=4)
@@ -2314,10 +2315,22 @@ def capture_screen_frame(out_path, display=None, wayland='gamescope-0'):
                 time.sleep(0.05)
         except Exception:
             pass
+    if shutil.which('xprop') and shutil.which('import'):
+        try:
+            xp = subprocess.run(['xprop', '-display', dpy, '-root', '_NET_ACTIVE_WINDOW'],
+                                env=base_env, capture_output=True, text=True, timeout=2).stdout
+            m = re.search(r'(0x[0-9a-fA-F]+)', xp or '')
+            if m and m[1].lower() != '0x0':
+                subprocess.run(['import', '-display', dpy, '-window', m[1], str(out)],
+                               env=base_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=4)
+                if out.is_file() and out.stat().st_size > 4096:
+                    return True
+        except Exception:
+            pass
     if shutil.which('ffmpeg'):
         try:
             subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'x11grab', '-i', dpy, '-frames:v', '1', str(out)],
-                           env={**os.environ, 'DISPLAY': dpy, 'XDG_RUNTIME_DIR': rt_dir},
+                           env=base_env,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=4)
             if out.is_file() and out.stat().st_size > 2048:
                 return True
@@ -2326,7 +2339,7 @@ def capture_screen_frame(out_path, display=None, wayland='gamescope-0'):
     if shutil.which('import'):
         try:
             subprocess.run(['import', '-display', dpy, '-window', 'root', str(out)],
-                           env={**os.environ, 'DISPLAY': dpy, 'XDG_RUNTIME_DIR': rt_dir},
+                           env=base_env,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=4)
             if out.is_file() and out.stat().st_size > 2048:
                 return True

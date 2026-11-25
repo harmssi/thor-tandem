@@ -130,17 +130,20 @@ class LinksAwakeningDeck(CompanionBase):
         p.setBrush(qcol('#10b981'))
         p.drawPolygon(rup)
 
-        w.text(p, 'COCOLINT-CHRONIK  ·  LINK’S AWAKENING', 6.5 * u, 1.2 * u, ('s', 2.35, 700, .03), qcol('#fef3c7'), W * 0.62)
+        w.text(p, 'COCOLINT-CHRONIK  ·  LINK’S AWAKENING', 6.5 * u, 1.2 * u, ('s', 2.35, 700, .03), qcol('#fef3c7'), W * 0.56)
         shells = int(self.get_val('shells', 0) or 0)
         hearts = int(self.get_val('hearts', 0) or 0)
-        w.text(p, f'Zaubermuscheln: {shells}/50  ·  Herzteile: {hearts}/32', 6.5 * u, 4.05 * u, ('u', 1.55, 600), qcol('#6ee7b7'), W * 0.6)
+        w.text(p, f'Zaubermuscheln: {shells}/50  ·  Herzteile: {hearts}/32', 6.5 * u, 4.05 * u, ('u', 1.55, 600), qcol('#6ee7b7'), W * 0.56)
 
-        # Quick live map / inventory triggers
-        for bi, (blbl, seq) in enumerate((('Karte [−]', 'MINUS'), ('Inventar [+]', 'PLUS'))):
-            br = QRectF(W - (2 - bi) * 14.2 * u - 1.4 * u, 1.15 * u, 13.4 * u, 4.2 * u)
+        # Quick live map / inventory / save triggers
+        btn_specs = (('Karte [−]', 'MINUS', 12.6 * u), ('Start / Speichern [+]', 'PLUS', 19.4 * u))
+        bx = W - 2.9 * u - sum(bw for _, _, bw in btn_specs) - 1.0 * u
+        for blbl, seq, bw in btn_specs:
+            br = QRectF(bx, 1.15 * u, bw, 4.2 * u)
             self.chamfer_box(p, br, 0.55 * u, qcol('#3b2818'), qcol('#f59e0b'), 1.3)
-            w.text(p, blbl, br.x(), br.y(), ('d', 1.7, 700), qcol('#fef3c7'), br.width(), 1, 4.2 / 1.7)
+            w.text(p, blbl, br.x(), br.y(), ('d', 1.48, 700), qcol('#fef3c7'), br.width(), 1, 4.2 / 1.48)
             w.hit(br, lambda seq=seq, blbl=blbl: self.send_pad(seq, blbl), name=f'la_btn:{seq}')
+            bx += bw + 1.0 * u
 
         tx0, tcw = 2.6 * u, W - 5.2 * u
         tw = tcw / len(self.TABS)
@@ -303,16 +306,19 @@ class OcarinaDeck(CompanionBase):
         p.fillRect(hdr, g)
 
         self._draw_triforce(p, 4.2 * u, 3.5 * u, 1.9 * u)
-        w.text(p, 'CHRONIK DER ZEIT  ·  OCARINA OF TIME', 7.2 * u, 1.2 * u, ('s', 2.35, 700, .03), qcol('#fef08a'), W * 0.62)
+        w.text(p, 'CHRONIK DER ZEIT  ·  OCARINA OF TIME', 7.2 * u, 1.2 * u, ('s', 2.35, 700, .03), qcol('#fef08a'), W * 0.56)
         sk = int(self.get_val('skulltulas', 0) or 0)
         hp = int(self.get_val('oot_hearts', 0) or 0)
-        w.text(p, f'Goldene Skulltulas: {sk}/100  ·  Herzteile: {hp}/36', 7.2 * u, 4.05 * u, ('u', 1.55, 600), qcol('#93c5fd'), W * 0.6)
+        w.text(p, f'Goldene Skulltulas: {sk}/100  ·  Herzteile: {hp}/36', 7.2 * u, 4.05 * u, ('u', 1.55, 600), qcol('#93c5fd'), W * 0.56)
 
-        for bi, (blbl, seq) in enumerate((('Subscreen [+]', 'PLUS'), ('Karte', 'MINUS'))):
-            br = QRectF(W - (2 - bi) * 14.0 * u - 1.4 * u, 1.15 * u, 13.2 * u, 4.2 * u)
+        btn_specs = (('Start / Speichern [+]', 'PLUS', 19.4 * u), ('Karte [−]', 'MINUS', 12.6 * u))
+        bx = W - 2.9 * u - sum(bw for _, _, bw in btn_specs) - 1.0 * u
+        for blbl, seq, bw in btn_specs:
+            br = QRectF(bx, 1.15 * u, bw, 4.2 * u)
             self.chamfer_box(p, br, 0.55 * u, qcol('#172554'), qcol('#eab308'), 1.3)
-            w.text(p, blbl, br.x(), br.y(), ('d', 1.7, 700), qcol('#fef08a'), br.width(), 1, 4.2 / 1.7)
+            w.text(p, blbl, br.x(), br.y(), ('d', 1.48, 700), qcol('#fef08a'), br.width(), 1, 4.2 / 1.48)
             w.hit(br, lambda seq=seq, blbl=blbl: self.send_pad(seq, blbl), name=f'oot_btn:{seq}')
+            bx += bw + 1.0 * u
 
         tx0, tcw = 2.6 * u, W - 5.2 * u
         tw = tcw / len(self.TABS)

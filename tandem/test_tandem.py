@@ -1173,6 +1173,68 @@ class CompanionAndLibraryUpgradesTest(unittest.TestCase):
         m_unb = companion.match_packs_for_rom('BPRE', 0, 'Pokémon Unbound', installed=companion.list_installed_packs(gba_dir / 'cfg'))
         self.assertEqual((m_unb['best_installed'], m_unb['best_other_region']), ('pokemon-unbound-companion', False))
 
+    def test_direct_steam_shortcut_watchdog_and_offscreen_audio_guard(self):
+        # 1. Direct BananaNative Steam shortcut (appid set + direct cmd) must wait on proc, NOT steam_pids(appid)
+        t = tandem.Tandem(make().library, dry=True)
+        gid = 'steam2336363822'
+        t.library.games[gid] = {
+            'id': gid, 't': 'The Legend of Zelda: Ocarina of Time', 's': 'steam',
+            'appid': '2336363822', 'tid': '0400486024DEC000',
+            'direct': ['/usr/bin/true', '/tmp/oot/android-pack'],
+            'native_engine': 'BananaNative',
+        }
+        res = t.launch(gid)
+        self.assertTrue(res.get('ok'), res)
+        self.assertTrue(t.run and t.run.get('direct') is True)
+        self.assertEqual(t.run.get('companion'), 'oot')
+        # send() must target process group (-proc.pid), never steam_pids('2336363822')
+        killed_pg = []
+        old_killpg, old_spids = os.killpg, tandem.steam_pids
+        os.killpg = lambda pg, sig: killed_pg.append((pg, sig))
+        tandem.steam_pids = lambda _a: (_ for _ in ()).throw(AssertionError('steam_pids must not be called for direct games'))
+        try:
+            t.proc = type('FakeProc', (), {'pid': 42424, 'wait': lambda self, timeout=None: 0})()
+            t.send(tandem.signal.SIGSTOP)
+            self.assertEqual(killed_pg, [(42424, tandem.signal.SIGSTOP)])
+            # watch(proc, gid, None) finishes cleanly via proc.wait() without calling steam_pids
+            t.watch(t.proc, gid, None)
+            self.assertIsNone(t.run)
+        finally:
+            os.killpg, tandem.steam_pids = old_killpg, old_spids
+
+        # 2. Offscreen / mocked audio guard: mute(), change('vol', ...), doze() must never invoke wpctl
+        ran_cmds = []
+        old_rq = tandem.run_quiet
+        tandem.run_quiet = lambda cmd, *a, **kw: (ran_cmds.append(list(cmd)), '')[1]
+        try:
+            self.assertFalse(tandem._audio_hw_ok())
+            tandem.mute(True)
+            tandem.mute(False)
+            tandem.change('vol', 70)
+            self.assertFalse(any(c and c[0] == 'wpctl' for c in ran_cmds), ran_cmds)
+        finally:
+            tandem.run_quiet = old_rq
+
+        # 3. modern_theme exposed in public_config() so Era -> Modern picks exact modern theme immediately
+        c_mod = tandem.save_config({'theme': 'toravo'})
+        self.assertEqual(c_mod['modern_theme'], 'toravo')
+        c_8b = tandem.save_config({'era_preset': '8bit'})
+        self.assertEqual((c_8b['theme'], c_8b['modern_theme']), ('era-8bit', 'toravo'))
+        c_back = tandem.save_config({'era_preset': 'modern'})
+        self.assertEqual(c_back['theme'], 'toravo')
+
+        # 4. Menu BGM MUST stop immediately on game launch/resume and stay suspended until game exits
+        import telemetry
+        telemetry._BGM.update(proc=None, backend='ffplay', track='era-8bit', era_auto=True, suspended=False)
+        telemetry.stop_all_bgm(suspend=True, dry=True)
+        self.assertTrue(telemetry._BGM['suspended'])
+        self.assertEqual(telemetry._BGM['track'], '')
+        # While suspended for an active game, era BGM play requests are ignored
+        telemetry.bgm_control('play', path=str(telemetry.era_bgm_path('8bit')), vol=30, loop=True, era_auto=True)
+        self.assertEqual(telemetry._BGM['track'], '')
+        telemetry.sync_era_bgm('8bit', enabled=True, suspend_for_game=False, dry=True)
+        self.assertFalse(telemetry._BGM['suspended'])
+
 
 class ThorStorageTests(unittest.TestCase):
     def test_system_backup_and_restore_roundtrip(self):

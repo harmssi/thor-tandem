@@ -456,7 +456,9 @@ class Tandem(QRasterWindow):
         self.moved = False
         self.fonts, self.svgs, self.u = {}, {}, 1.0
         self.images = Images(18 if screen == 'top' else 96, self.loaded)  # top: hero, logo and preview; bottom: tiles and frames
+        self.ov_raw, self.ov_cache = {}, {}  # persistent platform mask/overlay frames (instant on theme/era switch)
         self.comp_cache = OrderedDict()
+        self._cfg_seq, self._last_overlays = 0, True
         self.thumbs = Images(8, self.loaded, workers=1)  # covers at 24 pixels, to find a game's colour
         self.saver_imgs = Images(160, self.loaded, workers=4)  # uncropped full-aspect covers & boxes for the dual-screen screensaver
         self.backdrop, self.WIFI = None, None
@@ -514,15 +516,58 @@ class Tandem(QRasterWindow):
             except (OSError, ValueError): pass
             time.sleep(1)
 
+    def _prewarm_overlays(self):
+        ovs = dict((self.L or {}).get('overlays') or {})
+        if not ovs: return
+        def work():
+            changed = False
+            for ov in ovs.values():
+                for k in ('mask', 'overlay'):
+                    pth = ov.get(k)
+                    if pth and pth not in self.ov_raw:
+                        try: img = load_image(pth, 0, 0, False, addr=self.images.addr)
+                        except Exception: img = False
+                        self.ov_raw[pth] = img
+                        changed = True
+            if changed and self.images.alive:
+                self.loaded.emit()
+        threading.Thread(target=work, daemon=True).start()
+
+    def overlay_image(self, path, size):
+        """Return scaled platform mask/overlay QImage synchronously from persistent RAM cache (loads once on demand)."""
+        ck = (path, int(size))
+        cached = self.ov_cache.get(ck)
+        if cached is not None:
+            return cached
+        raw = self.ov_raw.get(path)
+        if raw is None:
+            try: raw = load_image(path, 0, 0, False, addr=self.images.addr)
+            except Exception: raw = False
+            self.ov_raw[path] = raw
+        if not raw:
+            self.ov_cache[ck] = False
+            return False
+        scaled = raw.scaled(size, size, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation) if (raw.width() != size or raw.height() != size) else raw
+        if len(self.ov_cache) > 128:
+            self.ov_cache.clear()
+        self.ov_cache[ck] = scaled
+        return scaled
+
     def load(self):
         def got(library):
-            if library: self.L = library
+            if library:
+                self.L = library
+                if self.side == 'bottom':
+                    self._prewarm_overlays()
         self.call('api/library', then=got)
 
     def pulse(self):
+        seq = self._cfg_seq
         def got(s):
             if not s: return
-            self.BATT, self.WIFI, self.PAIR, self.CFG = s.get('battery'), s.get('wifi'), s.get('pair'), s.get('config') or self.CFG
+            self.BATT, self.WIFI, self.PAIR = s.get('battery'), s.get('wifi'), s.get('pair')
+            if self._cfg_seq == seq and s.get('config'):
+                self.CFG = s['config']
             self.BT_AUDIO = s.get('bt_audio')
             self.DOZE, self.MUTED = bool(s.get('doze')), bool(s.get('muted'))
             if s.get('power') and not self.POWER_OPEN: self.power_i = 0
@@ -533,7 +578,8 @@ class Tandem(QRasterWindow):
             elif self.side == 'bottom' and not s.get('swkbd') and self.PROMPT and self.PROMPT.get('swkbd_id'):
                 self.PROMPT = None
             self.follow_setup(s.get('setup'))
-            self.follow_theme()
+            if self._cfg_seq == seq:
+                self.follow_theme()
             if not self.drag and isinstance(s.get('settings'), dict):
                 self.SET = {k: (v if v is not None else self.SET.get(k)) for k, v in s['settings'].items()}
         self.call('api/state', then=got)
@@ -548,7 +594,8 @@ class Tandem(QRasterWindow):
             self._auto_bb_off = True
             self._auto_bb_saved = max(15, int(self.SET.get('bb') or 50))
             self.post('api/set', {'key': 'bb', 'value': 0, 'from': self.me})
-        self.update()  # the clock
+        if not (self.side == 'top' and self.playing() and not self.POWER_OPEN):
+            self.update()  # the clock
 
     def load_sys(self, scan=False): self.call('api/system' + ('?scan' if scan else ''), then=lambda s: s and setattr(self, 'SYS', s))
 
@@ -725,8 +772,10 @@ class Tandem(QRasterWindow):
                 else: self.CONFIRM = None
             return self.update()
         if kind == 'config':
+            self._cfg_seq += 1
             self.CFG = m['config']
             self.follow_theme()
+            self.update()
             return self.pulse()
         if kind == 'thor': self.THOR = m.get('thor'); return self.update()
         if kind == 'ai_auth':
@@ -763,14 +812,25 @@ class Tandem(QRasterWindow):
             self.load()  # play time and "last played" changed
         self.update()
 
-    def follow_theme(self):  # the config names the look: take it over when it is another one (or its file changed name)
-        if (self.CFG.get('theme') or 'toravo') != THEME['id']: self.set_theme(self.CFG.get('theme') or 'toravo')
+    def follow_theme(self):  # the config names the look: take it over when it is another one (or overlays changed)
+        want = self.CFG.get('theme') or 'toravo'
+        ov_on = bool(self.CFG.get('overlays', True))
+        if want != THEME['id']:
+            self.set_theme(want)
+        elif ov_on != self._last_overlays:
+            self._last_overlays = ov_on
+            self.comp_cache.clear()
+            self.update()
 
     def set_theme(self, name):
+        self._cfg_seq += 1
+        self._last_overlays = bool(self.CFG.get('overlays', True))
         apply_theme(read_theme(name))
         self.fonts, self.svgs, self.backdrop = {}, {}, None
-        self.acc_anim = {'from_c': None, 'to_c': None, 'to': None, 't0': 0.0}
         self.comp_cache.clear()
+        t_acc = self.game_accent(self.items()) or QColor(THEME['colors']['accent'])
+        FOCUS.setRgba(t_acc.rgba())
+        self.acc_anim = {'from_c': QColor(t_acc), 'to_c': QColor(t_acc), 'to': t_acc.rgba(), 't0': 0.0}
         self.update()
 
     def next_theme(self):
@@ -3019,8 +3079,8 @@ class Tandem(QRasterWindow):
         if key in self.comp_cache:
             self.comp_cache.move_to_end(key)
             return self.comp_cache[key], True
-        mask = self.images.get(ov['mask'], size, size, False)
-        over = self.images.get(ov['overlay'], size, size, False)
+        mask = self.overlay_image(ov['mask'], size)
+        over = self.overlay_image(ov['overlay'], size)
         if not mask or not over: return cover, False
         out = QImage(size, size, QImage.Format.Format_ARGB32_Premultiplied)
         out.fill(0)

@@ -140,7 +140,11 @@ def thor_set(win, key, value):
 
 
 def config_set(win, **change):
+    win._cfg_seq = getattr(win, '_cfg_seq', 0) + 1
     win.CFG = {**win.CFG, **change}
+    if 'overlays' in change or 'theme' in change:
+        win.follow_theme()
+    win.update()
     win.post('api/config', change, then=lambda c: c and c.get('error') and win.toast(c['error']))
 
 
@@ -1103,16 +1107,27 @@ def choice(label, opts, cur, set_, help):
 
 
 def set_theme(win, name):
+    extra = {'modern_theme': name} if not str(name).startswith('era-') else {}
+    win.CFG = {**win.CFG, 'theme': name, **extra}
     win.set_theme(name)
     config_set(win, theme=name)
 
 
 def set_era(win, era):
-    target = 'era-8bit' if era == '8bit' else ('era-16bit' if era == '16bit' else (
-        'iisu-aero' if any(t['id'] == 'iisu-aero' for t in (win.CFG.get('themes') or ())) else 'toravo'))
-    win.set_theme(target)
+    themes = [t['id'] for t in (win.CFG.get('themes') or ())]
+    pref_mod = win.CFG.get('modern_theme')
+    mod_id = pref_mod if (pref_mod in themes and not str(pref_mod).startswith('era-')) else (
+        'iisu-aero' if 'iisu-aero' in themes else 'toravo')
+    target = 'era-8bit' if era == '8bit' else ('era-16bit' if era == '16bit' else mod_id)
     win.CFG = {**win.CFG, 'theme': target}
-    win.post('api/config', {'era_preset': era}, then=lambda c: c and (setattr(win, 'CFG', c), win.follow_theme()))
+    win.set_theme(target)
+    def _synced(c):
+        if not c: return
+        win._cfg_seq = getattr(win, '_cfg_seq', 0) + 1
+        win.CFG = c
+        win.follow_theme()
+        win.update()
+    win.post('api/config', {'era_preset': era}, then=_synced)
 
 
 def apply_controls(win):
@@ -1184,23 +1199,25 @@ def bottom_ok(win):
 def draw(win, p):
     need(win)
     u, W, H = win.u, win.width(), win.height()
+    era = ui.iisu_fx.era_mode()
     y = win.tabs(p)
     bottom, page, pane = H - 2.6 * u, page_of(win), win.S.get('pane', 0)
     side_w = 33 * u
     x0, x1 = 2.6 * u, 2.6 * u + side_w + 2.4 * u
+    rad_k = ui.THEME['radius']
     # the list of areas
     def side(y):
         rh, card = 5.4 * u, []
         for c in CATS + [None]:
             if c: card.append(c); continue
             if not card: continue
-            win.box(p, ui.QRectF(x0, y, side_w, len(card) * rh + .8 * u), 1.8 * u, ui.PANEL)
+            ui.iisu_fx.glass_card(win, p, ui.QRectF(x0, y, side_w, len(card) * rh + .8 * u), 1.8 * u, shadow=False)
             yy = y + .4 * u
             for cid, title, icon, color, _ in card:
                 rect, on = ui.QRectF(x0 + .4 * u, yy, side_w - .8 * u, rh), page.split('>')[0] == cid
-                if on: win.box(p, rect, 1.4 * u, ui.FOCUS if pane == 0 else ui.faded(ui.TEXT, .12))
+                if on: win.box(p, rect, max(.2 * u, 1.4 * u * rad_k), ui.FOCUS if pane == 0 else ui.faded(ui.TEXT, .12))
                 sq = ui.QRectF(rect.x() + 1.2 * u, yy + (rh - 3.3 * u) / 2, 3.3 * u, 3.3 * u)
-                win.box(p, sq, .8 * u, ui.QColor(color))
+                win.box(p, sq, max(.18 * u, .8 * u * rad_k), ui.QColor(color))
                 draw_icon(win, p, icon, sq.adjusted(.55 * u, .55 * u, -.55 * u, -.55 * u))
                 win.text(p, title, sq.right() + 1.3 * u, yy, ('u', 2, 500), ui.INK if on and pane == 0 else ui.TEXT, rect.right() - sq.right() - 2 * u, lh=rh / (2 * u))
                 win.hit(rect, lambda cid=cid: (win.S.update(page=cid, pane=0, i=0), win.push()), name=title)
@@ -1216,7 +1233,11 @@ def draw(win, p):
         parent = TITLES[page.split('>')[0]]
         back = '‹ ' + parent
         bw = win.width_of(back, ('u', 2, 600)) + 3 * u
-        win.capsule(p, ui.QRectF(x1, y, bw, head - 1 * u), ui.faded(ui.TEXT, .1))
+        brect = ui.QRectF(x1, y, bw, head - 1 * u)
+        if era in ('8bit', '16bit'):
+            ui.iisu_fx.glass_card(win, p, brect, 1.4 * u, shadow=False, accent_tint=0.10)
+        else:
+            win.capsule(p, brect, ui.faded(ui.TEXT, .1))
         win.text(p, back, x1, y, ('u', 2, 600), ui.FOCUS, bw, 1, (head - u) / (2 * u))
         win.hit(ui.QRectF(x1, y - .4 * u, bw, head), lambda: key(win, 'back'), name='nav-back')
         win.text(p, TITLES[page], x1 + bw + 1.6 * u, y, ('u', 2.6, 700, -.01), ui.TEXT, w - bw - 1.6 * u, lh=(head - u) / (2.6 * u))
@@ -1232,9 +1253,9 @@ def draw(win, p):
                 y += 2.6 * u
             if rows:
                 hs = [row_height(win, r, w) for r in rows]
-                win.box(p, ui.QRectF(x1, y, w, sum(hs)), 1.8 * u, ui.PANEL)
+                ui.iisu_fx.glass_card(win, p, ui.QRectF(x1, y, w, sum(hs)), 1.8 * u, shadow=False)
                 for k, (r, h) in enumerate(zip(rows, hs)):
-                    if k: p.fillRect(ui.QRectF(x1 + 2 * u, y, w - 2 * u, max(1.0, .08 * u)), ui.faded(ui.TEXT, .08))
+                    if k: p.fillRect(ui.QRectF(x1 + 2 * u, y, w - 4 * u, max(1.0, .08 * u)), ui.faded(ui.TEXT, .08))
                     if n == sel and pane == 1: spot['span'] = (y - top, y - top + h)
                     draw_row(win, p, r, ui.QRectF(x1, y, w, h), n, n == sel and pane == 1)
                     y += h; n += 1
@@ -1283,9 +1304,10 @@ def row_height(win, r, w):
 
 def draw_row(win, p, r, rect, n, on):
     u, kind = win.u, r['k']
+    rad_k = ui.THEME['radius']
     x, y, w, h = rect.x(), rect.y(), rect.width(), rect.height()
     if on:
-        win.box(p, rect.adjusted(.35 * u, .35 * u, -.35 * u, -.35 * u), 1.5 * u, ui.faded(ui.FOCUS, .14), ui.FOCUS, .22 * u)
+        win.box(p, rect.adjusted(.35 * u, .35 * u, -.35 * u, -.35 * u), max(.2 * u, 1.5 * u * rad_k), ui.faded(ui.FOCUS, .14), ui.FOCUS, .22 * u)
     if kind == 'qr':
         import qr
         qs = 19.6 * u
@@ -1327,11 +1349,11 @@ def draw_row(win, p, r, rect, n, on):
         total = min(seg * len(opts) + .6 * u, w * .64)
         seg = (total - .6 * u) / len(opts)
         box = ui.QRectF(right - total, y + (h - 4.2 * u) / 2, total, 4.2 * u)
-        win.box(p, box, 1.1 * u, ui.faded(ui.TEXT, .08))
+        win.box(p, box, max(.2 * u, 1.1 * u * rad_k), ui.faded(ui.TEXT, .08))
         for k, (oid, label) in enumerate(opts):
             sr = ui.QRectF(box.x() + .3 * u + k * seg, box.y() + .3 * u, seg, box.height() - .6 * u)
             sel = oid == r['cur']
-            if sel: win.box(p, sr, .9 * u, ui.FOCUS if on else ui.faded(ui.FOCUS, .32), None if on else ui.faded(ui.FOCUS, .55))
+            if sel: win.box(p, sr, max(.18 * u, .9 * u * rad_k), ui.FOCUS if on else ui.faded(ui.FOCUS, .32), None if on else ui.faded(ui.FOCUS, .55))
             win.text(p, label, sr.x(), sr.y(), fs, ui.INK if sel and on else ui.TEXT if sel else ui.MUTED, sr.width(), 1, sr.height() / (fs[1] * u))
             win.hit(sr, lambda oid=oid: (win.S.update(pane=1, i=n), r['set'](oid), win.push()), name=f'{r["t"]}:{label}')
         right = box.x() - 1.4 * u
@@ -1395,6 +1417,8 @@ def draw_top(win, p):
     g = ui.QRadialGradient(ui.QPointF(.12 * W, 1.05 * H), .75 * W)
     g.setColorAt(0, ui.faded(ui.FOCUS, .16)); g.setColorAt(1, ui.faded(ui.FOCUS, 0))
     p.fillRect(full, ui.QBrush(g))
+    ui.iisu_fx.draw_hinge_bridge(win, p, 'top')
+    ui.iisu_fx.draw_era_backdrop(win, p)
     rgb = (win.THOR or {}).get('rgb')
     if page == 'light' and rgb and rgb.get('enabled'):  # the two stick rings, in their colour
         c = ui.QColor('#' + str(rgb.get('color', 'FFFFFF')))
@@ -1405,6 +1429,7 @@ def draw_top(win, p):
             p.fillRect(ui.QRectF(cx - 11 * u, .42 * H - 11 * u, 22 * u, 22 * u), ui.QBrush(rg))
             p.setPen(ui.Qt.PenStyle.NoPen); p.setBrush(ui.rgba(30, 31, 36, 1)); p.drawEllipse(ui.QPointF(cx, .42 * H), 6.4 * u, 6.4 * u)
             p.setBrush(ui.rgba(46, 47, 54, 1)); p.drawEllipse(ui.QPointF(cx, .42 * H), 4.6 * u, 4.6 * u)
+    ui.iisu_fx.draw_top_header(win, p, [])
     win.status_bar(p)
     row = focused(win)
     area = next(c for c in AREAS if c[0] == page.split('>')[0])

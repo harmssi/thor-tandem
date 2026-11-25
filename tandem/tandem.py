@@ -1105,6 +1105,7 @@ class Tandem:
         self.mirror = None  # Wii U: the GamePad picture on the bottom screen
         self.home_window = 0  # Tandem's own top window, noted when a game starts
         self.moments = companion.MomentTracker(STATE)  # rolling gameplay snapshotter ("Zuletzt im Spiel", menu-free)
+        self._save_lock = threading.Lock()
         self.setup = {'open': not SETUP_MARK.exists(), 'step': 0}  # the first-run assistant on the screens (see setup_info)
         STATE.mkdir(parents=True, exist_ok=True)
         try: self.saved = json.loads((STATE / 'state.json').read_text())
@@ -1112,9 +1113,11 @@ class Tandem:
         if not self.saved.get('played') and not self.saved.get('fav'): self.ui['tab'] = 1  # nothing played yet: open on the systems
 
     def save(self):
-        tmp = STATE / 'state.json.tmp'
-        tmp.write_text(json.dumps(self.saved))
-        os.replace(tmp, STATE / 'state.json')
+        with self._save_lock:
+            STATE.mkdir(parents=True, exist_ok=True)
+            tmp = STATE / f'state.json.{threading.get_ident()}.tmp'
+            tmp.write_text(json.dumps(self.saved))
+            os.replace(tmp, STATE / 'state.json')
 
     def snapshot(self):
         sk = {k: v for k, v in self.swkbd.items() if k != 'event'} if self.swkbd else None
@@ -1338,6 +1341,7 @@ class Tandem:
                         elif ARMADA_LAUNCH.is_file() and cmd and cmd[0] != str(ARMADA_LAUNCH) and game.get('s') in ('port', 'steam', 'ps2', 'wiiu', 'n3ds', 'psp'):
                             cmd = [str(ARMADA_LAUNCH), *cmd]
                         thor_perf.set_tandem_isolation(True)
+                    telemetry.stop_all_bgm(suspend=True, dry=self.dry)
                     if prof: thor.change('profile', prof)
                     if fps: apply_fps_limit(fps)
                     apply_low_latency(low_lat)
@@ -1367,8 +1371,9 @@ class Tandem:
             if tracked:
                 fp_id = cmd[2] if len(cmd) >= 3 and Path(cmd[0]).name == 'flatpak' and cmd[1] == 'run' else None
                 comp_key = companion.resolve_native_companion(game)
+                is_direct = bool(game.get('direct'))
                 self.run = {'id': gid, 't': game['t'], 's': game['s'], 'emu': label, 'since': int(time.time()), 'hero': game.get('hero'),
-                            'layout': game.get('layout'), 'appid': game.get('appid'), 'tid': game.get('tid'), 'keys': game.get('keys'),
+                            'layout': game.get('layout'), 'appid': game.get('appid'), 'direct': is_direct, 'tid': game.get('tid'), 'keys': game.get('keys'),
                             'companion': comp_key,
                             'deck': f'deck/{game["appid"]}.html' if game.get('appid') and (HERE / f'decks/{game["appid"]}.html').is_file() else None,
                             'pack': pack, 'pack_other_region': pack_other, 'pack_candidates': pack_cands,
@@ -1377,7 +1382,8 @@ class Tandem:
                             'shader': opt.get('shader') or '',
                             **({'flatpak': fp_id} if fp_id else {}),
                             'port': game.get('media') or ({'deck': PORTS[game['port']][3], 'socket': str(DECK_SOCKET)} if game['s'] == 'port' else None)}
-                if not self.dry: threading.Thread(target=self.watch, args=(self.proc, gid, game.get('appid')), daemon=True).start()
+                watch_appid = None if is_direct else game.get('appid')
+                if not self.dry: threading.Thread(target=self.watch, args=(self.proc, gid, watch_appid), daemon=True).start()
                 if not self.dry and game['s'] not in ('app', 'term'):
                     self.moments.start(self, gid)
                     if load_config().get('replay_buffer', False):
@@ -1385,8 +1391,8 @@ class Tandem:
                         thor_features.REPLAY.start(dpys[0] if dpys else ':0')
                 if not self.dry and game['s'] == 'wiiu' and load_config().get('wiiu_ffplay'):
                     threading.Thread(target=self.mirror_pad, args=(gid,), daemon=True).start()
-                if not self.dry:
-                    threading.Thread(target=sync_era_bgm_for, args=(self,), daemon=True).start()
+            elif not self.dry:
+                telemetry.stop_all_bgm(suspend=False, dry=self.dry)
         self.publish()
         return {'ok': True, 'cmd': cmd, 'tracked': tracked}
 
@@ -1524,7 +1530,7 @@ class Tandem:
 
     def steam_rest(self):
         """Steam takes about 2 GB of memory while it idles in the background: end it when nothing needs it."""
-        if self.dry or (self.run and self.run.get('appid')) or any(g.get('inst') == 'load' for g in self.library.games.values()): return
+        if self.dry or (self.run and self.run.get('appid') and not self.run.get('direct')) or any(g.get('inst') == 'load' for g in self.library.games.values()): return
         self.steam_stopping = threading.Thread(target=run_quiet, args=(['steam', '-shutdown'], 60), daemon=True)
         self.steam_stopping.start()
 
@@ -1572,7 +1578,7 @@ class Tandem:
 
     def send(self, sig):
         """Signal the running game: its process group, or for a Steam game everything Steam started for it."""
-        appid = self.run and self.run.get('appid')
+        appid = self.run and (None if self.run.get('direct') else self.run.get('appid'))
         if not appid: return os.killpg(self.proc.pid, sig)
         pids = steam_pids(appid)
         if not pids: raise ProcessLookupError
@@ -1581,7 +1587,16 @@ class Tandem:
             except (ProcessLookupError, PermissionError): pass
 
     def watch(self, proc, gid, appid=None):
-        if not appid: proc.wait()
+        if not appid:
+            for delay in (2.0, 4.0):
+                try:
+                    proc.wait(timeout=delay)
+                    break
+                except subprocess.TimeoutExpired:
+                    if self.run and self.run.get('id') == gid and self.run.get('s') not in ('term', 'app'):
+                        thor_perf.pin_game_tree(proc.pid, 'big')
+            else:
+                proc.wait()
         else:  # 'steam steam://rungameid' returns at once; the game is what Steam starts for it, some time later
             there, gone, longest, deadline = 0, 0, 0, time.time() + 300
             while self.run and self.run['id'] == gid:
@@ -1705,7 +1720,7 @@ class Tandem:
         try:
             if run.get('paused') or run.get('frozen') or SLEEP_STATE.get('froze'): self.send(signal.SIGCONT)  # a frozen program cannot react to being asked to quit
             self.send(signal.SIGTERM)
-            def reap(group=proc.pid, appid=run.get('appid'), fp_id=run.get('flatpak')):
+            def reap(group=proc.pid, appid=(None if run.get('direct') else run.get('appid')), fp_id=run.get('flatpak')):
                 # The sandbox's inner processes can outlive the outer one that Popen watches: after the grace period
                 # whatever is left of the game's process group (and any Flatpak bwrap instance) has to go.
                 for pid in steam_pids(appid) if appid else [-group]:  # a negative number means the whole group
@@ -1775,12 +1790,12 @@ class Tandem:
         with self.lock:
             run, proc = self.run, self.proc
             if not run or not run.get('paused') or not proc: return {'error': 'Es ist kein Spiel pausiert.'}
+            if not self.dry:
+                telemetry.stop_all_bgm(suspend=True, dry=self.dry)
             for window in reversed(run['windows']): x_window('map', window)  # the game's main window last: it gets the screen
             try: self.send(signal.SIGCONT)
             except ProcessLookupError: pass
             run['paused'] = False
-        if not self.dry:
-            threading.Thread(target=sync_era_bgm_for, args=(self,), daemon=True).start()
         if run['s'] == 'wiiu': threading.Thread(target=self.mirror_pad, args=(run['id'],), daemon=True).start()
         self.publish()
         return {'ok': True}
@@ -2667,19 +2682,29 @@ def settings():
             base = Path('/sys/class/backlight') / name
             out[key] = round(100 * int((base / 'brightness').read_text()) / int((base / 'max_brightness').read_text()))
         except (OSError, ValueError, ZeroDivisionError): out[key] = None
-    vol_out = run_quiet(['wpctl', 'get-volume', '@DEFAULT_AUDIO_SINK@']) if shutil.which('wpctl') else ''
-    volume = re.search(r'Volume: ([0-9.]+)', vol_out)
-    out['vol'] = round(100 * float(volume[1])) if volume else None
-    if vol_out: MUTED['on'] = '[MUTED]' in vol_out
+    if _audio_hw_ok():
+        vol_out = run_quiet(['wpctl', 'get-volume', '@DEFAULT_AUDIO_SINK@'])
+        volume = re.search(r'Volume: ([0-9.]+)', vol_out)
+        out['vol'] = round(100 * float(volume[1])) if volume else None
+        if vol_out: MUTED['on'] = '[MUTED]' in vol_out
+    else:
+        out['vol'] = 65 if os.environ.get('QT_QPA_PLATFORM') == 'offscreen' else None
     return out
+
+
+def _audio_hw_ok():
+    """Never touch real host PipeWire sinks during offscreen tests or mocked backlight dry runs."""
+    return bool(shutil.which('wpctl')) and os.environ.get('QT_QPA_PLATFORM') != 'offscreen' and (set_raw is _SET_RAW)
 
 
 def mute(mode='toggle'):
     """Speaker / headphone mute via PipeWire ('toggle', True, False)."""
-    if shutil.which('wpctl'):
+    if _audio_hw_ok():
         arg = 'toggle' if mode == 'toggle' else ('1' if mode else '0')
         run_quiet(['wpctl', 'set-mute', '@DEFAULT_AUDIO_SINK@', arg])
         MUTED['on'] = '[MUTED]' in run_quiet(['wpctl', 'get-volume', '@DEFAULT_AUDIO_SINK@'])
+        if not MUTED['on']:
+            telemetry.ensure_speaker_sink_ready()
     else:
         MUTED['on'] = (not MUTED['on']) if mode == 'toggle' else bool(mode)
     return {'ok': True, 'muted': MUTED['on']}
@@ -2693,7 +2718,8 @@ def change(key, value):
         except (OSError, ValueError): return {'error': 'Diese Helligkeit lässt sich hier nicht einstellen.'}
         set_raw(key, raw)
     elif key == 'vol':
-        if shutil.which('wpctl'):
+        if _audio_hw_ok():
+            telemetry.ensure_speaker_sink_ready()
             run_quiet(['wpctl', 'set-mute', '@DEFAULT_AUDIO_SINK@', '0'])
             run_quiet(['wpctl', 'set-volume', '@DEFAULT_AUDIO_SINK@', f'{value}%'])
     else: return {'error': 'unbekannte Einstellung'}
@@ -2801,7 +2827,7 @@ def sleep_game(tandem, on):
 
 def doze(on, tandem=None, keep_audio=False):
     """Standby on a charger (or closed-lid music mode when keep_audio=True): panels asleep, stick lights off, deep 307 MHz Eco."""
-    hw = (set_raw is _SET_RAW) and not (tandem and tandem.dry)
+    hw = (set_raw is _SET_RAW) and not (tandem and tandem.dry) and os.environ.get('QT_QPA_PLATFORM') != 'offscreen'
     if on and not DOZE:
         if not keep_audio:
             sleep_game(tandem, True)
@@ -2851,6 +2877,7 @@ def doze(on, tandem=None, keep_audio=False):
             if was and shutil.which('armada-rgb'): run_quiet(['armada-rgb', 'wake'])
             if was and SLEEP_STATE['muted'] is False and shutil.which('wpctl'):
                 run_quiet(['wpctl', 'set-mute', '@DEFAULT_AUDIO_SINK@', '0'])
+                telemetry.ensure_speaker_sink_ready()
             prof = ((tandem.run or {}).get('profile') if tandem else '') or SLEEP_STATE['profile'] or load_config().get('perf_profile')
             if prof and shutil.which(thor.POWER[0]):
                 threading.Thread(target=thor.change, args=('profile', prof), daemon=True).start()
@@ -3311,6 +3338,7 @@ def public_config():
             'ui_sounds': config.get('ui_sounds') if config.get('ui_sounds') in ('off', 'subtle') else 'off',
             'era_bgm': bool(config.get('era_bgm', True)),
             'era_bgm_vol': max(5, min(100, int(config.get('era_bgm_vol', 30)))) if isinstance(config.get('era_bgm_vol'), (int, float)) else 30,
+            'modern_theme': config.get('modern_theme') if (config.get('modern_theme') in [t['id'] for t in looks] and theme_meta(config.get('modern_theme'))['era'] == 'modern') else ('iisu-aero' if any(t['id'] == 'iisu-aero' for t in looks) else 'toravo'),
             'lang': 'en' if config.get('lang') == 'en' else 'de', 'remote_url': config.get('remote_url', ''), 'rest_min': config.get('rest_min', 3), 'version': VERSION, 'update_url': config.get('update_url', UPDATE_URL), 'theme': config.get('theme') if config.get('theme') in [t['id'] for t in looks] else 'toravo', 'themes': looks}
 
 
@@ -5152,6 +5180,13 @@ def watch_buttons(tandem):
                 if kind != 1 or value == 0: continue
                 if value == 1 and code == 184:  # Back
                     if free(): tandem.publish('key', {'a': 'back'})
+                    elif tandem.run and not tandem.run.get('paused') and tandem.run.get('emu') in ('BananaNative', 'PeanutsNative'):
+                        import socket as _sock
+                        try:
+                            with _sock.socket(_sock.AF_INET, _sock.SOCK_DGRAM) as _s:
+                                _s.sendto(b'MINUS', ('127.0.0.1', 8779))
+                        except OSError:
+                            pass
                 elif value == 1 and code == 185:  # the Thor key: its quick menu on the bottom screen (Zu Tandem is in there)
                     if BOTTOM_OFF['on']:
                         set_bottom_off(False, tandem)
@@ -5219,6 +5254,7 @@ def main():
         thor_airpods.MANAGER.start(tandem)
         def _init_silent_endurance():
             thor_perf.ensure_audio_powersave(HOME)
+            telemetry.ensure_speaker_sink_ready()
             thor.ensure_silent_profiles(STATE)
             sync_wifi_powersave(tandem)
             sync_gyro_power(bool(tandem.run))
