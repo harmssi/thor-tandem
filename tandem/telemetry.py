@@ -1,6 +1,6 @@
 """Live hardware telemetry, PipeWire per-stream audio mixer, USB-C dock state, and Wake-on-LAN for Toravo Tandem.
 Standard library + wpctl/mpv IPC only; safe on systems without battery/DRM sysfs (returns None/empty cleanly)."""
-import glob, json, os, re, shutil, socket, subprocess, threading, time
+import glob, json, os, re, shutil, socket, subprocess, sys, threading, time
 from collections import deque
 from pathlib import Path
 
@@ -14,6 +14,16 @@ _BGM_LOCK = threading.Lock()
 _CPU_PREV = [0, 0]
 _HIST = {'watts': deque(maxlen=36), 'cpu': deque(maxlen=36), 'temp': deque(maxlen=36), 'at': 0.0}
 _BGM = {'proc': None, 'backend': '', 'path': '', 'track': '', 'playlist': [], 'idx': 0, 'paused': False, 'vol': 65, 'loop': False, 'era_auto': False, 'era_path': '', 'suspended': False}
+
+
+def _bgm_hw_ok():
+    """Never spawn audio players on macOS/dev hosts, in offscreen Qt, or inside unittest runs."""
+    return (
+        sys.platform == 'linux'
+        and 'unittest' not in sys.modules
+        and os.environ.get('QT_QPA_PLATFORM') != 'offscreen'
+        and not os.environ.get('TANDEM_NO_AUDIO')
+    )
 
 
 def _read_int(path):
@@ -420,7 +430,7 @@ def bgm_control(action, path='', vol=None, loop=False, era_auto=False):
             else:
                 return {**bgm_status(), 'error': 'Keine Musikdateien in ~/Music oder auf der Karte (Music/) gefunden.'}
         if action == 'play' and path:
-            if era_auto and _BGM.get('suspended'):
+            if (era_auto and _BGM.get('suspended')) or not _bgm_hw_ok():
                 return bgm_status()
             if not os.path.isfile(path) and not path.startswith(('http://', 'https://')):
                 return {'error': 'Datei nicht gefunden.'}
@@ -486,7 +496,7 @@ def era_bgm_path(era='modern', bgm_file=''):
 
 def sync_era_bgm(era='modern', bgm_file='', enabled=True, vol=32, suspend_for_game=False, dry=False):
     """Start, seamlessly switch, or zero-RAM stop the loopable Era menu soundtrack (`8bit`, `16bit`, `modern`)."""
-    if dry or os.environ.get('QT_QPA_PLATFORM') == 'offscreen':
+    if dry or not _bgm_hw_ok():
         with _BGM_LOCK:
             _BGM['suspended'] = bool(suspend_for_game)
         return {'ok': True, 'dry': True}
@@ -679,7 +689,7 @@ def play_sound(kind='tick', era='modern'):
     era_s = str(era or 'modern')
     bank = SOUNDS_8BIT if era_s == '8bit' else (SOUNDS_16BIT if era_s == '16bit' else SOUNDS)
     notes = bank.get(kind) or SOUNDS.get(kind)
-    if not notes or os.environ.get('QT_QPA_PLATFORM') == 'offscreen':
+    if not notes or not _bgm_hw_ok():
         return False
     player = ['pw-play', '-'] if shutil.which('pw-play') else (['aplay', '-q', '-'] if shutil.which('aplay') else None)
     if not player:
