@@ -9,9 +9,9 @@ Pure QPainter + authored SVG vector craft — zero QML, zero WebEngine, zero bac
 6. Authored uniform-stroke SVG Console Silhouettes & Navigation Icons (zero emoji substitutes).
 7. 360 ms "Console Launch Ceremony" radial light-burst when starting a game (0 ms added launch latency).
 """
-import colorsys, math, time
+import atexit, colorsys, math, time
 from PySide6.QtCore import QByteArray, QPointF, QRectF, Qt
-from PySide6.QtGui import QBrush, QColor, QLinearGradient, QPainter, QPainterPath, QPen, QPolygonF, QRadialGradient
+from PySide6.QtGui import QBrush, QColor, QImage, QLinearGradient, QPainter, QPainterPath, QPen, QPolygonF, QRadialGradient
 try:
     from PySide6.QtSvg import QSvgRenderer
 except ImportError:
@@ -116,6 +116,79 @@ SVGS = {
     'pod_spark': (
         '<path d="M12 3l2.2 6.2L20.5 12l-6.3 2.8L12 21l-2.2-6.2L3.5 12l6.3-2.8z" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round"/>'
     ),
+    'app_propad': (
+        '<path d="M9.4 5.6a4.2 4.2 0 0 1 5.2 0M7.4 3.7a7.1 7.1 0 0 1 9.2 0" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>'
+        '<path d="M7.2 8.2h9.6a4.2 4.2 0 0 1 4.1 5l-.8 4.1a2.3 2.3 0 0 1-4 1.1l-1.6-2H9.5l-1.6 2a2.3 2.3 0 0 1-4-1.1l-.8-4.1a4.2 4.2 0 0 1 4.1-5z" fill="currentColor" fill-opacity="0.22" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>'
+        '<path d="M8.2 11.4v2.8M6.8 12.8h2.8" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/>'
+        '<circle cx="15.8" cy="11.4" r="1.0" fill="currentColor"/><circle cx="17.3" cy="12.9" r="1.0" fill="currentColor"/>'
+        '<circle cx="14.3" cy="12.9" r="1.0" fill="currentColor"/><circle cx="15.8" cy="14.4" r="1.0" fill="currentColor"/>'
+    ),
+    'app_airplay': (
+        '<path d="M6.4 17.5H4.8A2.3 2.3 0 0 1 2.5 15.2V6.8A2.3 2.3 0 0 1 4.8 4.5h14.4a2.3 2.3 0 0 1 2.3 2.3v8.4a2.3 2.3 0 0 1-2.3 2.3h-1.6" fill="currentColor" fill-opacity="0.18" stroke="currentColor" stroke-width="1.85" stroke-linecap="round"/>'
+        '<path d="M9.2 10.6a4.3 4.3 0 0 1 5.6 0M7.3 8.3a7.3 7.3 0 0 1 9.4 0" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" opacity="0.85"/>'
+        '<polygon points="12,13.6 16.9,20.0 7.1,20.0" fill="currentColor"/>'
+    ),
+    'app_claude': (
+        '<g stroke="currentColor" stroke-width="1.95" stroke-linecap="round">'
+        '<line x1="12" y1="3.4" x2="12" y2="20.6"/><line x1="3.4" y1="12" x2="20.6" y2="12"/>'
+        '<line x1="5.9" y1="5.9" x2="18.1" y2="18.1"/><line x1="18.1" y1="5.9" x2="5.9" y2="18.1"/>'
+        '<line x1="8.7" y1="4.1" x2="15.3" y2="19.9" stroke-width="1.45"/><line x1="4.1" y1="8.7" x2="19.9" y2="15.3" stroke-width="1.45"/>'
+        '</g><circle cx="12" cy="12" r="2.7" fill="currentColor"/>'
+    ),
+    'app_agy': (
+        '<ellipse cx="12" cy="13.8" rx="8.8" ry="3.3" transform="rotate(-16 12 13.8)" fill="none" stroke="currentColor" stroke-width="1.55" opacity="0.85"/>'
+        '<polygon points="12,3.2 17.6,13.2 12,16.5 6.4,13.2" fill="currentColor" fill-opacity="0.26" stroke="currentColor" stroke-width="1.85" stroke-linejoin="round"/>'
+        '<polygon points="12,3.2 17.6,13.2 12,11.2" fill="currentColor" fill-opacity="0.48"/>'
+        '<circle cx="18.8" cy="5.6" r="1.2" fill="currentColor"/>'
+        '<path d="M9.2 19.8h5.6" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" opacity="0.78"/>'
+    ),
+    'app_terminal': (
+        '<rect x="3" y="4.2" width="18" height="15.6" rx="2.8" fill="currentColor" fill-opacity="0.18" stroke="currentColor" stroke-width="1.85"/>'
+        '<line x1="3.5" y1="8.4" x2="20.5" y2="8.4" stroke="currentColor" stroke-width="1.4" opacity="0.65"/>'
+        '<circle cx="6.2" cy="6.3" r="0.85" fill="currentColor"/><circle cx="8.8" cy="6.3" r="0.85" fill="currentColor" opacity="0.65"/>'
+        '<polyline points="7.2,11.4 10.6,14.0 7.2,16.6" fill="none" stroke="currentColor" stroke-width="2.0" stroke-linecap="round" stroke-linejoin="round"/>'
+        '<line x1="12.2" y1="16.6" x2="16.6" y2="16.6" stroke="currentColor" stroke-width="2.0" stroke-linecap="round"/>'
+    ),
+    'app_retroarch': (
+        '<path d="M7 5h2v2h6V5h2v2h2v3h2v5h-2v-3h-1v4h-2v2h-2v-2h-4v2H8v-2H6v-4H5v3H3v-5h2V7h2V5zm1 5v2h2v-2H8zm6 0v2h2v-2h-2z" fill="currentColor"/>'
+    ),
+    'app_youtube': (
+        '<rect x="2.6" y="5.2" width="18.8" height="13.6" rx="4.2" fill="currentColor" fill-opacity="0.22" stroke="currentColor" stroke-width="1.85"/>'
+        '<polygon points="10.0,8.5 16.3,12.0 10.0,15.5" fill="currentColor"/>'
+    ),
+    'app_plex': (
+        '<rect x="3.4" y="4.2" width="17.2" height="15.6" rx="3.8" fill="currentColor" fill-opacity="0.18" stroke="currentColor" stroke-width="1.75"/>'
+        '<polygon points="9.1,7.1 12.6,7.1 16.3,12.0 12.6,16.9 9.1,16.9 12.8,12.0" fill="currentColor"/>'
+    ),
+    'app_gallery': (
+        '<rect x="3.2" y="5.0" width="17.6" height="14.0" rx="2.8" fill="currentColor" fill-opacity="0.18" stroke="currentColor" stroke-width="1.85"/>'
+        '<circle cx="8.4" cy="9.5" r="1.6" fill="currentColor"/>'
+        '<path d="M4.2 17.5l4.8-4.9 3.2 3.0 3.4-4.1 4.2 6.0z" fill="currentColor" fill-opacity="0.85"/>'
+    ),
+    'app_rescan': (
+        '<path d="M19.2 10.2A7.5 7.5 0 0 0 6.3 7.1L4.6 8.8M4.6 5.2v3.6h3.6" fill="none" stroke="currentColor" stroke-width="1.95" stroke-linecap="round" stroke-linejoin="round"/>'
+        '<path d="M4.8 13.8a7.5 7.5 0 0 0 12.9 3.1l1.7-1.7M19.4 18.8v-3.6h-3.6" fill="none" stroke="currentColor" stroke-width="1.95" stroke-linecap="round" stroke-linejoin="round"/>'
+        '<circle cx="12" cy="12" r="1.65" fill="currentColor"/>'
+    ),
+    'app_desktop': (
+        '<rect x="2.8" y="4.0" width="18.4" height="12.6" rx="2.4" fill="currentColor" fill-opacity="0.18" stroke="currentColor" stroke-width="1.85"/>'
+        '<rect x="5.4" y="6.4" width="7.2" height="5.0" rx="1.0" fill="currentColor" fill-opacity="0.58"/>'
+        '<line x1="7.2" y1="14.2" x2="16.8" y2="14.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>'
+        '<path d="M12 16.6v3.2M8.4 19.8h7.2" stroke="currentColor" stroke-width="1.85" stroke-linecap="round"/>'
+    ),
+    'app_moonlight': (
+        '<path d="M14.8 4.6a7.4 7.4 0 1 0 4.6 12.6A6.4 6.4 0 0 1 14.8 4.6z" fill="currentColor" fill-opacity="0.26" stroke="currentColor" stroke-width="1.85" stroke-linejoin="round"/>'
+        '<path d="M16.5 6.4a4.2 4.2 0 0 1 3.1 3.1" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round"/>'
+    ),
+    'app_chiaki': (
+        '<rect x="3.2" y="4.6" width="14.8" height="10.2" rx="2.1" fill="currentColor" fill-opacity="0.16" stroke="currentColor" stroke-width="1.75"/>'
+        '<rect x="8.6" y="11.2" width="12.2" height="8.2" rx="2.1" fill="currentColor" fill-opacity="0.34" stroke="currentColor" stroke-width="1.8"/>'
+    ),
+    'app_browser': (
+        '<circle cx="12" cy="12" r="8.5" fill="currentColor" fill-opacity="0.18" stroke="currentColor" stroke-width="1.85"/>'
+        '<ellipse cx="12" cy="12" rx="4.0" ry="8.5" fill="none" stroke="currentColor" stroke-width="1.5"/>'
+        '<line x1="3.8" y1="12" x2="20.2" y2="12" stroke="currentColor" stroke-width="1.5"/>'
+    ),
 }
 
 # Console media packaging profiles: (aspect_w_over_h, spine_hex_or_None, media_kind: 'cart'|'card'|'disc'|'mini_disc'|'none')
@@ -151,6 +224,7 @@ MEDIA_PROFILES = {
 }
 
 _SVG_CACHE = {}
+atexit.register(_SVG_CACHE.clear)
 
 
 def is_light():
@@ -183,18 +257,26 @@ def spring(win, start, secs, bounce=0.16):
 def draw_svg(p, name, rect, color):
     if not QSvgRenderer or name not in SVGS:
         return False
-    key = (name, color.name(), color.alpha())
-    ren = _SVG_CACHE.get(key)
-    if ren is None:
+    pw, ph = max(8, round(rect.width() * 2)), max(8, round(rect.height() * 2))
+    key = ('iisu_svg', name, pw, ph, color.name(), color.alpha())
+    img = _SVG_CACHE.get(key)
+    if img is None:
         svg_txt = (
             f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" opacity="{color.alphaF():.3f}">'
             f'{SVGS[name].replace("currentColor", color.name())}</svg>'
         )
         ren = QSvgRenderer(QByteArray(svg_txt.encode('utf-8')))
-        if len(_SVG_CACHE) > 128:
+        img = QImage(pw, ph, QImage.Format.Format_ARGB32_Premultiplied)
+        img.fill(0)
+        qp = QPainter(img)
+        qp.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
+        ren.render(qp, QRectF(0, 0, pw, ph))
+        qp.end()
+        del ren
+        if len(_SVG_CACHE) > 160:
             _SVG_CACHE.clear()
-        _SVG_CACHE[key] = ren
-    ren.render(p, rect)
+        _SVG_CACHE[key] = img
+    p.drawImage(rect, img)
     return True
 
 
@@ -302,7 +384,12 @@ def draw_square_rim(win, p, rect, item, radius, on=False):
     """Unified Cocoon × iiSU 2-tone luminous squircle border for square tiles that have no external overlay.png."""
     u = win.u
     s = str(item.get('s') or '')
-    hue = 212 if s == 'steam' else 198 if s in ('app', 'term') else (win.L['systems'].get(s) or {'hue': 205})['hue']
+    if s in ('app', 'term'):
+        hue = app_profile(item)['hue']
+    elif s == 'steam':
+        hue = 212
+    else:
+        hue = (win.L['systems'].get(s) or {'hue': 205})['hue']
     c1 = QColor.fromHslF((hue % 360) / 360.0, 0.82, 0.58, 0.72 if on else 0.44)
     c2 = QColor.fromHslF(((hue + 44) % 360) / 360.0, 0.78, 0.52, 0.68 if on else 0.36)
     grad = QLinearGradient(rect.topLeft(), rect.bottomRight())
@@ -744,6 +831,428 @@ def draw_system_tile_art(win, p, rect, item):
     badge_r = QRectF(rect.x() + 1.2 * u, rect.y() + 1.2 * u, ic_sz + 1.2 * u, ic_sz + 1.2 * u)
     win.box(p, badge_r, 1.1 * u, ui.rgba(255, 255, 255, 0.14), ui.rgba(255, 255, 255, 0.22))
     draw_svg(p, svg_name, badge_r.adjusted(0.6 * u, 0.6 * u, -0.6 * u, -0.6 * u), QColor('#ffffff'))
+
+
+# Full-colour multi-layer 64x64 App Emblem SVGs (macOS / Apple-TV / iiSU icon craft — zero monochrome wireframe look)
+APP_EMBLEM_SVGS = {
+    'propad': (
+        '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">'
+        '<stop offset="0%" stop-color="#0ea5e9"/><stop offset="100%" stop-color="#1e3a8a"/></linearGradient></defs>'
+        '<rect width="64" height="64" rx="16" fill="url(#g)"/>'
+        '<path d="M24.5 16.5a11.5 11.5 0 0 1 15 0M19.5 11.8a18.5 18.5 0 0 1 25 0" fill="none" stroke="#bae6fd" stroke-width="3.2" stroke-linecap="round"/>'
+        '<path d="M20 23h24a10.5 10.5 0 0 1 10.2 12.8l-2 10.2a6 6 0 0 1-10.4 2.8L37.8 43.5H26.2L22.2 48.8A6 6 0 0 1 11.8 46l-2-10.2A10.5 10.5 0 0 1 20 23z" fill="#ffffff"/>'
+        '<path d="M22.5 30.5v7.6M18.7 34.3h7.6" stroke="#1e3a8a" stroke-width="3.4" stroke-linecap="round"/>'
+        '<circle cx="42" cy="30.3" r="2.4" fill="#eab308"/>'
+        '<circle cx="46" cy="34.3" r="2.4" fill="#ef4444"/>'
+        '<circle cx="38" cy="34.3" r="2.4" fill="#3b82f6"/>'
+        '<circle cx="42" cy="38.3" r="2.4" fill="#22c55e"/>'
+    ),
+    'airplay': (
+        '<defs><linearGradient id="g" x1="0" y1="0" x2="0.8" y2="1">'
+        '<stop offset="0%" stop-color="#38bdf8"/><stop offset="55%" stop-color="#0284c7"/><stop offset="100%" stop-color="#1d4ed8"/></linearGradient></defs>'
+        '<rect width="64" height="64" rx="16" fill="url(#g)"/>'
+        '<path d="M18.5 44.5H14.5A5.5 5.5 0 0 1 9 39V18.5A5.5 5.5 0 0 1 14.5 13h35A5.5 5.5 0 0 1 55 18.5V39a5.5 5.5 0 0 1-5.5 5.5h-4" fill="none" stroke="#ffffff" stroke-width="4.2" stroke-linecap="round"/>'
+        '<path d="M24.5 29a11 11 0 0 1 15 0M19.5 23.2a18 18 0 0 1 25 0" fill="none" stroke="#e0f2fe" stroke-width="3.2" stroke-linecap="round"/>'
+        '<polygon points="32,36.5 44.5,52 19.5,52" fill="#ffffff"/>'
+    ),
+    'claude': (
+        '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">'
+        '<stop offset="0%" stop-color="#e8845c"/><stop offset="100%" stop-color="#b44d2b"/></linearGradient></defs>'
+        '<rect width="64" height="64" rx="16" fill="url(#g)"/>'
+        '<g stroke="#fff7ed" stroke-width="4.6" stroke-linecap="round">'
+        '<line x1="32" y1="11" x2="32" y2="53"/><line x1="11" y1="32" x2="53" y2="32"/>'
+        '<line x1="17.2" y1="17.2" x2="46.8" y2="46.8"/><line x1="46.8" y1="17.2" x2="17.2" y2="46.8"/>'
+        '<line x1="23.8" y1="12.6" x2="40.2" y2="51.4" stroke-width="3.4"/>'
+        '<line x1="12.6" y1="23.8" x2="51.4" y2="40.2" stroke-width="3.4"/>'
+        '</g><circle cx="32" cy="32" r="6.5" fill="#fff7ed"/>'
+    ),
+    'agy': (
+        '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">'
+        '<stop offset="0%" stop-color="#4f46e5"/><stop offset="55%" stop-color="#7c3aed"/><stop offset="100%" stop-color="#0891b2"/></linearGradient></defs>'
+        '<rect width="64" height="64" rx="16" fill="url(#g)"/>'
+        '<ellipse cx="32" cy="36.5" rx="22" ry="8" transform="rotate(-16 32 36.5)" fill="none" stroke="#67e8f9" stroke-width="3.4"/>'
+        '<polygon points="32,10.5 46.5,35.5 32,44 17.5,35.5" fill="#ffffff"/>'
+        '<polygon points="32,10.5 46.5,35.5 32,30" fill="#c4b5fd"/>'
+        '<circle cx="48.5" cy="16.5" r="3.0" fill="#fde047"/>'
+        '<line x1="25" y1="51.5" x2="39" y2="51.5" stroke="#e0e7ff" stroke-width="3.8" stroke-linecap="round"/>'
+    ),
+    'terminal': (
+        '<defs><linearGradient id="g" x1="0" y1="0" x2="0.6" y2="1">'
+        '<stop offset="0%" stop-color="#1e293b"/><stop offset="100%" stop-color="#090d16"/></linearGradient></defs>'
+        '<rect width="64" height="64" rx="16" fill="url(#g)"/>'
+        '<rect x="6" y="8" width="52" height="48" rx="11" fill="#0b1120" stroke="#334155" stroke-width="2"/>'
+        '<circle cx="15" cy="16" r="2.4" fill="#ff5f56"/>'
+        '<circle cx="22.8" cy="16" r="2.4" fill="#ffbd2e"/>'
+        '<circle cx="30.6" cy="16" r="2.4" fill="#27c93f"/>'
+        '<polyline points="17,28.5 26.5,36 17,43.5" fill="none" stroke="#34d399" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round"/>'
+        '<line x1="31" y1="43.5" x2="44" y2="43.5" stroke="#e2e8f0" stroke-width="4.8" stroke-linecap="round"/>'
+    ),
+    'retroarch': (
+        '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">'
+        '<stop offset="0%" stop-color="#4338ca"/><stop offset="100%" stop-color="#1e1b4b"/></linearGradient></defs>'
+        '<rect width="64" height="64" rx="16" fill="url(#g)"/>'
+        '<path d="M20 16h5v5h14v-5h5v5h5v7.5h5V41h-5v-7.5h-2.5V43h-5v5h-5v-5H27v5h-5v-5h-5v-9.5H14.5V41h-5V28.5h5V21h5v-5zm2.5 12.5v5h5v-5h-5zm14 0v5h5v-5h-5z" fill="#ffffff"/>'
+    ),
+    'youtube': (
+        '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">'
+        '<stop offset="0%" stop-color="#ff2a4b"/><stop offset="100%" stop-color="#c8001d"/></linearGradient></defs>'
+        '<rect width="64" height="64" rx="16" fill="url(#g)"/>'
+        '<rect x="10" y="16.5" width="44" height="31" rx="9.5" fill="#ffffff"/>'
+        '<polygon points="27.5,24.2 40.8,32 27.5,39.8" fill="#dc001e"/>'
+    ),
+    'plex': (
+        '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">'
+        '<stop offset="0%" stop-color="#272b36"/><stop offset="100%" stop-color="#12151c"/></linearGradient>'
+        '<linearGradient id="p" x1="0" y1="0" x2="1" y2="1">'
+        '<stop offset="0%" stop-color="#facc15"/><stop offset="100%" stop-color="#ea580c"/></linearGradient></defs>'
+        '<rect width="64" height="64" rx="16" fill="url(#g)"/>'
+        '<polygon points="22.5,14 33,14 44.5,32 33,50 22.5,50 34,32" fill="url(#p)"/>'
+    ),
+    'gallery': (
+        '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">'
+        '<stop offset="0%" stop-color="#ec4899"/><stop offset="50%" stop-color="#8b5cf6"/><stop offset="100%" stop-color="#3b82f6"/></linearGradient></defs>'
+        '<rect width="64" height="64" rx="16" fill="url(#g)"/>'
+        '<circle cx="22.5" cy="22.5" r="5.8" fill="#fde047"/>'
+        '<path d="M9 50l15.5-17.5 10.5 10.5 9.5-12.5L55 50z" fill="#ffffff"/>'
+        '<path d="M27 50l17.5-19.5L55 50z" fill="#e0e7ff" fill-opacity="0.82"/>'
+    ),
+    'steam': (
+        '<defs><linearGradient id="g" x1="0" y1="0" x2="0.8" y2="1">'
+        '<stop offset="0%" stop-color="#1b4d7e"/><stop offset="55%" stop-color="#153252"/><stop offset="100%" stop-color="#0d1b2a"/></linearGradient></defs>'
+        '<rect width="64" height="64" rx="16" fill="url(#g)"/>'
+        '<circle cx="40.5" cy="24.5" r="9.2" fill="none" stroke="#ffffff" stroke-width="4.4"/>'
+        '<circle cx="40.5" cy="24.5" r="3.6" fill="#67e8f9"/>'
+        '<circle cx="23.5" cy="41.5" r="6.8" fill="none" stroke="#ffffff" stroke-width="4.2"/>'
+        '<path d="M8 35.5l14.5 6M28.5 37.5l8.8-8.2" stroke="#ffffff" stroke-width="5.2" stroke-linecap="round"/>'
+    ),
+    'rescan': (
+        '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">'
+        '<stop offset="0%" stop-color="#14b8a6"/><stop offset="100%" stop-color="#0369a1"/></linearGradient></defs>'
+        '<rect width="64" height="64" rx="16" fill="url(#g)"/>'
+        '<path d="M48.5 27.5A17.5 17.5 0 0 0 18.5 20L14.5 24M14.5 14.5V24H24" fill="none" stroke="#ffffff" stroke-width="4.6" stroke-linecap="round" stroke-linejoin="round"/>'
+        '<path d="M15.5 36.5A17.5 17.5 0 0 0 45.5 44l4-4M49.5 49.5V40H40" fill="none" stroke="#ffffff" stroke-width="4.6" stroke-linecap="round" stroke-linejoin="round"/>'
+    ),
+    'desktop': (
+        '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">'
+        '<stop offset="0%" stop-color="#3b82f6"/><stop offset="100%" stop-color="#1d4ed8"/></linearGradient></defs>'
+        '<rect width="64" height="64" rx="16" fill="url(#g)"/>'
+        '<rect x="10" y="13" width="44" height="30" rx="5.5" fill="#eff6ff"/>'
+        '<rect x="14.5" y="17.5" width="18" height="13" rx="2.5" fill="#3b82f6"/>'
+        '<rect x="35.5" y="21" width="13" height="9.5" rx="2.2" fill="#93c5fd"/>'
+        '<rect x="18" y="36" width="28" height="3.6" rx="1.8" fill="#60a5fa"/>'
+        '<path d="M32 43v7.5M23 50.5h18" stroke="#ffffff" stroke-width="4.4" stroke-linecap="round"/>'
+    ),
+    'moonlight': (
+        '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">'
+        '<stop offset="0%" stop-color="#312e81"/><stop offset="100%" stop-color="#0f172a"/></linearGradient></defs>'
+        '<rect width="64" height="64" rx="16" fill="url(#g)"/>'
+        '<path d="M38.5 14a18.5 18.5 0 1 0 11.5 31.5A15.5 15.5 0 0 1 38.5 14z" fill="#fde047"/>'
+        '<path d="M42.5 19.5a9.5 9.5 0 0 1 7 7" fill="none" stroke="#67e8f9" stroke-width="3.4" stroke-linecap="round"/>'
+    ),
+    'chiaki': (
+        '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">'
+        '<stop offset="0%" stop-color="#2563eb"/><stop offset="100%" stop-color="#172554"/></linearGradient></defs>'
+        '<rect width="64" height="64" rx="16" fill="url(#g)"/>'
+        '<rect x="11" y="14" width="32" height="22" rx="4.5" fill="#93c5fd" fill-opacity="0.45" stroke="#ffffff" stroke-width="3.2"/>'
+        '<rect x="23" y="28" width="30" height="21" rx="4.5" fill="#ffffff"/>'
+    ),
+    'browser': (
+        '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">'
+        '<stop offset="0%" stop-color="#f97316"/><stop offset="100%" stop-color="#7c3aed"/></linearGradient></defs>'
+        '<rect width="64" height="64" rx="16" fill="url(#g)"/>'
+        '<circle cx="32" cy="32" r="19" fill="none" stroke="#ffffff" stroke-width="4"/>'
+        '<ellipse cx="32" cy="32" rx="9" ry="19" fill="none" stroke="#ffffff" stroke-width="3.2"/>'
+        '<line x1="13" y1="32" x2="51" y2="32" stroke="#ffffff" stroke-width="3.2"/>'
+    ),
+    'generic': (
+        '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">'
+        '<stop offset="0%" stop-color="#3b82f6"/><stop offset="100%" stop-color="#1e293b"/></linearGradient></defs>'
+        '<rect width="64" height="64" rx="16" fill="url(#g)"/>'
+        '<rect x="15" y="15" width="14" height="14" rx="4" fill="#ffffff"/>'
+        '<rect x="35" y="15" width="14" height="14" rx="4" fill="#93c5fd"/>'
+        '<rect x="15" y="35" width="14" height="14" rx="4" fill="#93c5fd"/>'
+        '<rect x="35" y="35" width="14" height="14" rx="4" fill="#ffffff"/>'
+    ),
+}
+
+# Curated Apple-TV / iiSU App Iconography Registry
+_APP_BY_ID = {
+    'propad': {
+        'emblem': 'propad', 'hue': 204, 'accent': '#38bdf8',
+        'short': 'Pro-Controller', 'headline': 'Pro-Controller (Mac & PC)', 'cat': 'Kabelloser Controller',
+        'desc': 'Verwandelt den AYN Thor samt Gyro & Touch-Deck kabellos in einen Pro-Controller für Mac & PC.',
+        'prefer_emblem': True,
+    },
+    'airplay:top': {
+        'emblem': 'airplay', 'hue': 200, 'accent': '#38bdf8',
+        'short': 'AirPlay', 'headline': 'Apple AirPlay-Empfänger', 'cat': 'Streaming · 1080p Vollbild',
+        'desc': 'Empfängt Bildschirm-Spiegelung, Videos und Musik direkt vom iPhone, iPad oder Mac in 1080p.',
+        'prefer_emblem': True,
+    },
+    'ai:claude': {
+        'emblem': 'claude', 'hue': 19, 'accent': '#fb923c',
+        'short': 'Claude Code', 'headline': 'Claude Code', 'cat': 'KI-Entwicklung · Autonom',
+        'desc': 'Startet Anthropic Claude Code oben im Vollbild mit KI-Schnellleiste & Touch-Tastatur unten.',
+        'prefer_emblem': True,
+    },
+    'ai:agy': {
+        'emblem': 'agy', 'hue': 255, 'accent': '#a78bfa',
+        'short': 'Antigravity', 'headline': 'Google Antigravity', 'cat': 'KI-Entwicklung · Autonom',
+        'desc': 'Startet Google DeepMind Antigravity (agy) oben mit KI-Schnellleiste & Touch-Tastatur unten.',
+        'prefer_emblem': True,
+    },
+    'term': {
+        'emblem': 'terminal', 'hue': 158, 'accent': '#34d399',
+        'short': 'Terminal', 'headline': 'Terminal', 'cat': 'Linux-Konsole',
+        'desc': 'Vollwertige Linux-Shell oben mit taktiler QWERTZ-/US-Bildschirmtastatur auf dem unteren OLED.',
+        'prefer_emblem': True,
+    },
+    'act:steam': {
+        'emblem': 'steam', 'hue': 208, 'accent': '#38bdf8',
+        'short': 'Steam starten', 'headline': 'Steam-Client', 'cat': 'Store & Downloads',
+        'desc': 'Öffnet die große Steam-Oberfläche für Store, Downloads, Freunde und Kontoverwaltung.',
+        'prefer_emblem': True,
+    },
+    'rescan': {
+        'emblem': 'rescan', 'hue': 178, 'accent': '#2dd4bf',
+        'short': 'Neu einlesen', 'headline': 'Bibliothek neu einlesen', 'cat': 'Bibliothek & Cover',
+        'desc': 'Sucht auf Gerät und SD-Karte nach neuen Spielen, Covern und wandelt Switch-ROMs im Leerlauf nativ um.',
+        'prefer_emblem': True,
+    },
+    'act:desktop': {
+        'emblem': 'desktop', 'hue': 216, 'accent': '#60a5fa',
+        'short': 'Zum Desktop', 'headline': 'Zum Desktop wechseln', 'cat': 'KDE-Plasma-Desktop',
+        'desc': 'Wechselt zur vollwertigen ArmadaOS-Desktop-Oberfläche (Rückkehr jederzeit über „Zurück zu Tandem“).',
+        'prefer_emblem': True,
+    },
+}
+
+_APP_BY_TITLE = {
+    'youtube': {
+        'emblem': 'youtube', 'hue': 354, 'accent': '#f87171',
+        'short': 'YouTube', 'headline': 'YouTube', 'cat': 'Medien · Dual-Screen',
+        'desc': '1080p-Video auf dem oberen AMOLED mit Abo-Feed, Suche und Offline-Downloads unten.',
+        'prefer_emblem': True,
+    },
+    'plex': {
+        'emblem': 'plex', 'hue': 38, 'accent': '#fbbf24',
+        'short': 'Plex', 'headline': 'Plex', 'cat': 'Heimkino · Dual-Screen',
+        'desc': 'Spielt Filme und Serien deiner Plex-Mediathek oben ab, gesteuert über den unteren Touchscreen.',
+        'prefer_emblem': True,
+    },
+    'aufnahmen': {
+        'emblem': 'gallery', 'hue': 292, 'accent': '#e879f9',
+        'short': 'Aufnahmen', 'headline': 'Aufnahmen & Clips', 'cat': 'Screenshots & 30s-Replays',
+        'desc': 'Durchsucht deine Dual-Screen-Screenshots, 30s-Instant-Replays und Bildschirmaufnahmen.',
+        'prefer_emblem': True,
+    },
+    'firefox': {
+        'emblem': 'browser', 'hue': 24, 'accent': '#fb923c',
+        'short': 'Firefox', 'headline': 'Firefox', 'cat': 'Webbrowser',
+        'desc': 'Vollwertiger ARM64-Webbrowser auf dem oberen Bildschirm.',
+        'prefer_emblem': False,
+    },
+    'heroic': {
+        'emblem': 'steam', 'hue': 198, 'accent': '#38bdf8',
+        'short': 'Heroic', 'headline': 'Heroic Games Launcher', 'cat': 'GOG · Epic · Amazon',
+        'desc': 'Verwaltet und installiert deine Spiele aus GOG, Epic Games und Amazon Prime Gaming.',
+        'prefer_emblem': False,
+    },
+    'retroarch': {
+        'emblem': 'retroarch', 'hue': 252, 'accent': '#a78bfa',
+        'short': 'RetroArch', 'headline': 'RetroArch', 'cat': 'Klassik-Frontend & Kerne',
+        'desc': 'Direkter Zugriff auf RetroArch-Einstellungen, Kerne, Shader und Netplay-Optionen.',
+        'prefer_emblem': True,
+    },
+    'moonlight': {
+        'emblem': 'moonlight', 'hue': 224, 'accent': '#60a5fa',
+        'short': 'Moonlight', 'headline': 'Moonlight', 'cat': 'PC-Streaming · 120 Hz',
+        'desc': 'Streamt deinen Gaming-PC nahezu verzögerungsfrei in 1080p 120 Hz samt Maus-Trackpad unten.',
+        'prefer_emblem': False,
+    },
+    'chiaki': {
+        'emblem': 'chiaki', 'hue': 222, 'accent': '#60a5fa',
+        'short': 'Chiaki', 'headline': 'Chiaki', 'cat': 'PlayStation Remote Play',
+        'desc': 'Verbindet den Thor per Remote Play direkt mit deiner PlayStation 5 oder PlayStation 4.',
+        'prefer_emblem': False,
+    },
+    'es-de': {
+        'emblem': 'generic', 'hue': 268, 'accent': '#c084fc',
+        'short': 'ES-DE', 'headline': 'ES-DE', 'cat': 'Medien-Scraper',
+        'desc': 'EmulationStation Desktop Edition für zusätzliche Metadaten- und Boxart-Verwaltung.',
+        'prefer_emblem': False,
+    },
+    'prism launcher': {
+        'emblem': 'generic', 'hue': 144, 'accent': '#4ade80',
+        'short': 'Prism', 'headline': 'Prism Launcher', 'cat': 'Minecraft-Launcher',
+        'desc': 'Natives ARM64-Minecraft mit Modpacks, Shadern und Controller-Unterstützung.',
+        'prefer_emblem': False,
+    },
+}
+
+
+def app_profile(item):
+    """Return curated visual & semantic profile for any entry in the Apps tab."""
+    gid = str((item or {}).get('id') or '')
+    title = str((item or {}).get('t') or '')
+    if gid in _APP_BY_ID:
+        return _APP_BY_ID[gid]
+    low = title.lower()
+    for key, prof in _APP_BY_TITLE.items():
+        if key in low:
+            return prof
+    if gid.startswith('upd:'):
+        return {
+            'emblem': 'rescan', 'hue': 200, 'accent': '#38bdf8',
+            'short': title, 'headline': title, 'cat': 'Paket-Update',
+            'desc': 'Lädt und installiert die aktuelle ARM64-Version automatisch im Hintergrund.',
+            'prefer_emblem': True,
+        }
+    return {
+        'emblem': 'generic', 'hue': 214, 'accent': '#60a5fa',
+        'short': title, 'headline': title, 'cat': 'Anwendung',
+        'desc': 'Startet die Anwendung auf dem oberen Bildschirm des AYN Thor.',
+        'prefer_emblem': False,
+    }
+
+
+def _draw_app_emblem(win, p, med, item, prof):
+    """Render full-colour 64x64 squircle app icon (or framed PNG icon for Firefox/Heroic) inside `med`."""
+    u = win.u
+    acc = QColor(prof['accent'])
+    mrad = med.width() * 0.25
+
+    # Soft 3D contact shadow under the squircle app icon
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(ui.rgba(15, 23, 42, 0.16) if is_light() else ui.rgba(0, 0, 0, 0.44))
+    p.drawRoundedRect(med.translated(0.0, 0.32 * u), mrad, mrad)
+
+    icon_tok = item.get('icon')
+    use_own = bool(icon_tok and not prof.get('prefer_emblem') and not str(icon_tok).lower().endswith('.svg'))
+    own = win.images.get(icon_tok, max(32, round(med.width() * 0.78)), max(32, round(med.height() * 0.78)), False) if use_own else None
+
+    clip = QPainterPath()
+    clip.addRoundedRect(med, mrad, mrad)
+    p.save()
+    p.setClipPath(clip)
+    if own and not getattr(own, 'isNull', lambda: True)():
+        bg_g = QLinearGradient(med.topLeft(), med.bottomRight())
+        bg_g.setColorAt(0.0, win.lerp_color(QColor('#1e293b'), acc, 0.28))
+        bg_g.setColorAt(1.0, QColor('#0b1120'))
+        p.fillRect(med, QBrush(bg_g))
+        p.drawImage(QPointF(med.center().x() - own.width() / 2, med.center().y() - own.height() / 2), own)
+    else:
+        em_name = prof.get('emblem') or 'generic'
+        px_sz = max(32, min(512, round(med.width() * 2)))
+        em_key = ('emblem_img', em_name, px_sz)
+        em_img = win.svgs.get(em_key)
+        if em_img is None and QSvgRenderer:
+            body = APP_EMBLEM_SVGS.get(em_name, APP_EMBLEM_SVGS['generic'])
+            ren = QSvgRenderer(QByteArray(f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">{body}</svg>'.encode('utf-8')))
+            em_img = QImage(px_sz, px_sz, QImage.Format.Format_ARGB32_Premultiplied)
+            em_img.fill(0)
+            qp = QPainter(em_img)
+            qp.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
+            ren.render(qp, QRectF(0, 0, px_sz, px_sz))
+            qp.end()
+            del ren
+            win.svgs[em_key] = em_img
+        if em_img is not None:
+            p.drawImage(med, em_img)
+        else:
+            p.fillRect(med, acc)
+
+    # Subtle diagonal Aero glass sheen across the top-left of every app icon
+    sheen = QLinearGradient(med.topLeft(), QPointF(med.x() + med.width() * 0.65, med.y() + med.height() * 0.58))
+    sheen.setColorAt(0.0, ui.rgba(255, 255, 255, 0.24))
+    sheen.setColorAt(0.45, ui.rgba(255, 255, 255, 0.03))
+    sheen.setColorAt(1.0, ui.rgba(255, 255, 255, 0.0))
+    p.fillRect(med, QBrush(sheen))
+    p.restore()
+
+    # Crisp 1px inner specular highlight rim around the squircle app icon
+    p.setPen(QPen(ui.rgba(255, 255, 255, 0.30), 1.05))
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    p.drawRoundedRect(med, mrad, mrad)
+
+
+def app_tile_brush(win, item, rect):
+    """Refined calm glass surface lightly tinted with the app's brand hue so all 14 tiles feel cohesive."""
+    prof = app_profile(item)
+    acc = QColor(prof['accent'])
+    if is_light():
+        c1 = win.lerp_color(QColor('#ffffff'), acc, 0.11)
+        c2 = win.lerp_color(QColor('#edf2f9'), acc, 0.07)
+    else:
+        c1 = win.lerp_color(ui.RAISED, acc, 0.16)
+        c2 = win.lerp_color(ui.PANEL, QColor('#05070d'), 0.32)
+    g = QLinearGradient(rect.topLeft(), rect.bottomRight())
+    g.setColorAt(0.0, c1)
+    g.setColorAt(1.0, c2)
+    return g
+
+
+def draw_app_tile_art(win, p, rect, item, on=False):
+    """Draw a clean, cohesive Apple-TV / iiSU App tile: calm glass card + vibrant 3D squircle app icon + centered title."""
+    u = win.u
+    prof = app_profile(item)
+    light = is_light()
+    acc = QColor(prof['accent'])
+    w, h = rect.width(), rect.height()
+    r = 0.12 * w * ui.THEME['radius']
+
+    clip = QPainterPath()
+    clip.addRoundedRect(rect, r, r)
+    p.save()
+    p.setClipPath(clip)
+
+    # Soft radial aura behind the centered squircle app icon
+    mcx, mcy = rect.center().x(), rect.y() + h * 0.40
+    rg = QRadialGradient(QPointF(mcx, mcy), w * 0.52)
+    rg.setColorAt(0.0, ui.faded(acc, (0.24 if on else 0.14) if not light else 0.16))
+    rg.setColorAt(1.0, ui.faded(acc, 0.0))
+    p.fillRect(rect, QBrush(rg))
+
+    med_sz = w * 0.50
+    med = QRectF(mcx - med_sz / 2, mcy - med_sz / 2, med_sz, med_sz)
+    _draw_app_emblem(win, p, med, item, prof)
+
+    lbl = prof.get('short') or item.get('t') or ''
+    lf = ('u', 1.54, 700 if on else 600, -.01)
+    fg_lbl = QColor('#0f172a') if light else (QColor('#ffffff') if on else ui.TEXT)
+    win.text(p, lbl, rect.x() + 0.9 * u, rect.bottom() - 3.05 * u, lf, fg_lbl, w - 1.8 * u, 1, 1.35)
+    p.restore()
+
+
+def draw_app_showcase(win, p, item, t_enter):
+    """Floating 3D Full-Colour App Showcase Icon on the right side of the Top Screen."""
+    if not item:
+        return None
+    u, W, H = win.u, win.width(), win.height()
+    prof = app_profile(item)
+    acc = QColor(prof['accent'])
+    light = is_light()
+
+    sz = 23.0 * u
+    t_sp = spring(win, win.hero['kt'], win.dur(0.40), bounce=0.16)
+    glide_x = 0.0 if win.CFG.get('motion') == 'reduced' else (1.0 - t_sp) * 1.8 * u
+    glide_y = 0.0 if win.CFG.get('motion') == 'reduced' else (1.0 - t_sp) * 0.7 * u
+    bx = W - 7.5 * u - sz + glide_x
+    by = H * 0.50 - sz * 0.50 + glide_y
+    card = QRectF(bx, by, sz, sz)
+
+    p.save()
+    sh_rad = sz * 0.88
+    amb = QRadialGradient(QPointF(card.center().x(), card.center().y() + 1.0 * u), sh_rad)
+    amb.setColorAt(0.0, ui.rgba(15, 23, 42, 0.22) if light else ui.rgba(0, 0, 0, 0.56))
+    amb.setColorAt(0.55, ui.faded(acc, 0.24))
+    amb.setColorAt(1.0, ui.rgba(0, 0, 0, 0.0))
+    p.fillRect(QRectF(card.center().x() - sh_rad, card.center().y() - sh_rad, 2 * sh_rad, 2 * sh_rad), QBrush(amb))
+
+    _draw_app_emblem(win, p, card, item, prof)
+    p.restore()
+    win.hit(card, lambda: win.post('api/uikey', {'a': 'ok'}), name='pad:shot')
+    return card
 
 
 def draw_home_pods(win, p, items, x0, cw, y):

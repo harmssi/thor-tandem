@@ -763,10 +763,14 @@ class Tandem(QRasterWindow):
         self.post('api/config', {'theme': name})  # the service stores it and tells the other screen
 
     def game_accent(self, items):
-        """The colour of the game in front (running, else selected), from its cover; None for the theme's own accent."""
+        """The colour of the game or app in front (running, else selected); None for the theme's own accent."""
         if not THEME['gameAccent']: return None
         it = next((g for g in self.L['games'] if g['id'] == self.RUN['id']), None) if self.playing() else items[self.S['i']] if items else None
-        if not it or it.get('kind') or it.get('s') == 'app' or not it.get('cover'): return None
+        if not it or it.get('kind'): return None
+        if it.get('s') in ('app', 'term'):
+            c, bg = QColor(iisu_fx.app_profile(it)['accent']), QColor(THEME['colors']['bg'])
+            return QColor(*readable((c.red(), c.green(), c.blue()), (bg.red(), bg.green(), bg.blue())))
+        if not it.get('cover'): return None
         key = it['cover']
         if key not in ACCENTS:
             img = self.thumbs.get(key, 24, 24)  # decoded straight to 24 x 24, never at full size
@@ -1994,7 +1998,9 @@ class Tandem(QRasterWindow):
             self.glyph_battery(p, x, mid, ic, self.BATT['level'], self.BATT.get('charging'), ink)
 
     def paint_of(self, it, rect):  # the coloured gradient that stands in for missing art
-        h = 212 if it['s'] == 'steam' else 160 if it['s'] in ('app', 'term') else (self.L['systems'].get(it['s']) or {'hue': 200})['hue']
+        if it.get('s') in ('app', 'term'):
+            return iisu_fx.app_tile_brush(self, it, rect)
+        h = 212 if it['s'] == 'steam' else (self.L['systems'].get(it['s']) or {'hue': 200})['hue']
         k = jhash(it['t']) % 50
         angle = math.radians(120 + k)
         dx, dy = math.sin(angle), -math.cos(angle)
@@ -2242,7 +2248,7 @@ class Tandem(QRasterWindow):
                     if it.get('kind') == 'sys':
                         iisu_fx.draw_svg(p, iisu_fx.console_svg_for(it.get('s')),
                                          QRectF(W - 44 * u, H * .22, 32 * u, 32 * u), rgba(255, 255, 255, .14))
-                    else:
+                    elif it.get('s') not in ('app', 'term'):
                         self.text(p, it['t'][:1].upper(), W - 52 * u, H / 2 - 22 * u, ('u', 34, 700), rgba(255, 255, 255, .08), 44 * u, 2)
             g = QLinearGradient(0, 0, W, 0)
             g.setColorAt(0, faded(INK, .92)); g.setColorAt(.42, faded(INK, .52)); g.setColorAt(.78, faded(INK, 0))
@@ -2264,7 +2270,7 @@ class Tandem(QRasterWindow):
             empty_top = 'Keine passenden Spiele gefunden.' if self.S.get('q') else 'Mit R zu den Systemen wechseln.'
             name, meta, hints, miss = 'Noch nichts hier', [[('Toravo Tandem', ('u', 1.5, 600), FOCUS)], [(empty_top, m, MUTED)]], ([('B', 'Suche beenden')] if self.S.get('q') else []), None
         else:
-            name = it['t']
+            name = (iisu_fx.app_profile(it).get('headline') or it['t']) if (not P and it.get('s') in ('app', 'term')) else it['t']
             fact = lambda key, value: [(key + ' ', m, MUTED), (str(value), mv, TEXT)]
             played = L['played'].get(it['id']) or {}
             sname = 'System' if it.get('kind') == 'sys' else self.sys_name(it)
@@ -2275,6 +2281,9 @@ class Tandem(QRasterWindow):
                     [(sname, ('u', 1.5, 600), FOCUS)])
             if P: meta = [lead, fact('Emulator', RUN['emu']), fact('Läuft seit', hours(time.time() - RUN['since']))]
             elif it.get('kind') == 'sys': meta = [lead, [(str(it['n']), mv, TEXT), (' Spiele', m, MUTED)], fact('Emulator', sysinfo.get('emu') or 'fehlt')]
+            elif it.get('s') in ('app', 'term'):
+                aprof = iisu_fx.app_profile(it)
+                meta = [lead, [(aprof['cat'], mv, TEXT)]]
             else:
                 pdb_map = {'platinum': ('Platin', QColor('#67e8f9')), 'gold': ('Gold', QColor('#facc15')),
                            'silver': ('Silber', QColor('#cbd5e1')), 'bronze': ('Bronze', QColor('#fb923c'))}
@@ -2306,15 +2315,18 @@ class Tandem(QRasterWindow):
         shot_src = it.get('moment') if has_moment else (it.get('shot') if it and not P else None)
         sw, sh = (round(29.0 * u), round(16.3 * u)) if has_moment else (round(26.5 * u), round(14.9 * u))
         shot = self.images.get(shot_src, sw, sh, True) if shot_src else False
+        is_app_card = bool(it and not P and it.get('s') in ('app', 'term'))
         use_3d = bool(it and not P and self.CFG.get('showcase_3d', True) and not it.get('kind')
                       and it.get('s') not in ('app', 'term') and (it.get('box') or it.get('cover') or shot))
-        max_tw = (W - 4.2 * u - (35.5 * u if use_3d else (sw + 6.8 * u))) if (use_3d or shot) else 60 * u
+        max_tw = (W - 4.2 * u - (33.0 * u if is_app_card else 35.5 * u if use_3d else (sw + 6.8 * u))) if (is_app_card or use_3d or shot) else 60 * u
         logo = self.images.get(it['logo'], round(min(40 * u, max_tw)), round(15.5 * u), False) if it and it.get('logo') else False
         nf, mf = ('u', 4.6, 700, -.025), ('m', 1.3, 500)
         if not logo and len(self.wrap(name, nf, max_tw)) > 2: nf = ('u', 3.7, 700, -.02)  # long names get smaller, not taller
         rows = [] if logo else self.wrap(name, nf, max_tw, 3)
         head_h = (logo.height() + .4 * u) if logo else len(rows) * nf[1] * u * 1.08
-        desc_rows = self.wrap(it['desc'], ('u', 1.45, 400), max_tw, 2) if (it and not P and it.get('desc') and not miss) else []
+        app_desc = iisu_fx.app_profile(it).get('desc') if is_app_card else None
+        raw_desc = (it.get('desc') or app_desc) if (it and not P and not miss) else None
+        desc_rows = self.wrap(raw_desc, ('u', 1.45, 400), max_tw, 2) if raw_desc else []
         desc_h = (1.1 * u + len(desc_rows) * 1.45 * u * 1.38) if desc_rows else 0
         cmd = self.wrap(miss, mf, max_tw, None) if miss else []
         height = head_h + 1.5 * u + 1.8 * u + desc_h + (1.6 * u + len(cmd) * 1.3 * u * 1.4 + 1.8 * u if cmd else 0) + (2.4 * u + 3.6 * u if hints else 0)
@@ -2354,7 +2366,9 @@ class Tandem(QRasterWindow):
             for n, row in enumerate(cmd): self.text(p, row, x + 1.2 * u, y + .9 * u + n * 1.3 * u * 1.4, mf, WARN, lh=1.4)
             y = box.bottom()
         if hints: self.pads(p, x, y + 2.4 * u, hints)
-        if use_3d:
+        if is_app_card:
+            iisu_fx.draw_app_showcase(self, p, it, t)
+        elif use_3d:
             iisu_fx.draw_3d_showcase(self, p, it, t, has_moment, shot if shot else None)
         elif shot:
             smove = 0 if self.CFG.get('motion') == 'reduced' else (1 - t) * 1.4 * u
@@ -3030,17 +3044,18 @@ class Tandem(QRasterWindow):
             if cover is False:
                 if x.get('kind') == 'sys':
                     iisu_fx.draw_system_tile_art(self, p, rect, x)
+                    rows = self.wrap(x['t'], ('u', 1.6, 700), rect.width() - 2.8 * u, 2)
+                    lh = 1.6 * u * 1.2
+                    for k, row in enumerate(rows):
+                        self.text(p, row, rect.x() + 1.4 * u, rect.bottom() - 1.3 * u - (len(rows) - k) * lh, ('u', 1.6, 700), ON_ART, lh=1.2)
+                elif x.get('s') in ('app', 'term'):
+                    iisu_fx.draw_app_tile_art(self, p, rect, x, on=on)
                 else:
-                    own = self.images.get(x['icon'], round(.46 * size), round(.46 * size), False) if x.get('icon') else None
-                    name = None if x['s'] != 'app' or own else 'yt' if x['t'] == 'YouTube' else 'plex' if x['t'] == 'Plex' else 'gal' if x['t'] == 'Aufnahmen' else 'term' if x['id'] == 'term' else 'scan' if x['id'] == 'rescan' else 'play' if x['id'] == 'act:steam' else 'desk' if x['id'] == 'act:desktop' else 'get' if x['id'].startswith('upd:') else \
-                        'web' if 'firefox' in x['t'].lower() or 'browser' in x['t'].lower() else 'pad'
-                    if own: p.drawImage(QPointF(rect.center().x() - own.width() / 2, rect.y() + .37 * rect.height() - own.height() / 2), own)
-                    elif x.get('icon') and own is None: pass  # the app's own icon is still loading
-                    elif name and QSvgRenderer: self.icon(p, name, QRectF(rect.x() + .3 * rect.width(), rect.y() + .17 * rect.height(), .4 * rect.width(), .4 * rect.height()), rgba(255, 255, 255, .92))
-                    else: self.text(p, x['t'][:1].upper(), rect.x() + 1.4 * u, rect.y() + .6 * u, ('u', 6, 700), rgba(255, 255, 255, .22), lh=1)
-                rows = self.wrap(x['t'], ('u', 1.6, 700 if x.get('kind') == 'sys' else 600), rect.width() - 2.8 * u, 2)
-                lh = 1.6 * u * 1.2
-                for k, row in enumerate(rows): self.text(p, row, rect.x() + 1.4 * u, rect.bottom() - 1.3 * u - (len(rows) - k) * lh, ('u', 1.6, 700 if x.get('kind') == 'sys' else 600), ON_ART, lh=1.2)
+                    self.text(p, x['t'][:1].upper(), rect.x() + 1.4 * u, rect.y() + .6 * u, ('u', 6, 700), rgba(255, 255, 255, .22), lh=1)
+                    rows = self.wrap(x['t'], ('u', 1.6, 600), rect.width() - 2.8 * u, 2)
+                    lh = 1.6 * u * 1.2
+                    for k, row in enumerate(rows):
+                        self.text(p, row, rect.x() + 1.4 * u, rect.bottom() - 1.3 * u - (len(rows) - k) * lh, ('u', 1.6, 600), ON_ART, lh=1.2)
         if not framed and not (x.get('kind') == 'sys' and cover):
             iisu_fx.draw_square_rim(self, p, rect, x, r, on=on)
         if on and t > 0:
