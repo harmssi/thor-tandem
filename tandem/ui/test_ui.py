@@ -1500,14 +1500,47 @@ class CompanionDecksAndGameMenuTest(unittest.TestCase):
         if SHOTS:
             img_top.save(str(Path(SHOTS) / 'top-moment-preview.png'))
 
-        # Verify PDF/CBZ manual book reader UI + Artwork Picker inside GAME_MENU
+        # Verify PDF/CBZ manual book reader UI + Macro Pad & Cheats Hub + AirPods Quick Card + Artwork Picker
         u_book = universal.Deck(w)
+        u_book.ctrl_sub = 'macros'
+        hmac_hits = render(u_book, 'univ-macros')
+        self.assertTrue({'csub:pad', 'csub:macros', 'csub:cheats', 'mpad:0', 'mpad:11', 'macro_edit'} <= set(hmac_hits))
+        u_book.ctrl_sub = 'cheats'
+        u_book.cheats = {'items': [{'idx': 0, 'desc': '60 FPS Widescreen', 'code': '8200', 'enable': True}], 'can_fetch': True}
+        hcht_hits = render(u_book, 'univ-cheats')
+        self.assertTrue({'cheat_fetch', 'cheat_add', 'cht:0'} <= set(hcht_hits))
         u_book.tab = 3
         u_book.open_guide = {'name': 'Handbuch.pdf', 'title': 'Handbuch (PDF)', 'kind': 'book',
                              'pages': 24, 'page': 0, 'img': mom_img, 'zoom': 1.0, 'px': 0.0, 'py': 0.0}
         hb = render(u_book, 'univ-manual-book')
         self.assertTrue({'guide_back', 'bpage:◀', 'bpage:1/24', 'bpage:▶', 'zoom:+'} <= set(hb))
         u_book.close()
+
+        # Verify AirPods AAP card + 30s Replay button + Deep-Freeze in Quick Menu
+        w.RUN = {'id': 'g1', 't': 'Chrono Trigger', 's': 'sfc', 'emu': 'RetroArch', 'since': int(time.time()) - 120}
+        w.AIRPODS = {'active': True, 'addr': 'AA:BB:CC:DD:EE:FF', 'name': 'AirPods Pro', 'is_airpods': True,
+                     'aap_connected': True, 'battery_pct': 94,
+                     'pods': {'left': {'level': 95, 'charging': False}, 'right': {'level': 94, 'charging': False}, 'case': {'level': 80, 'charging': True}},
+                     'noise_mode': 'anc', 'conv_awareness': True, 'paired_audio': [{'addr': 'AA:BB:CC:DD:EE:FF', 'name': 'AirPods Pro'}]}
+        w.QUICK = time.time()
+        w.off['quick'] = 0
+        w.hits, w.scrolls = [], []
+        pq2 = ui.QPainter(img)
+        pq2.setRenderHints(ui.QPainter.RenderHint.Antialiasing | ui.QPainter.RenderHint.TextAntialiasing)
+        ui.quick_view.draw(w, pq2); pq2.end()
+        q2_hits = {h[3] for h in w.hits}
+        self.assertTrue({'ap:off', 'ap:anc', 'ap:transparency', 'ap:adaptive', '🗣️ Gespräch', '❄️ Freeze'} <= q2_hits, q2_hits)
+        w.off['quick'] = w.maxoff.get('quick', 600)
+        w.hits, w.scrolls = [], []
+        pq3 = ui.QPainter(img)
+        pq3.setRenderHints(ui.QPainter.RenderHint.Antialiasing | ui.QPainter.RenderHint.TextAntialiasing)
+        ui.quick_view.draw(w, pq3); pq3.end()
+        q3_hits = {h[3] for h in w.hits}
+        self.assertIn('⏪ 30s-Clip', q3_hits)
+        w.off.pop('quick', None)
+        w.AIRPODS = None
+        w.QUICK = None
+        w.RUN = None
 
         w.GAME_MENU = {'id': 'g1', 'i': 0, 'art_picker': True, 'art_loading': False, 'art_has_custom': True,
                        'art_items': [{'label': 'Chrono Trigger · Libretro Cover', 'url': 'https://example.com/c.png', 'slot': 'cover'}]}

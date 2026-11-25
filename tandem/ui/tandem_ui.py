@@ -506,6 +506,7 @@ class Tandem(QRasterWindow):
         def got(s):
             if not s: return
             self.BATT, self.WIFI, self.PAIR, self.CFG = s.get('battery'), s.get('wifi'), s.get('pair'), s.get('config') or self.CFG
+            self.BT_AUDIO = s.get('bt_audio')
             self.DOZE, self.MUTED = bool(s.get('doze')), bool(s.get('muted'))
             if s.get('power') and not self.POWER_OPEN: self.power_i = 0
             self.POWER_OPEN = bool(s.get('power'))
@@ -601,7 +602,7 @@ class Tandem(QRasterWindow):
         if kind == 'mute': self.MUTED = bool(m.get('muted')); return self.update()
         if kind == 'saves': self.SAVES = m.get('saves'); return self.update()
         if kind == 'sysbackup':
-            self.SYSBK = {'backups': m.get('backups') or {}, 'storage': m.get('storage') or {}}
+            self.SYSBK = {'backups': m.get('backups') or {}, 'storage': m.get('storage') or {}, 'cleanup': m.get('cleanup') or {}}
             return self.update()
         if kind == 'updater':
             self.UPDC = {k: v for k, v in m.items() if k != 'kind'}
@@ -805,14 +806,19 @@ class Tandem(QRasterWindow):
     def playing(self): return bool(self.RUN and not self.RUN.get('paused'))
 
     def _sort_games(self, seq):
+        items_l = list(seq)
         L, mode = self.L, self.L.get('sort') or 'recent'
         last = lambda g: (L['played'].get(g['id']) or {}).get('last') or 0
         secs = lambda g: (L['played'].get(g['id']) or {}).get('secs') or 0
         yr = lambda g: int(g['year']) if str(g.get('year', '')).isdigit() else 0
-        if mode == 'az': return sorted(seq, key=lambda g: g['t'].lower())
-        if mode == 'time': return sorted(seq, key=lambda g: (-secs(g), -last(g), g['t'].lower()))
-        if mode == 'year': return sorted(seq, key=lambda g: (-yr(g), g['t'].lower()))
-        return sorted(seq, key=lambda g: (g['id'] not in L['fav'], -last(g), g['t'].lower()))
+        if mode == 'az': return sorted(items_l, key=lambda g: g['t'].lower())
+        if mode == 'time': return sorted(items_l, key=lambda g: (-secs(g), -last(g), g['t'].lower()))
+        if mode == 'year': return sorted(items_l, key=lambda g: (-yr(g), g['t'].lower()))
+        if mode == 'short':
+            short_hits = [g for g in items_l if 0 < float(g.get('ttb') or 0) <= 5.5]
+            pool = short_hits if short_hits else items_l
+            return sorted(pool, key=lambda g: (float(g.get('ttb') or 999), g['t'].lower()))
+        return sorted(items_l, key=lambda g: (g['id'] not in L['fav'], -last(g), g['t'].lower()))
 
     def items(self):
         L, S, RUN = self.L, self.S, self.RUN
@@ -865,6 +871,7 @@ class Tandem(QRasterWindow):
         s = it['s']
         if s == '_hidden': return 'Ausgeblendet'
         if isinstance(s, str) and s.startswith('col:'): return s[4:]
+        if s == 'steam' and it.get('store'): return it['store']
         return 'Steam' if s == 'steam' else 'App' if s == 'app' else 'Linux-Shell' if s == 'term' else (self.L['systems'].get(s) or {'name': s})['name']
 
     def toast(self, text):
@@ -1115,7 +1122,7 @@ class Tandem(QRasterWindow):
         self.update()
 
     def cycle_sort(self):
-        order = ('recent', 'az', 'time', 'year')
+        order = ('recent', 'az', 'time', 'year', 'short')
         cur = self.L.get('sort') or 'recent'
         nxt = order[(order.index(cur) + 1) % len(order)] if cur in order else 'az'
         self.L['sort'] = nxt
@@ -1166,6 +1173,22 @@ class Tandem(QRasterWindow):
         is_fav = gid in (L.get('fav') or [])
         rows.append(('Favorit', '★ Ja' if is_fav else 'Nein', lambda: self.post('api/fav', {'id': gid})))
         rows.append(('🎨 Cover & Bild wählen', '', lambda: self._open_art_picker(g)))
+        if s not in ('steam', 'port', 'app', 'term') and not g.get('native_engine'):
+            np_m = getattr(self, 'NETPLAY_MODE', 'off')
+            np_lbl = 'Host aktiv' if np_m == 'host' else ('Beitreten' if np_m == 'join' else 'Aus')
+            def _cycle_np():
+                if np_m == 'off':
+                    self.NETPLAY_MODE = 'host'
+                    self.post('api/netplay', {'mode': 'host'}, then=lambda r: r and self.toast(r.get('text', '')))
+                elif np_m == 'host':
+                    self.ask('Host-IP im WLAN (RetroArch Netplay)', False,
+                             lambda ip: ip.strip() and (setattr(self, 'NETPLAY_MODE', 'join'),
+                                                        self.post('api/netplay', {'mode': 'join', 'host_ip': ip.strip()},
+                                                                  then=lambda r: r and self.toast(r.get('error') or r.get('text', '')))))
+                else:
+                    self.NETPLAY_MODE = 'off'
+                    self.post('api/netplay', {'mode': 'off'}, then=lambda r: r and self.toast(r.get('text', '')))
+            rows.append(('🌐 LAN-Netplay (Koop)', np_lbl, _cycle_np))
         if s == 'switch' and not gid.startswith('native-'):
             rows.append(('Nativ umwandeln (Peanuts)', 'Starten',
                          lambda: (setattr(self, 'GAME_MENU', None),
@@ -1851,14 +1874,22 @@ class Tandem(QRasterWindow):
         t = time.localtime()
         date = f'{WEEKDAYS[t.tm_wday]} {t.tm_mday}. {MONTHS[t.tm_mon - 1]}'
         batt = f'{self.BATT["level"]} %' if self.BATT else ''
+        bta = getattr(self, 'BT_AUDIO', None) or {}
+        bt_txt = (f'🎧 {bta["battery_pct"]} %' if bta.get('active') and bta.get('battery_pct') is not None
+                  else '🎧' if bta.get('active') else '')
         h, pad, ic = 3.0 * u, 1.5 * u, 1.05 * u
-        w = pad + self.width_of(date, f) + .8 * u + self.width_of(clock(), fb) + 1.6 * u + (1.9 * u + 1.2 * u if self.WIFI is not None else 0) + \
-            ((self.width_of(batt, f) + .6 * u + 2.05 * ic + .2 * ic) if self.BATT else 0) + pad
+        w = (pad + self.width_of(date, f) + .8 * u + self.width_of(clock(), fb) + 1.6 * u
+             + (self.width_of(bt_txt, f) + 1.2 * u if bt_txt else 0)
+             + (1.9 * u + 1.2 * u if self.WIFI is not None else 0)
+             + ((self.width_of(batt, f) + .6 * u + 2.05 * ic + .2 * ic) if self.BATT else 0) + pad)
         rect = QRectF(W - 2.4 * u - w + dx, 1.6 * u + dy, w, h)
         self.capsule(p, rect, rgba(8, 9, 12, .46), rgba(255, 255, 255, .08))
         x, y = rect.x() + pad, rect.y() + (h - 1.3 * u * 1.2) / 2
         self.text(p, date, x, y, f, dim); x += self.width_of(date, f) + .8 * u
         self.text(p, clock(), x, y, fb, ink); x += self.width_of(clock(), fb) + 1.6 * u
+        if bt_txt:
+            self.text(p, bt_txt, x, y, f, ink)
+            x += self.width_of(bt_txt, f) + 1.2 * u
         mid = rect.center().y()
         if self.WIFI is not None:
             self.glyph_wifi(p, x + .95 * u, mid + .55 * u, 1.05 * u, self.WIFI.get('signal') if self.WIFI.get('ssid') or self.WIFI.get('signal') else 0, ink)
@@ -2109,7 +2140,9 @@ class Tandem(QRasterWindow):
             fact = lambda key, value: [(key + ' ', m, MUTED), (str(value), mv, TEXT)]
             played = L['played'].get(it['id']) or {}
             sname = 'System' if it.get('kind') == 'sys' else self.sys_name(it)
-            lead = ([('● ', ('u', 1.5, 700), LIVE), ('Läuft', ('u', 1.5, 700), LIVE), (' · ' + sname, mv, TEXT)] if P else
+            frozen_now = bool(P and RUN.get('frozen'))
+            lead = ([('❄️ ', ('u', 1.5, 700), QColor('#38bdf8')), ('Eingefroren (0 W)', ('u', 1.5, 700), QColor('#38bdf8')), (' · ' + sname, mv, TEXT)] if frozen_now else
+                    [('● ', ('u', 1.5, 700), LIVE), ('Läuft', ('u', 1.5, 700), LIVE), (' · ' + sname, mv, TEXT)] if P else
                     [('❚❚ ', ('u', 1.4, 700), FOCUS), ('Pausiert', ('u', 1.5, 700), FOCUS), (' · ' + sname, mv, TEXT)] if held else
                     [(sname, ('u', 1.5, 600), FOCUS)])
             if P: meta = [lead, fact('Emulator', RUN['emu']), fact('Läuft seit', hours(time.time() - RUN['since']))]
@@ -2119,11 +2152,15 @@ class Tandem(QRasterWindow):
                            'silver': ('Silber', QColor('#cbd5e1')), 'bronze': ('Bronze', QColor('#fb923c'))}
                 pdb_fact = ([[('ProtonDB ', m, MUTED), (pdb_map[it['protondb']][0], ('u', 1.5, 700), pdb_map[it['protondb']][1])]]
                             if it.get('protondb') in pdb_map else [])
+                ttb_val = float(it.get('ttb') or 0)
+                p_secs = int(played.get('secs') or 0)
+                ttb_str = (f'{min(100, round(p_secs / (ttb_val * 3600) * 100))} % (~{ttb_val:g} Std.)'
+                           if (ttb_val > 0 and p_secs >= 600) else f'~{ttb_val:g} Std.')
                 extra_facts = (pdb_fact
                                + ([fact('Jahr', it['year'])] if it.get('year') else [])
                                + ([fact('Genre', it['genre'])] if it.get('genre') else [])
                                + ([fact('Studio', it['dev'])] if it.get('dev') and not played.get('last') else [])
-                               + ([fact('Spielumfang', f'~{it["ttb"]:g} Std.')] if it.get('ttb') else []))
+                               + ([fact('Spielumfang', ttb_str)] if ttb_val > 0 else []))
                 meta = ([lead] + extra_facts[:2]
                         + ([fact('Zuletzt', ago(played['last']))] if played.get('last') else [])
                         + ([fact('Spielzeit', hours(played['secs']))] if played.get('secs') else [])
@@ -2283,7 +2320,7 @@ class Tandem(QRasterWindow):
                 rx = vrect.right()
             if self.S['sys'] and self.S['sys'] != '_hidden':
                 sf = ('u', 1.75, 600)
-                slabels = {'recent': 'Zuletzt', 'az': 'A–Z', 'time': 'Spielzeit', 'year': 'Jahr'}
+                slabels = {'recent': 'Zuletzt', 'az': 'A–Z', 'time': 'Spielzeit', 'year': 'Jahr', 'short': 'Kurz (<5h)'}
                 slbl = slabels.get(self.L.get('sort') or 'recent', 'Zuletzt')
                 sw2 = self.width_of(slbl, sf) + 2.4 * u
                 if rx + .7 * u + sw2 < self.width() - 3 * u:

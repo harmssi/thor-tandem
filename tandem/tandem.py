@@ -15,6 +15,8 @@ import companion  # per-game notes/sketches, guides, visual save states, dual-sc
 import saves  # rolling local + SSH savegame backups (SD card + optional SSH host)
 import telemetry  # battery wattage/playtime, CPU/RAM, PipeWire mixer, dock state & Wake-on-LAN
 import thor  # the Thor's own hardware: stick lights, gyro, performance profile
+import thor_airpods  # native Apple AirPods AAP (L2CAP 0x1001: ANC/Transparency/Adaptive, L/R/Case battery, ear detection) & BT Low-Latency
+import thor_features  # 30s RAM Instant-Replay, 3x4 Macro Pad, Live Cheats, HLTB, Deep-Freeze, Netplay & Heroic GOG/Epic bridge
 import thor_perf  # Snapdragon 8 Gen 2 / Adreno 740 performance engine (schedutil/Turbo, GPU lock, bypass charge, Vulkan/FEX env)
 import thor_storage  # integrated Linux/Tandem system backups & live retroactive Android partition shrinker
 import thor_translate  # PlayTranslate-style real-time screen OCR & offline/hybrid German game translator
@@ -843,10 +845,21 @@ class Library:
                                      'cover': self._image(str(mine)) if mine.is_file() else art('library_600x900.jpg'), 'hero': art('library_hero.jpg'),
                                      **({'logo': p_logo} if p_logo else {})}
         # Only installed Steam games (from appmanifest_*.acf & shortcuts.vdf above) are shown in Tandem.
+        for ext_g in thor_features.discover_external_pc_games(HOME):
+            if ext_g['id'] not in games:
+                cov_tok = self._image(ext_g.get('cover_path'))
+                games[ext_g['id']] = {
+                    'id': ext_g['id'], 't': ext_g['t'], 's': 'steam',
+                    'store': ext_g['store'], 'direct': ext_g['direct'],
+                    'cover': cov_tok, 'hero': cov_tok,
+                }
         pdb = companion.load_protondb_cache()
+        hltb = thor_features.load_hltb_cache()
         for gid, gm in games.items():
             if gm.get('appid') and (pdb.get(str(gm['appid'])) or {}).get('tier'):
                 gm['protondb'] = pdb[str(gm['appid'])]['tier']
+            if not gm.get('ttb') and gm.get('appid') and (hltb.get(str(gm['appid'])) or {}).get('ttb'):
+                gm['ttb'] = hltb[str(gm['appid'])]['ttb']
             ca = companion.custom_art_paths(gid)
             if ca.get('cover'):
                 gm['cover'] = self._image(ca['cover'])
@@ -1139,6 +1152,9 @@ class Tandem:
                         ra_res = companion.configure_retroarch(cfg_now, game=game, opt=opt)
                         if '--set-shader' not in cmd:
                             cmd = [*cmd[:-1], '--set-shader', ra_res.get('shader_path') or '', cmd[-1]]
+                        np_args = thor_features.netplay_cli_args()
+                        if np_args:
+                            cmd = [*cmd[:-1], *np_args, cmd[-1]]
                     if is_dual:
                         env = {**os.environ, 'DISABLE_GAMESCOPE_WSI': '1'}
                         if game['s'] == 'wiiu': cemu_pad_window()
@@ -1193,7 +1209,11 @@ class Tandem:
                             **({'flatpak': fp_id} if fp_id else {}),
                             'port': game.get('media') or ({'deck': PORTS[game['port']][3], 'socket': str(DECK_SOCKET)} if game['s'] == 'port' else None)}
                 if not self.dry: threading.Thread(target=self.watch, args=(self.proc, gid, game.get('appid')), daemon=True).start()
-                if not self.dry and game['s'] not in ('app', 'term'): self.moments.start(self, gid)
+                if not self.dry and game['s'] not in ('app', 'term'):
+                    self.moments.start(self, gid)
+                    if load_config().get('replay_buffer', False):
+                        dpys = _x11_displays()
+                        thor_features.REPLAY.start(dpys[0] if dpys else ':0')
                 if not self.dry and game['s'] == 'wiiu' and load_config().get('wiiu_ffplay'):
                     threading.Thread(target=self.mirror_pad, args=(gid,), daemon=True).start()
         self.publish()
@@ -1278,7 +1298,7 @@ class Tandem:
             pinned = self.saved.setdefault('pinned', [])
             if act == 'sort':
                 s = str(data.get('sort') or 'recent')
-                if s not in ('recent', 'az', 'time', 'year'): return {'error': 'unbekannte Sortierung'}
+                if s not in ('recent', 'az', 'time', 'year', 'short'): return {'error': 'unbekannte Sortierung'}
                 self.saved['sort'] = s
             elif act == 'pin' and gid:
                 if gid in pinned: pinned.remove(gid)
@@ -1436,6 +1456,8 @@ class Tandem:
             apply_render_res(0)
             thor_perf.set_tandem_isolation(False)
             thor_translate.stop_worker()
+            thor_features.REPLAY.stop()
+            thor_features.stop_turbo()
         if is_game and not self.dry:
             saved_moment = self.moments.finish(gid)
             if saved_moment and gid in self.library.games:
@@ -1503,7 +1525,7 @@ class Tandem:
                     s.settimeout(0.5); s.connect(sock_path); s.sendall(b'{"command":["quit"]}\n')
             except OSError: pass
         try:
-            if run.get('paused') or SLEEP_STATE.get('froze'): self.send(signal.SIGCONT)  # a frozen program cannot react to being asked to quit
+            if run.get('paused') or run.get('frozen') or SLEEP_STATE.get('froze'): self.send(signal.SIGCONT)  # a frozen program cannot react to being asked to quit
             self.send(signal.SIGTERM)
             def reap(group=proc.pid, appid=run.get('appid'), fp_id=run.get('flatpak')):
                 # The sandbox's inner processes can outlive the outer one that Popen watches: after the grace period
@@ -1518,11 +1540,40 @@ class Tandem:
         except ProcessLookupError: pass
         return {'ok': True}
 
+    def freeze_toggle(self, force=None):
+        """In-place 0W Deep-Freeze (`SIGSTOP` / `SIGCONT`) for unpausable cutscenes, Souls games & low-battery guard."""
+        with self.lock:
+            run, proc = self.run, self.proc
+            if not run or run.get('paused') or not proc:
+                return {'error': 'Es läuft kein Spiel.'}
+            want = (not bool(run.get('frozen'))) if force is None else bool(force)
+            if want == bool(run.get('frozen')):
+                return {'ok': True, 'frozen': want}
+            if not self.dry:
+                try:
+                    self.send(signal.SIGSTOP if want else signal.SIGCONT)
+                except ProcessLookupError:
+                    return {'error': 'Das Spiel ist schon beendet.'}
+            if want:
+                run['frozen'] = True
+                run['frozen_at'] = time.time()
+            else:
+                f_dur = max(0, int(time.time() - (run.pop('frozen_at', None) or time.time())))
+                run['since'] += f_dur
+                run.pop('frozen', None)
+        self.publish()
+        return {'ok': True, 'frozen': want,
+                'text': '❄️ Spiel eingefroren (0 W CPU/GPU).' if want else '▶ Spiel läuft weiter.'}
+
     def pause(self):
         """Home button while a game runs: freeze it, hide its window, Tandem is in front again. Like the Switch's Home."""
         with self.lock:
             run, proc = self.run, self.proc
             if not run or run.get('paused') or self.dry or not proc: return {'error': 'Es läuft kein Spiel.'}
+            if run.get('frozen'):
+                f_dur = max(0, int(time.time() - (run.pop('frozen_at', None) or time.time())))
+                run['since'] += f_dur
+                run.pop('frozen', None)
             window = focused_window()
             if not window or window == self.home_window: return {'error': 'Das Spielfenster ist noch nicht da.'}
             try: self.send(signal.SIGSTOP)
@@ -2657,6 +2708,17 @@ def save_config(data):
     if ra_changed:
         threading.Thread(target=companion.configure_retroarch, args=(dict(config),), daemon=True).start()
     if isinstance(data.get('save_auto'), bool): config['save_auto'] = data['save_auto']
+    if isinstance(data.get('replay_buffer'), bool):
+        config['replay_buffer'] = data['replay_buffer']
+        if not data['replay_buffer']:
+            thor_features.REPLAY.stop()
+    if isinstance(data.get('dock_pad_swap'), bool): config['dock_pad_swap'] = data['dock_pad_swap']
+    if isinstance(data.get('bt_low_latency'), bool):
+        config['bt_low_latency'] = data['bt_low_latency']
+        threading.Thread(target=thor_airpods.apply_bt_low_latency, args=(data['bt_low_latency'],), daemon=True).start()
+    if isinstance(data.get('airpods_ear_pause'), bool):
+        config['airpods_ear_pause'] = data['airpods_ear_pause']
+        thor_airpods.MANAGER.set_ear_pause(data['airpods_ear_pause'])
     if isinstance(data.get('auto_update'), bool): config['auto_update'] = data['auto_update']
     if isinstance(data.get('auto_companions'), bool): config['auto_companions'] = data['auto_companions']
     travel_changed = None
@@ -2847,6 +2909,10 @@ def public_config():
             'ra_zerolag': bool(config.get('ra_zerolag', True)),
             'ra_autoresume': bool(config.get('ra_autoresume', True)),
             'ra_shader': config.get('ra_shader') if config.get('ra_shader') in companion.RA_SHADERS else 'sharp',
+            'replay_buffer': bool(config.get('replay_buffer', False)),
+            'dock_pad_swap': bool(config.get('dock_pad_swap', True)),
+            'bt_low_latency': bool(config.get('bt_low_latency', True)),
+            'airpods_ear_pause': bool(config.get('airpods_ear_pause', True)),
             'save_auto': config.get('save_auto', True),
             'auto_update': config.get('auto_update', True),
             'auto_companions': config.get('auto_companions', True),
@@ -3663,7 +3729,7 @@ def handler(tandem):
             if re.fullmatch(r'/deck/\d+\.html', path):  # a game's own page for the bottom screen
                 file = HERE / 'decks' / path[6:]
                 return self.send(200, file.read_bytes(), 'text/html; charset=utf-8') if file.is_file() else self.send(404, {'error': 'kein Begleiter'})
-            if path == '/api/state': return self.send(200, {**tandem.snapshot(), 'battery': battery(), 'wifi': wifi_link(), 'settings': settings(), 'muted': MUTED['on'], 'config': public_config(), 'pair': pair_info(), 'dock': telemetry.dock_state()})
+            if path == '/api/state': return self.send(200, {**tandem.snapshot(), 'battery': battery(), 'wifi': wifi_link(), 'settings': settings(), 'muted': MUTED['on'], 'config': public_config(), 'pair': pair_info(), 'dock': telemetry.dock_state(), 'bt_audio': thor_airpods.MANAGER.cached_status()})
             if path.startswith('/media/'):
                 file = tandem.library.media.get(path[7:])  # only files the scan indexed, never a path from the request
                 if file and os.path.isfile(file):
@@ -3783,6 +3849,22 @@ def handler(tandem):
             if path == '/api/translate_preview':
                 raw_png = thor_translate.preview_bytes()
                 return self.send(200, raw_png, 'image/png') if raw_png else self.send(404, {'error': 'kein Bild'})
+            if path == '/api/airpods':
+                return self.send(200, thor_airpods.MANAGER.status())
+            if path == '/api/replay':
+                return self.send(200, {**thor_features.REPLAY.status(), 'enabled': public_config()['replay_buffer']})
+            if path == '/api/macros':
+                from urllib.parse import parse_qs
+                qs = parse_qs(urlparse(self.path).query)
+                gid = (qs.get('id') or [(tandem.run or {}).get('id', '')])[0]
+                return self.send(200, thor_features.macros_get(gid, tandem.library.games.get(gid)))
+            if path == '/api/cheats':
+                from urllib.parse import parse_qs
+                qs = parse_qs(urlparse(self.path).query)
+                gid = (qs.get('id') or [(tandem.run or {}).get('id', '')])[0]
+                return self.send(200, thor_features.cheats_get(gid, tandem.library.games.get(gid)))
+            if path == '/api/netplay':
+                return self.send(200, thor_features.NETPLAY)
             if path == '/api/events': return self.events()
             self.send(404, {'error': 'unbekannt'})
 
@@ -3865,6 +3947,61 @@ def handler(tandem):
             if path == '/api/pause': return self.send(200, tandem.pause())
             if path == '/api/record': return self.send(200, record(tandem, data.get('action')))
             if path == '/api/shot': return self.send(200, screenshot())
+            if path == '/api/freeze': return self.send(200, tandem.freeze_toggle(data.get('on')))
+            if path == '/api/airpods':
+                act = str(data.get('action') or 'status')
+                if act == 'toggle':
+                    addr = str(data.get('addr') or '')
+                    def _do_ap():
+                        r = thor_airpods.MANAGER.quick_toggle_connect(addr)
+                        tandem.publish('toast', {'text': r.get('error') or r.get('text', '')})
+                    threading.Thread(target=_do_ap, daemon=True).start()
+                    return self.send(200, {'ok': True})
+                if act == 'noise':
+                    return self.send(200, thor_airpods.MANAGER.set_noise_mode(str(data.get('mode') or 'off')))
+                if act == 'conv':
+                    return self.send(200, thor_airpods.MANAGER.set_conv_awareness(bool(data.get('on'))))
+                if act == 'ear':
+                    save_config({'airpods_ear_pause': bool(data.get('on'))})
+                    tandem.publish('config', {'config': public_config()})
+                    return self.send(200, thor_airpods.MANAGER.status())
+                if act == 'low_latency':
+                    save_config({'bt_low_latency': bool(data.get('on'))})
+                    tandem.publish('config', {'config': public_config()})
+                    return self.send(200, thor_airpods.MANAGER.status())
+                return self.send(200, thor_airpods.MANAGER.status())
+            if path == '/api/replay':
+                act = str(data.get('action') or 'save')
+                if act == 'toggle':
+                    want = not public_config()['replay_buffer']
+                    save_config({'replay_buffer': want})
+                    if want and tandem.run and not tandem.run.get('paused') and tandem.run.get('s') not in ('app', 'term') and not tandem.dry:
+                        dpys = _x11_displays()
+                        thor_features.REPLAY.start(dpys[0] if dpys else ':0')
+                    tandem.publish('config', {'config': public_config()})
+                    return self.send(200, {**thor_features.REPLAY.status(), 'enabled': want})
+                pinfo = pair_info()
+                lan_base = pinfo.get('ip_url') or pinfo.get('url') or ''
+                res = thor_features.REPLAY.save_clip((tandem.run or {}).get('t', ''), lan_base)
+                return self.send(200, res)
+            if path == '/api/macros':
+                gid = str(data.get('id') or (tandem.run or {}).get('id', ''))
+                if data.get('action') == 'fire':
+                    return self.send(200, thor_features.fire_macro(
+                        data.get('spec', ''), int(data.get('idx', -1)), bool(data.get('turbo')),
+                        send_key_fn=lambda c, m: (not tandem.dry and x_press_code(c, m)) or KEYBOARD.press(c, m),
+                        ra_cmd_fn=retroarch,
+                    ))
+                return self.send(200, thor_features.macros_save(gid, data, tandem.library.games.get(gid)))
+            if path == '/api/cheats':
+                gid = str(data.get('id') or (tandem.run or {}).get('id', ''))
+                gm = tandem.library.games.get(gid)
+                if data.get('action') == 'fetch':
+                    return self.send(200, thor_features.cheats_fetch_online(gid, gm))
+                return self.send(200, thor_features.cheat_toggle(
+                    gid, data.get('idx'), str(data.get('desc') or ''), str(data.get('code') or ''), gm))
+            if path == '/api/netplay':
+                return self.send(200, thor_features.set_netplay(str(data.get('mode') or 'off'), str(data.get('host_ip') or '')))
             if path == '/api/framegen': return self.send(200, frame_gen(bool(data.get('on'))))
             if path == '/api/hud':
                 lvl = data.get('level', 0)
@@ -4171,6 +4308,13 @@ def pair_handler(tandem):
         def do_GET(self):
             import hmac
             path = urlparse(self.path).path
+            if path.startswith('/clip/') and path.endswith('.mp4'):
+                tok = path[len('/clip/'):-4]
+                clip_p = thor_features.REPLAY.resolve_share_token(tok)
+                if clip_p:
+                    return self.reply(200, clip_p.read_bytes(), 'video/mp4',
+                                      extra=(('Content-Disposition', f'attachment; filename="{clip_p.name}"'),))
+                return self.reply(404, {'error': 'Clip abgelaufen'}, 'application/json')
             if path.startswith('/ai-login/'):
                 tok = path.split('/ai-login/', 1)[1].strip('/')
                 if tok and AI_AUTH['token'] and (time.time() - AI_AUTH['ts'] <= AI_AUTH_TTL) and hmac.compare_digest(tok, AI_AUTH['token']):
@@ -4543,16 +4687,18 @@ def main():
         if not appids:
             return
         res = companion.sync_protondb(appids[:60])
-        if res.get('updated'):
+        ttb_res = thor_features.sync_steam_ttb(appids[:60])
+        if res.get('updated') or ttb_res:
             library.scan()
             tandem.publish('library')
     if not args.dry_run:
         threading.Thread(target=sync_protondb_bg, daemon=True).start()
+        thor_airpods.MANAGER.start(tandem)
     if DOZE and not args.dry_run: doze(False, tandem)  # restarted during a doze: bring the panels back right away
     server = QuietHTTPServer(('127.0.0.1', args.port), handler(tandem))
     threading.Thread(target=watch_buttons, args=(tandem,), daemon=True).start()
     def watch_dock():
-        prev, dimmed, charge_notified, prev_on_bat, last_bifrost, tick = False, {}, False, None, '', 0
+        prev, dimmed, charge_notified, low_batt_froze, prev_on_bat, last_bifrost, tick = False, {}, False, False, None, '', 0
         while True:
             time.sleep(4)
             tick += 1
@@ -4598,6 +4744,23 @@ def main():
             if tick % 3 == 0:
                 cfg_w = load_config()
                 b = battery()
+                if b and not b.get('charging') and 0 < b.get('level', 100) <= 5:
+                    if not low_batt_froze and tandem.run and not tandem.run.get('paused') and not tandem.run.get('frozen'):
+                        low_batt_froze = True
+                        if tandem.run.get('emu') == 'RetroArch':
+                            retroarch('save')
+                            time.sleep(0.25)
+                        tandem.freeze_toggle(True)
+                        tandem.publish('toast', {'text': f'⚠️ Akku kritisch ({b["level"]} %) – Spiel gesichert & eingefroren!'})
+                elif not b or b.get('charging') or b.get('level', 100) >= 8:
+                    low_batt_froze = False
+                if cfg_w.get('dock_pad_swap', True):
+                    try:
+                        bt_st = bluetooth.state()
+                        bt_pad = any(d.get('kind') == 'pad' and d.get('connected') for d in (bt_st.get('devices') or []))
+                        thor_features.apply_dock_coop_pad(now_dock, bt_pad)
+                    except Exception:
+                        pass
                 if b and cfg_w.get('auto_travel'):
                     on_bat = not b.get('charging')
                     if prev_on_bat is not None and on_bat != prev_on_bat:

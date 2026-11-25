@@ -26,7 +26,20 @@ The interface speaks English or German (Settings › Look › Language; the inst
 
 ![Dual-Screen PC & Retro Library on AYN Thor](docs/screenshots/steam-library-dual.png)
 
-## New in 1.4.0 — Manuals Reader, Bifrost LEDs, ProtonDB & Storage Cleaner
+## New in 1.5.0 — Native AirPods AAP, 30s RAM Replay, Stream-Deck Macros, Cheats, Deep-Freeze & Heroic Bridge
+
+- **Native Apple AirPods Support via AAP L2CAP `0x1001` & Gaming BT Audio Pro (`thor_airpods.py`, `ui/quick_view.py`, `ui/settings_view.py`, `ui/tandem_ui.py`):**
+  - Direct pure-Python Bluetooth L2CAP `SOCK_SEQPACKET` (`PSM 0x1001`) Apple Accessory Protocol client — no iPhone/Mac required!
+  - Live **Left · Right · Charging Case** battery readout (plus `🎧 %` in the top OLED status bar), 1-tap **Noise Control (`Off · ANC · Transparency · Adaptive`)** synced bidirectionally with AirPods stem squeezes, **Conversational Awareness**, automatic **In-Ear Detection** pause/resume, 1-tap Quick Connect in the Thor Quick Menu, and a **WirePlumber Gaming Low-Latency profile** (`SBC-XQ`, full-bitrate `AAC`, `10.6 ms` quantum, and zero 8 kHz HSP handsfree audio drop in games).
+- **30-Second RAM Instant-Replay ("Switch Clip") + QR Phone Share (`thor_features.py`, `ui/quick_view.py`):**
+  - Rolling `6 × 6 s` H.264 ring buffer in tmpfs RAM (`/run/user/1000/tandem-replay`, **0 % UFS 4.0 flash wear**, pinned to Silver cores `0–2`). Tap **`⏪ 30s-Clip`** in Quick Menu to stitch the last 30 seconds losslessly (`-c copy`) and scan the instant **LAN QR Code** to save the MP4 clip straight to your phone.
+- **Programmable 3×4 "Thor Stream-Deck" Macro Pad & Live Cheat Switches (`thor_features.py`, `ui/decks/universal.py`):**
+  - Switch the Universal Controls tab between **`🎮 Controls`**, **`🎛️ Macro Pad`** (customizable 12-tile touch Stream Deck with `PC-RPG`, `Strategy`, and `Retro-Pro` presets, key combos, sequences & **12 Hz Turbo-Fire**), and **`🕹️ Cheats`** (live Libretro `.cht` 60-FPS / Widescreen / Trainer switches with 1-tap online `libretro-database` download).
+- **True `0 W` Deep-Freeze, `< 5 %` Battery Guard, HLTB `< 5h` Filter, Couch-Coop Netplay & Heroic GOG/Epic Bridge (`thor_features.py`, `tandem.py`):**
+  - **`❄️ Freeze` (`0 W`):** Freezes unpausable cutscenes & Souls/PC games in place (`SIGSTOP`/`SIGCONT`), plus automatic `< 5 %` critical-battery state-save & freeze protection.
+  - **HowLongToBeat / SteamSpy Progress & `Short (<5h)` Filter**, automatic **TV Dock Bluetooth Pad → Player 1** swap + **1-Tap RetroArch LAN Netplay**, and automatic discovery of installed **GOG / Epic / Amazon** games from Heroic Games Launcher with full `HyperDrive` & `Proton-CachyOS ARM64EC` acceleration.
+
+Earlier in 1.4.0 — Manuals Reader, Bifrost LEDs, ProtonDB & Storage Cleaner:
 
 - **Native Dual-Screen PDF & CBZ Game Manual Reader (`companion.py`, `ui/decks/universal.py`, `tandem.py`):**
   - Open original game booklets, strategy guides, and comic manuals (`.pdf`, `.cbz`) directly on the bottom OLED screen while your game keeps running on top — rendered natively in memory via `PySide6.QtPdf.QPdfDocument` (`pdftoppm` fallback) with instant `◀ / ▶ / +5` page turning, `1:1 / + / −` pinch/tap zoom, finger pan, per-game page bookmarks, and automatic discovery of `ES-DE/downloaded_media/<system>/manuals/*.pdf` & `ROMs/<system>/manuals/*.pdf`.

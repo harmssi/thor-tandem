@@ -741,7 +741,8 @@ class English(unittest.TestCase):
     """The English interface: the setting persists, and every German text the screens can show has an English one."""
     GERMAN = __import__('re').compile(r'[äöüÄÖÜß„]|\b(der|die|das|und|nicht|ist|kein|keine|mit|für|von|auf|noch|wird|bitte|Spiel|Spiele|starten|beenden|'
                                       r'Einstellungen|Taste|Tasten|Akku|Bildschirm|fehlt|gefunden|installiert|läuft|Suche|Fehler|Passwort|Konto)\b')
-    FILES = ['tandem.py', 'thor.py', 'bluetooth.py', 'controls.py', 'saves.py', 'thor_storage.py', 'thor_updater.py', 'telemetry.py', 'companion.py', 'setup.py',
+    FILES = ['tandem.py', 'thor.py', 'bluetooth.py', 'controls.py', 'saves.py', 'thor_storage.py', 'thor_updater.py',
+             'thor_airpods.py', 'thor_features.py', 'telemetry.py', 'companion.py', 'setup.py',
              'ui/tandem_ui.py', 'ui/settings_view.py', 'ui/quick_view.py', 'ui/screensaver.py', 'ui/qr.py',
              'ui/decks/media.py', 'ui/decks/offline.py', 'ui/decks/youtube.py', 'ui/decks/plex.py', 'ui/decks/gallery.py',
              'ui/decks/pack.py', 'ui/decks/mpv.py', 'ui/decks/universal.py', 'ui/decks/dualscreen.py', 'ui/decks/pcstream.py']
@@ -1592,8 +1593,65 @@ class ThorStorageTests(unittest.TestCase):
         self.assertTrue((cl_steam / 'steamapps/compatdata/1091500/pfx/system.reg').is_file())
         self.assertFalse((cl_steam / 'steamapps/compatdata/999999').exists())
 
+        # v1.5.0: Native AirPods AAP (L2CAP 0x1001), 3x4 Macro Pad, Live Cheats, Heroic GOG/Epic, Netplay & BT Low-Latency
+        import thor_airpods, thor_features
+        # 1) AirPods AAP battery, ear detection & noise control packet roundtrip
+        aap_batt = bytes.fromhex('04 00 04 00 04 00 03 02 01 64 02 01 04 01 63 01 01 08 01 52 02 01')
+        ev_b = thor_airpods.parse_aap_packet(aap_batt)
+        self.assertEqual(ev_b['kind'], 'battery')
+        self.assertEqual((ev_b['battery']['right']['level'], ev_b['battery']['left']['level'], ev_b['battery']['case']['level']), (100, 99, 82))
+        self.assertTrue(ev_b['battery']['left']['charging'] and not ev_b['battery']['right']['charging'])
+        ev_ear = thor_airpods.parse_aap_packet(bytes.fromhex('04 00 04 00 06 00 00 01'))
+        self.assertEqual((ev_ear['kind'], ev_ear['both_in_ear'], ev_ear['any_in_ear']), ('ear', False, True))
+        pkt_anc = thor_airpods.build_aap_noise_packet('anc')
+        ev_nm = thor_airpods.parse_aap_packet(pkt_anc)
+        self.assertEqual((ev_nm['kind'], ev_nm['mode']), ('noise_mode', 'anc'))
+        self.assertTrue(thor_airpods.is_airpods_device({'Name': "Tobias's AirPods Pro"}))
+        self.assertTrue(thor_airpods.is_airpods_device({'Name': 'Wireless', 'UUIDs': [thor_airpods.APPLE_AAP_UUID]}))
+        self.assertIn('bluez5.enable-sbc-xq = true', thor_airpods.build_bt_low_latency_conf(True))
+
+        # 2) 3x4 Stream-Deck Macro Pad (presets, key combo parser, custom tile save)
+        self.assertEqual(thor_features.parse_macro_step('CTRL+SHIFT+S'), (31, ['ctrl', 'shift']))
+        mdir = TMP / 'macros'
+        m0 = thor_features.macros_get('steam123', {'s': 'steam', 'genre': 'Strategy'}, mdir)
+        self.assertEqual(m0['preset'], 'strategy')
+        m1 = thor_features.macros_save('steam123', {'idx': 0, 'spec': 'F5', 'label': 'Schnell'}, macros_dir=mdir)
+        self.assertEqual((m1['preset'], m1['pads'][0]['spec'], m1['pads'][0]['label']), ('custom', 'F5', 'Schnell'))
+
+        # 3) Live Libretro .cht Cheat & 60-FPS/Widescreen Manager
+        cdir = TMP / 'cheats'
+        c_add = thor_features.cheat_toggle('gba1', add_desc='60 FPS Patch', add_code='82001234 0001', cheats_dir=cdir)
+        self.assertEqual(len(c_add['items']), 1)
+        self.assertTrue(c_add['items'][0]['enable'])
+        c_tog = thor_features.cheat_toggle('gba1', idx=0, cheats_dir=cdir)
+        self.assertFalse(c_tog['items'][0]['enable'])
+
+        # 4) Couch-Coop Dock Pad Swap & RetroArch LAN Netplay
+        thor_features.set_netplay('host')
+        self.assertEqual(thor_features.netplay_cli_args(), ['--host', '--nick', 'Thor'])
+        thor_features.set_netplay('off')
+        self.assertEqual(thor_features.netplay_cli_args(), [])
+        thor_features.apply_dock_coop_pad(True, True, home=ra_home)
+        self.assertIn('input_player1_joypad_index = "1"', ra_cfg.read_text())
+        thor_features.apply_dock_coop_pad(False, False, home=ra_home)
+        self.assertIn('input_player1_joypad_index = "0"', ra_cfg.read_text())
+
+        # 5) Heroic GOG & Epic Games discovery bridge
+        h_home = TMP / 'heroic-home'
+        gog_dir = h_home / 'Games/GOG/Cyberpunk'
+        epic_dir = h_home / 'Games/Epic/Hades'
+        touch(gog_dir / 'start.sh', '#!/bin/sh\n')
+        touch(epic_dir / 'Hades.exe', 'MZ')
+        touch(h_home / '.config/heroic/gog_store/installed.json',
+              json.dumps({'installed': [{'appName': '1423049311', 'title': 'Cyberpunk 2077 GOG', 'install_path': str(gog_dir)}]}))
+        touch(h_home / '.config/heroic/legendaryConfig/legendary/installed.json',
+              json.dumps({'Sugar': {'title': 'Hades Epic', 'install_path': str(epic_dir), 'executable': 'Hades.exe'}}))
+        ext_pc = thor_features.discover_external_pc_games(h_home)
+        self.assertEqual({g['store'] for g in ext_pc}, {'GOG', 'Epic'})
+
         tandem.save_config({'speaker_dsp': 'cinema', 'ra_zerolag': True, 'ra_autoresume': True, 'ra_shader': 'sharp',
-                            'rgb_mode': 'cover', 'panel_hz': 120, 'auto_travel': False, 'ai_workdir': ''})
+                            'rgb_mode': 'cover', 'replay_buffer': False, 'dock_pad_swap': True, 'bt_low_latency': True,
+                            'panel_hz': 120, 'auto_travel': False, 'ai_workdir': ''})
 
 
 if __name__ == '__main__':

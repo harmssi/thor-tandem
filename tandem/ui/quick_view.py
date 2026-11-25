@@ -16,6 +16,8 @@ def toggle(win):
         win.call('api/record', then=lambda r: r and setattr(win, 'REC', r))
         win.call('api/framegen', then=lambda r: r and setattr(win, 'FG', r))
         win.call('api/telemetry', then=lambda r: r and setattr(win, 'QTELE', r))
+        win.call('api/airpods', then=lambda a: a and (setattr(win, 'AIRPODS', a), win.update()))
+        win.call('api/replay', then=lambda rp: rp and setattr(win, 'REPLAY', rp))
     win.update()
 
 
@@ -214,6 +216,47 @@ def draw(win, p):
                     LIVE if cur_dsp != 'off' else FOCUS)
             y += scard_h + gap
 
+        # ---- 2b. Native AirPods (AAP) & Bluetooth Audio Quick Card ----
+        ap = getattr(win, 'AIRPODS', None) or {}
+        if ap.get('addr') or ap.get('paired_audio'):
+            ap_on = bool(ap.get('active'))
+            is_ap = bool(ap.get('is_airpods'))
+            ap_h = (13.4 if (ap_on and is_ap) else 7.8) * u
+            ap_card = QRectF(x0, y, cw, ap_h)
+            win.box(p, ap_card, 1.8 * u, PANEL, LIVE if ap_on else LINE)
+            hdr_ap = '🎧 AIRPODS · NATIVE AAP' if is_ap else '🎧 BLUETOOTH-KOPFHÖRER'
+            win.text(p, hdr_ap, x0 + 1.6 * u, y + 1.0 * u, f_sec, LIVE if ap_on else MUTED, cw * .48)
+            pods = ap.get('pods') or {}
+            pod_parts = [ap.get('name') or 'Kopfhörer']
+            for pk, plbl in (('left', 'L'), ('right', 'R'), ('case', 'Case')):
+                pv = pods.get(pk) or {}
+                if pv.get('level') is not None:
+                    pod_parts.append(f'{plbl} {pv["level"]} %' + (' ⚡' if pv.get('charging') else ''))
+            if len(pod_parts) == 1 and ap.get('battery_pct') is not None:
+                pod_parts.append(f'{ap["battery_pct"]} %')
+            win.text(p, '  ·  '.join(pod_parts), x0 + 1.6 * u, y + 3.4 * u, ('u', 1.82, 600), TEXT if ap_on else MUTED, cw - 19 * u)
+            ap_btn = QRectF(ap_card.right() - 15.6 * u, y + 2.0 * u, 14.2 * u, 4.4 * u)
+            win.button(p, ap_btn, 'Trennen' if ap_on else 'Verbinden',
+                       lambda: (touched(win), win.toast('Schalte Kopfhörer …'),
+                                win.post('api/airpods', {'action': 'toggle'},
+                                         then=lambda _r: ui.QTimer.singleShot(1800, lambda: win.call('api/airpods', then=lambda a: a and (setattr(win, 'AIRPODS', a), win.update()))))),
+                       ('u', 1.68, 700), INK if ap_on else TEXT, LIVE if ap_on else RAISED, None, 1.2)
+            if ap_on and is_ap:
+                cur_nm = ap.get('noise_mode') or 'off'
+                ca_on = bool(ap.get('conv_awareness'))
+                seg_row(x0 + 1.2 * u, y + 7.6 * u, cw - 16.4 * u, 4.5 * u,
+                        [(lbl, lambda m=m: win.post('api/airpods', {'action': 'noise', 'mode': m},
+                                                    then=lambda r: (ap.update(noise_mode=m), r and r.get('text') and win.toast(r['text']), win.update())),
+                          cur_nm == m, f'ap:{m}')
+                         for m, lbl in (('off', 'Aus'), ('anc', 'ANC'), ('transparency', 'Transparenz'), ('adaptive', 'Adaptiv'))],
+                        LIVE)
+                ca_btn = QRectF(ap_card.right() - 14.0 * u, y + 7.6 * u, 12.8 * u, 4.5 * u)
+                win.button(p, ca_btn, '🗣️ Gespräch',
+                           lambda: (touched(win), win.post('api/airpods', {'action': 'conv', 'on': not ca_on},
+                                                           then=lambda _r: (ap.update(conv_awareness=not ca_on), win.update()))),
+                           ('u', 1.52, 700 if ca_on else 500), INK if ca_on else TEXT, LIVE if ca_on else RAISED, LINE, 1.1)
+            y += ap_h + gap
+
         # ---- 3. OnionOS-Style Visual Game Switcher ("Schnellwechsel · Letzte Spiele") ----
         played = win.L.get('played') or {}
         cur_gid = (win.RUN or {}).get('id')
@@ -375,26 +418,61 @@ def draw(win, p):
                 sx += 3.85 * u
 
             win.box(p, rc_right, 1.7 * u, PANEL, LINE)
-            win.text(p, 'AUFNAHME & FOTO', rc_right.x() + 1.6 * u, y + 1.0 * u, f_sec, MUTED, col_w - 3.2 * u)
-            bw_r = (col_w - 3.4 * u) / 2
-            b_rec = QRectF(rc_right.x() + 1.2 * u, y + 3.4 * u, bw_r, 4.4 * u)
-            b_shot = QRectF(b_rec.right() + 1.0 * u, y + 3.4 * u, bw_r, 4.4 * u)
-            rec_lbl = '■ Aufnahme stoppen' if rec else '● Aufnahme starten'
-            win.button(p, b_rec, rec_lbl, lambda: (touched(win), record(win, not rec)), ('u', 1.68, 700 if rec else 600),
+            win.text(p, 'AUFNAHME & 30S-CLIP', rc_right.x() + 1.6 * u, y + 1.0 * u, f_sec, MUTED, col_w - 13 * u)
+            rp_on = bool(win.CFG.get('replay_buffer', False))
+            rp_pill = QRectF(rc_right.right() - 11.8 * u, y + .65 * u, 10.6 * u, 2.3 * u)
+            win.capsule(p, rp_pill, ui.faded(LIVE, .22) if rp_on else RAISED, LIVE if rp_on else LINE)
+            win.text(p, '● 30s-Puffer' if rp_on else '30s-Puffer', rp_pill.x(), rp_pill.y(), ('u', 1.24, 700 if rp_on else 500),
+                     LIVE if rp_on else MUTED, rp_pill.width(), 1, 2.3 / 1.24)
+            win.hit(rp_pill, lambda: (win.ui_haptic(), touched(win),
+                                      win.post('api/replay', {'action': 'toggle'},
+                                               then=lambda r: r and (win.CFG.update(replay_buffer=bool(r.get('enabled'))), win.update()))),
+                    name='qreplay_tog')
+            bw_r = (col_w - 4.0 * u) / 3
+            b_clip = QRectF(rc_right.x() + 1.1 * u, y + 3.4 * u, bw_r, 4.4 * u)
+            b_rec = QRectF(b_clip.right() + .9 * u, y + 3.4 * u, bw_r, 4.4 * u)
+            b_shot = QRectF(b_rec.right() + .9 * u, y + 3.4 * u, bw_r, 4.4 * u)
+            win.button(p, b_clip, '⏪ 30s-Clip', lambda: (touched(win), save_replay(win)), ('u', 1.52, 700),
+                       FOCUS, ui.faded(FOCUS, .16), LINE, 1.1)
+            rec_lbl = '■ Stopp' if rec else '● Video'
+            win.button(p, b_rec, rec_lbl, lambda: (touched(win), record(win, not rec)), ('u', 1.52, 700 if rec else 600),
                        INK if rec else TEXT, WARN if rec else RAISED, None, 1.1)
-            win.button(p, b_shot, 'Bildschirmfoto', lambda: (touched(win), shot(win)), ('u', 1.68, 600), TEXT, RAISED, None, 1.1)
+            win.button(p, b_shot, 'Foto', lambda: (touched(win), shot(win)), ('u', 1.52, 600), TEXT, RAISED, None, 1.1)
             y += 9.0 * u + gap
         else:
             rc_full = QRectF(x0, y, cw, 8.8 * u)
             win.box(p, rc_full, 1.7 * u, PANEL, LINE)
-            win.text(p, 'AUFNAHME & FOTO', x0 + 1.6 * u, y + 1.0 * u, f_sec, MUTED, cw - 3.2 * u)
-            bw_r = (cw - 3.6 * u) / 2
+            win.text(p, 'AUFNAHME & 30S-CLIP', x0 + 1.6 * u, y + 1.0 * u, f_sec, MUTED, cw - 3.2 * u)
+            bw_r = (cw - 4.4 * u) / 3
             rec_lbl = '■ Aufnahme stoppen' if rec else '● Aufnahme starten'
-            win.button(p, QRectF(x0 + 1.2 * u, y + 3.3 * u, bw_r, 4.4 * u), rec_lbl,
+            win.button(p, QRectF(x0 + 1.2 * u, y + 3.3 * u, bw_r, 4.4 * u), '⏪ Letzte 30 s',
+                       lambda: (touched(win), save_replay(win)), f_btn, FOCUS, ui.faded(FOCUS, .16), LINE, 1.2)
+            win.button(p, QRectF(x0 + 2.2 * u + bw_r, y + 3.3 * u, bw_r, 4.4 * u), rec_lbl,
                        lambda: (touched(win), record(win, not rec)), f_btn, INK if rec else TEXT, WARN if rec else RAISED, None, 1.2)
-            win.button(p, QRectF(x0 + 2.4 * u + bw_r, y + 3.3 * u, bw_r, 4.4 * u), 'Bildschirmfoto',
+            win.button(p, QRectF(x0 + 3.2 * u + 2 * bw_r, y + 3.3 * u, bw_r, 4.4 * u), 'Bildschirmfoto',
                        lambda: (touched(win), shot(win)), f_btn, TEXT, RAISED, None, 1.2)
             y += 8.8 * u + gap
+
+        clip_share = getattr(win, 'CLIP_SHARE', None)
+        if clip_share and clip_share.get('share_url'):
+            import qr
+            mat = qr.matrix(clip_share['share_url'])
+            qh = 13.0 * u
+            qbox = QRectF(x0, y, cw, qh)
+            win.box(p, qbox, 1.6 * u, PANEL, FOCUS)
+            if mat:
+                qsz = 10.6 * u
+                cell = qsz / len(mat)
+                qx, qy = x0 + 1.4 * u, y + 1.2 * u
+                p.fillRect(QRectF(qx - .4 * u, qy - .4 * u, qsz + .8 * u, qsz + .8 * u), ui.QColor('#ffffff'))
+                for r_i, row in enumerate(mat):
+                    for c_i, val in enumerate(row):
+                        if val:
+                            p.fillRect(QRectF(qx + c_i * cell, qy + r_i * cell, cell + .4, cell + .4), ui.QColor('#000000'))
+            win.text(p, '📱 Clip per QR aufs Handy laden', x0 + 13.8 * u, y + 1.8 * u, ('u', 1.95, 700), FOCUS, cw - 16 * u)
+            win.text(p, clip_share.get('file', ''), x0 + 13.8 * u, y + 4.8 * u, ('u', 1.55, 500), TEXT, cw - 16 * u)
+            win.text(p, 'Mit Handy-Kamera scannen – lädt direkt im WLAN', x0 + 13.8 * u, y + 7.6 * u, ('u', 1.5, 400), MUTED, cw - 16 * u)
+            y += qh + gap
 
         if win.REC and win.REC.get('last') and not rec:
             win.text(p, 'Gespeichert: ' + win.REC['last'], x0 + .6 * u, y - .4 * u, ('u', 1.65, 400), MUTED, cw)
@@ -409,6 +487,11 @@ def draw(win, p):
     if win.RUN:
         f_acts.append(('Zu Tandem', lambda: (close(win), win.post('api/pause')), RAISED, TEXT))
         if win.RUN.get('s') not in ('app', 'term'):
+            is_frz = bool(win.RUN.get('frozen'))
+            f_acts.append(('▶ Auftauen' if is_frz else '❄️ Freeze',
+                           lambda: (touched(win), win.post('api/freeze', {},
+                                                           then=lambda r: r and (win.toast(r.get('error') or r.get('text', '')), close(win)))),
+                           ui.faded(LIVE if is_frz else FOCUS, .18), LIVE if is_frz else TEXT))
             f_acts.append(('🌐 Übersetzen', lambda: quick_translate(win), ui.faded(FOCUS, .18), FOCUS))
     else:
         f_acts.append(('Zufallsspiel', lambda: (close(win), win.pick_random()), ui.faded(FOCUS, .18), FOCUS))
@@ -441,6 +524,19 @@ def record(win, on):
 
 def shot(win):
     win.post('api/shot', {}, then=lambda r: r and win.toast(r.get('error') or 'Bildschirmfoto gespeichert'))
+
+
+def save_replay(win):
+    win.toast('Speichere 30s-Replay …')
+    def _done(r):
+        if not r:
+            return win.toast('Keine Antwort.')
+        if r.get('error'):
+            return win.toast(r['error'])
+        win.CLIP_SHARE = r if r.get('share_url') else None
+        win.toast(r.get('text') or '30s-Clip gespeichert.')
+        win.update()
+    win.post('api/replay', {'action': 'save'}, then=_done)
 
 
 def quick_translate(win):

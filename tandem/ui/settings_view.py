@@ -79,6 +79,7 @@ def need(win):
         if now - getattr(win, 'bt_at', 0) > (2 if (win.__dict__.get('BT') or {}).get('scanning') else 6):
             win.bt_at = now
             win.call('api/bluetooth', then=lambda b: b and (setattr(win, 'BT', b), win.update()))
+            win.call('api/airpods', then=lambda a: a and (setattr(win, 'AIRPODS', a), win.update()))
         if now - getattr(win, 'bt_scan', 0) > 120:  # opening the area looks for devices at once (both windows ask: one scan)
             win.bt_scan = now
             win.post('api/bluetooth', {'scan': True}, then=lambda r: setattr(win, 'bt_at', 0))
@@ -214,6 +215,10 @@ def groups(win, page):
                     choice('Retro-Optik (Shader)', [('sharp', 'Scharf'), ('auto', 'Auto'), ('crt', 'CRT-OLED'), ('lcd', 'Handheld-LCD')],
                            CFG.get('ra_shader') or 'sharp', lambda v: config_set(win, ra_shader=v),
                            'Offline integrierte Vulkan-OLED-Shader für RetroArch: Auto wählt Handheld-LCD-Raster für GB/GBC/GBA und Trinitron-CRT-Scanlines für TV-Konsolen.'),
+                    toggle('30-Sekunden-Replay-Puffer (RAM)', CFG.get('replay_buffer', False), lambda v: config_set(win, replay_buffer=v),
+                           'Hält im Spiel die letzten 30 Sekunden rein im Arbeitsspeicher (0 % Flash-Abnutzung) bereit – jederzeit per „⏪ 30s-Clip“ im Schnellmenü speichern & per QR aufs Handy teilen.'),
+                    toggle('Couch-Koop am TV (BT-Pad = Spieler 1)', CFG.get('dock_pad_swap', True), lambda v: config_set(win, dock_pad_swap=v),
+                           'Setzt im TV-/Dock-Modus ein verbundenes Bluetooth-Gamepad automatisch auf Spieler 1.'),
                     choice('Konsolen-Klänge', [('off', 'Aus'), ('subtle', 'Dezent')], CFG.get('ui_sounds') or 'off',
                            lambda v: config_set(win, ui_sounds=v),
                            'Dezente akustische Rückmeldung beim Navigieren und Spielstart wie auf der Switch 2.'),
@@ -398,10 +403,37 @@ def groups(win, page):
         if B is None: return loading
         if B.get('error'): return [(None, [{'k': 'info', 't': 'Bluetooth', 'v': 'nicht verfügbar', 'help': B['error']}], None)]
         bt = lambda body, text: lambda: (win.toast(text), win.post('api/bluetooth', body, then=lambda r: (r and r.get('error') and win.toast(r['error']), setattr(win, 'bt_at', 0))))
-        top = [toggle('Bluetooth', B.get('powered'), lambda on: bt({'power': on}, 'Bluetooth ' + ('ein' if on else 'aus'))(), 'Bluetooth des Thor ein- oder ausschalten.')]
+        top = [toggle('Bluetooth', B.get('powered'), lambda on: bt({'power': on}, 'Bluetooth ' + ('ein' if on else 'aus'))(), 'Bluetooth des Thor ein- oder ausschalten.'),
+               toggle('Gaming-Low-Latency-Audio (AAC / SBC-XQ)', CFG.get('bt_low_latency', True), lambda v: config_set(win, bt_low_latency=v),
+                      'Aktiviert SBC-XQ, AAC mit voller Bitrate und 10-ms-PipeWire-Puffer und verhindert das Zurückfallen auf dumpfen 8-kHz-Telefonklang in Spielen.')]
         if B.get('powered'):
             top.append({'k': 'button', 't': 'Nach Geräten suchen', 'v': 'sucht …' if B.get('scanning') else '', 'fn': bt({'scan': True}, 'Suche Geräte …'),
                         'help': 'Sucht 30 Sekunden lang nach Geräten. Kopfhörer oder Gamepad vorher in den Kopplungsmodus bringen (meist die Bluetooth- oder Ein-Taste lange halten).'})
+        AP = win.__dict__.get('AIRPODS') or {}
+        ap_rows = []
+        if B.get('powered') and AP.get('is_airpods'):
+            pods = AP.get('pods') or {}
+            b_parts = []
+            for pk, pl in (('left', 'Links'), ('right', 'Rechts'), ('case', 'Ladecase')):
+                pv = pods.get(pk) or {}
+                if pv.get('level') is not None:
+                    b_parts.append(f'{pl} {pv["level"]} %')
+            ap_rows = [
+                {'k': 'info', 't': AP.get('name') or 'Apple AirPods',
+                 'v': ' · '.join(b_parts) if b_parts else ('verbunden' if AP.get('active') else 'gekoppelt'),
+                 'help': 'Direkte Kommunikation über das Apple-Accessory-Protokoll (L2CAP 0x1001) – ganz ohne iPhone.'},
+                choice('Geräuschkontrolle', [('off', 'Aus'), ('anc', 'ANC'), ('transparency', 'Transparenz'), ('adaptive', 'Adaptiv')],
+                       AP.get('noise_mode') or 'off',
+                       lambda m: win.post('api/airpods', {'action': 'noise', 'mode': m},
+                                          then=lambda r: (AP.update(noise_mode=m), r and r.get('text') and win.toast(r['text']), win.update())),
+                       'Schaltet Aktive Geräuschunterdrückung (ANC), Transparenz oder Adaptives Audio direkt auf den AirPods um.'),
+                toggle('Konversationsbewusstsein', bool(AP.get('conv_awareness')),
+                       lambda v: win.post('api/airpods', {'action': 'conv', 'on': v}, then=lambda _r: (AP.update(conv_awareness=v), win.update())),
+                       'Senkt die Medienlautstärke automatisch ab und verstärkt Stimmen, sobald du sprichst (AirPods Pro 2 / AirPods 4).'),
+                toggle('Automatische Ohr-Erkennung', CFG.get('airpods_ear_pause', True),
+                       lambda v: config_set(win, airpods_ear_pause=v),
+                       'Pausiert Hintergrundmusik automatisch beim Herausnehmen eines AirPods und spielt beim Einsetzen weiter.'),
+            ]
         def row(d):
             sub = KIND_NAMES.get(d['kind'], 'Gerät') + (f' · Akku {d["battery"]} %' if d.get('battery') is not None else '')
             if d['paired']:
@@ -411,10 +443,11 @@ def groups(win, page):
                     'help': 'Koppeln und verbinden. Das Gerät muss dazu im Kopplungsmodus sein.'}
         devs = B.get('devices') or []
         mine, near = [row(d) for d in devs if d['paired']], [row(d) for d in devs if not d['paired']]
-        return [(None, top, None),
-                ('Meine Geräte', mine, None if mine else 'Noch kein Gerät gekoppelt.') if B.get('powered') else (None, [], None),
-                ('Geräte in der Nähe', near or [{'k': 'info', 't': 'Suche …' if B.get('scanning') else 'Keine gefunden', 'v': '', 'help': 'Gerät in den Kopplungsmodus bringen und „Nach Geräten suchen“ wählen.'}],
-                 'Kopfhörer werden nach dem Verbinden sofort die Tonausgabe. Ein Gamepad ist in den Emulatoren der nächste Controller (Spieler 2).') if B.get('powered') else (None, [], None)]
+        return ([(None, top, None)]
+                + ([('AirPods (Nativ · AAP)', ap_rows, None)] if ap_rows else [])
+                + [('Meine Geräte', mine, None if mine else 'Noch kein Gerät gekoppelt.') if B.get('powered') else (None, [], None),
+                   ('Geräte in der Nähe', near or [{'k': 'info', 't': 'Suche …' if B.get('scanning') else 'Keine gefunden', 'v': '', 'help': 'Gerät in den Kopplungsmodus bringen und „Nach Geräten suchen“ wählen.'}],
+                    'Kopfhörer werden nach dem Verbinden sofort die Tonausgabe. Ein Gamepad ist in den Emulatoren der nächste Controller (Spieler 2).') if B.get('powered') else (None, [], None)])
     if page == 'bluetooth>dev':
         d = next((d for d in (win.__dict__.get('BT') or {}).get('devices') or [] if d['addr'] == win.S.get('dev')), None)
         if d is None: return [(None, [{'k': 'info', 't': 'Gerät nicht gefunden', 'v': '', 'help': ''}], None)]

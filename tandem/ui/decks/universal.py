@@ -70,6 +70,13 @@ class Deck:
         self.m_down_at = 0.0
         self.m_moved = 0.0
         self.m_drag = False
+        # Tab 0 sub-views: 'pad' (standard) | 'macros' (3x4 Stream-Deck) | 'cheats' (Live .cht switches)
+        self.ctrl_sub = 'pad'
+        self.macro_edit = False
+        self.macros = {'preset': 'rpg', 'presets': [('rpg', 'PC-RPG'), ('strategy', 'Strategie'), ('retro', 'Retro-Pro')], 'pads': [], 'turbo_idx': -1}
+        self.macros_loaded = False
+        self.cheats = {'items': [], 'can_fetch': False}
+        self.cheats_loaded = False
         from decks import translator
         self.tr_view = translator.TranslatorView(self)
         if w.memo.pop('open_translate', False):
@@ -330,7 +337,7 @@ class Deck:
         self.map_rect = QRectF()
         self.pad_rect = QRectF()
         self.scroll_rect = QRectF()
-        if self.tab == 0: self.w.ingame(p, top=y)
+        if self.tab == 0: self._paint_ctrl_hub(p, y)
         elif self.tab == 1: self._paint_states(p, y)
         elif self.tab == 2: self._paint_notes(p, y)
         elif self.tab == 3: self._paint_guides(p, y)
@@ -837,3 +844,142 @@ class Deck:
             w.capsule(p, br, ui.FOCUS if hi else ui.RAISED, None if hi else ui.LINE)
             w.text(p, lbl, br.x(), br.y(), ('u', 1.85, 700 if hi else 600), ui.INK if hi else ui.TEXT, bw, 1, 5.2 / 1.85)
             w.hit(br, fn, name='umouse:' + lbl)
+
+    # -- Tab 0 Hub: Standard Controls · 3x4 Macro Stream-Deck · Live Cheats --
+    def _set_ctrl_sub(self, sub):
+        self.ctrl_sub = sub
+        if sub == 'macros' and not self.macros_loaded:
+            self.macros_loaded = True
+            self._bg_get(f'api/macros?id={quote(self.gid)}', lambda r: r and setattr(self, 'macros', r))
+        elif sub == 'cheats' and not self.cheats_loaded:
+            self.cheats_loaded = True
+            self._bg_get(f'api/cheats?id={quote(self.gid)}', lambda r: r and setattr(self, 'cheats', r))
+        self.w.update()
+
+    def _paint_ctrl_hub(self, p, y):
+        ui = self._ui()
+        w, u = self.w, self.w.u
+        x0, cw = 2.6 * u, w.width() - 5.2 * u
+        modes = (('pad', '🎮 Steuerung'), ('macros', '🎛️ Makro-Pad'), ('cheats', '🕹️ Cheats'))
+        mw = 16.5 * u
+        mx = x0 + cw - len(modes) * (mw + .7 * u) + .7 * u
+        for mid, mlbl in modes:
+            mr = QRectF(mx, y, mw, 4.1 * u)
+            on = (self.ctrl_sub == mid)
+            w.capsule(p, mr, ui.faded(ui.FOCUS, .22) if on else ui.PANEL, ui.FOCUS if on else ui.LINE)
+            w.text(p, mlbl, mr.x(), mr.y(), ('u', 1.52, 700 if on else 500), ui.FOCUS if on else ui.MUTED, mw, 1, 4.1 / 1.52)
+            w.hit(mr, lambda m=mid: (w.haptic(), self._set_ctrl_sub(m)), name='csub:' + mid)
+            mx += mw + .7 * u
+        if self.ctrl_sub == 'pad':
+            self.w.ingame(p, top=y + 4.9 * u)
+        elif self.ctrl_sub == 'macros':
+            self._paint_macros(p, y + 5.1 * u)
+        else:
+            self._paint_cheats(p, y + 5.1 * u)
+
+    def _paint_macros(self, p, y):
+        ui = self._ui()
+        w, u = self.w, self.w.u
+        x0, cw = 2.6 * u, w.width() - 5.2 * u
+        bot = self._quit_footer(p)
+        # Preset pills + Edit toggle
+        px = x0
+        cur_pr = self.macros.get('preset') or 'rpg'
+        for pid, plbl in (self.macros.get('presets') or [('rpg', 'PC-RPG'), ('strategy', 'Strategie'), ('retro', 'Retro-Pro')]):
+            pr = QRectF(px, y, 13.5 * u, 4.2 * u)
+            on = (cur_pr == pid)
+            w.capsule(p, pr, ui.RAISED if on else ui.PANEL, ui.FOCUS if on else ui.LINE)
+            w.text(p, plbl, pr.x(), pr.y(), ('u', 1.55, 700 if on else 500), ui.FOCUS if on else ui.TEXT, pr.width(), 1, 4.2 / 1.55)
+            w.hit(pr, lambda pid=pid: self._bg_post('api/macros', {'id': self.gid, 'preset': pid}, lambda r: r and setattr(self, 'macros', r)),
+                  name='mpre:' + pid)
+            px += 14.3 * u
+        eb = QRectF(x0 + cw - 18.5 * u, y, 18.5 * u, 4.2 * u)
+        w.capsule(p, eb, ui.FOCUS if self.macro_edit else ui.RAISED, None if self.macro_edit else ui.LINE)
+        w.text(p, '✓ Bearbeiten aktiv' if self.macro_edit else '✏️ Taste belegen', eb.x(), eb.y(),
+               ('u', 1.55, 700 if self.macro_edit else 600), ui.INK if self.macro_edit else ui.TEXT, eb.width(), 1, 4.2 / 1.55)
+        w.hit(eb, lambda: setattr(self, 'macro_edit', not self.macro_edit), name='macro_edit')
+        y += 5.3 * u
+
+        pads = self.macros.get('pads') or []
+        if not pads:
+            import thor_features
+            pads = thor_features.MACRO_PRESETS['rpg']
+        cols, rows_n = 4, 3
+        gap = 1.3 * u
+        tw = (cw - (cols - 1) * gap) / cols
+        th = max(8.2 * u, (bot - y - (rows_n - 1) * gap) / rows_n)
+        t_idx = int(self.macros.get('turbo_idx', -1))
+        for idx, pad in enumerate(pads[:12]):
+            r_i, c_i = divmod(idx, cols)
+            rr = QRectF(x0 + c_i * (tw + gap), y + r_i * (th + gap), tw, th)
+            acc = QColor(pad.get('color') or '#38bdf8')
+            is_tb = (t_idx == idx)
+            w.box(p, rr, 1.6 * u, ui.faded(acc, .28 if is_tb else .14), ui.LIVE if is_tb else ui.faded(acc, .65), (.28 if is_tb else .14) * u)
+            w.text(p, pad.get('label', ''), rr.x() + 1.0 * u, rr.y() + th * .22, ('u', 1.95, 700), ui.TEXT, tw - 2.0 * u, 1)
+            sub_txt = ('● TURBO AKTIV' if is_tb else ('⚡ ' + str(pad.get('sub', ''))) if pad.get('turbo') else str(pad.get('sub', '')))
+            w.text(p, sub_txt, rr.x() + 1.0 * u, rr.y() + th * .58, ('u', 1.42, 600), ui.LIVE if is_tb else acc, tw - 2.0 * u, 1)
+
+            def _tap_pad(i=idx, pd=pad):
+                w.haptic()
+                if self.macro_edit:
+                    w.ask('Taste oder Kombo (z. B. F5, CTRL+S, M)', pd.get('spec', ''), False,
+                          lambda val: val.strip() and self._bg_post(
+                              'api/macros', {'id': self.gid, 'idx': i, 'spec': val.strip(), 'label': val.strip()},
+                              lambda r: r and setattr(self, 'macros', r)))
+                else:
+                    self._bg_post('api/macros', {'id': self.gid, 'action': 'fire', 'idx': i,
+                                                 'spec': pd.get('spec', ''), 'turbo': bool(pd.get('turbo'))},
+                                  lambda r: r and (self.macros.update(turbo_idx=r.get('turbo_idx', -1)),
+                                                   r.get('text') and w.toast(r['text']), w.update()))
+            w.hit(rr, _tap_pad, name=f'mpad:{idx}')
+
+    def _paint_cheats(self, p, y):
+        ui = self._ui()
+        w, u = self.w, self.w.u
+        x0, cw = 2.6 * u, w.width() - 5.2 * u
+        bot = self._quit_footer(p)
+        w.text(p, 'Cheats & 60-FPS / Widescreen', x0, y, ('u', 2.35, 700, -.02), ui.TEXT, cw * .50, 0, 4.4 / 2.35)
+        b_add = QRectF(x0 + cw - 16.0 * u, y, 16.0 * u, 4.4 * u)
+        w.capsule(p, b_add, ui.RAISED, ui.LINE)
+        w.text(p, '+ Eigener Code', b_add.x(), b_add.y(), ('u', 1.6, 600), ui.TEXT, b_add.width(), 1, 4.4 / 1.6)
+        w.hit(b_add, lambda: w.ask('Cheat-Name & Code (Name=CODE)', '', False,
+                                   lambda v: '=' in v and self._bg_post(
+                                       'api/cheats', {'id': self.gid, 'desc': v.split('=', 1)[0], 'code': v.split('=', 1)[1]},
+                                       lambda r: r and setattr(self, 'cheats', {**self.cheats, 'items': r.get('items') or []}))),
+              name='cheat_add')
+        b_db = QRectF(b_add.x() - 20.5 * u, y, 19.5 * u, 4.4 * u)
+        w.capsule(p, b_db, ui.FOCUS)
+        w.text(p, 'Online-Cheats laden', b_db.x(), b_db.y(), ('u', 1.6, 700), ui.INK, b_db.width(), 1, 4.4 / 1.6)
+        w.hit(b_db, lambda: (w.toast('Suche in Libretro-Datenbank …'),
+                             self._bg_post('api/cheats', {'id': self.gid, 'action': 'fetch'},
+                                           lambda r: r and (r.get('items') is not None and setattr(self, 'cheats', {**self.cheats, 'items': r['items']}),
+                                                            w.toast(r.get('error') or r.get('text', ''))))),
+              name='cheat_fetch')
+        y += 5.5 * u
+        items = self.cheats.get('items') or []
+        if not items:
+            w.text(p, 'Noch keine Cheats oder 60-FPS-/Widescreen-Codes geladen.\n'
+                      '• Tippe oben auf „Online-Cheats laden“, um passende Codes aus der Libretro-Datenbank abzurufen.\n'
+                      '• Über „+ Eigener Code“ kannst du eigene Action-Replay-/GameShark-Codes anlegen.',
+                   x0, y + 2 * u, ('u', 1.9, 400), ui.MUTED, cw, 0, 1.48, 6)
+            return
+        area = QRectF(x0, y, cw, bot - y)
+
+        def draw_cht(top):
+            cy = top
+            for it in items:
+                rr = QRectF(x0, cy, cw, 5.8 * u)
+                on = bool(it.get('enable'))
+                w.box(p, rr, 1.4 * u, ui.PANEL, ui.LIVE if on else ui.LINE)
+                w.text(p, it.get('desc', ''), x0 + 1.8 * u, cy, ('u', 1.95, 600 if on else 500), ui.TEXT, cw - 14 * u, 0, 5.8 / 1.95)
+                pill = QRectF(rr.right() - 10.6 * u, cy + 1.0 * u, 9.2 * u, 3.8 * u)
+                w.capsule(p, pill, ui.LIVE if on else ui.RAISED, None if on else ui.LINE)
+                w.text(p, 'EIN' if on else 'AUS', pill.x(), pill.y(), ('u', 1.55, 700), ui.INK if on else ui.MUTED, pill.width(), 1, 3.8 / 1.55)
+                idx_c = it['idx']
+                w.hit(rr, lambda i=idx_c: self._bg_post('api/cheats', {'id': self.gid, 'idx': i},
+                                                        lambda r: r and setattr(self, 'cheats', {**self.cheats, 'items': r.get('items') or []})),
+                      name=f'cht:{idx_c}')
+                cy += 6.6 * u
+            return cy
+
+        w.scroller(p, 'ucheats', area, draw_cht)

@@ -1,5 +1,98 @@
 {
   "text": {
+    "ANC aktiv": "ANC active",
+    "Transparenz": "Transparency",
+    "Adaptiv": "Adaptive",
+    "Unbekannter AirPods-Modus.": "Unknown AirPods mode.",
+    "Modus vorgemerkt (AirPods verbinden).": "Mode queued (connect AirPods).",
+    "Geräuschunterdrückung (ANC)": "Active Noise Cancellation (ANC)",
+    "Noch keine Bluetooth-Kopfhörer gekoppelt.": "No Bluetooth headphones paired yet.",
+    "ffmpeg nicht gefunden.": "ffmpeg not found.",
+    "Noch keine 30s-Szenen im Puffer (Replay-Puffer einschalten und kurz spielen).": "No 30s scenes in buffer yet (enable Replay Buffer and play briefly).",
+    "Clip konnte nicht zusammengesetzt werden.": "Clip could not be assembled.",
+    "Karte": "Map",
+    "Inventar": "Inventory",
+    "Tagebuch": "Journal",
+    "Charakter": "Character",
+    "Fähigkeit 1": "Skill 1",
+    "Fähigkeit 2": "Skill 2",
+    "Fähigkeit 3": "Skill 3",
+    "Heiltrank": "Potion",
+    "Menü / Esc": "Menu / Esc",
+    "Untätige": "Idle",
+    "Angriff": "Attack",
+    "Stopp": "Stop",
+    "Vorheriger": "Previous",
+    "Nächster": "Next",
+    "RA-Menü": "RA Menu",
+    "Turbo-Feuer": "Turbo Fire",
+    "Strategie": "Strategy",
+    "Leeres Makro.": "Empty macro.",
+    "Turbo gestoppt.": "Turbo stopped.",
+    "Kein passendes Spiel.": "No matching game.",
+    "Für dieses System gibt es keine Online-Cheat-Datenbank.": "No online cheat database available for this system.",
+    "Keine passenden Cheats in der Libretro-Datenbank gefunden.": "No matching cheats found in the Libretro database.",
+    "Bitte eine gültige IP-Adresse im Heimnetz eingeben.": "Please enter a valid home-network IP address.",
+    "Host bereit (startet beim nächsten Retro-Spiel)": "Host ready (starts with the next retro game)",
+    "❄️ Spiel eingefroren (0 W CPU/GPU).": "❄️ Game frozen (0 W CPU/GPU).",
+    "▶ Spiel läuft weiter.": "▶ Game resumed.",
+    "Clip abgelaufen": "Clip expired",
+    "Host aktiv": "Host active",
+    "Beitreten": "Join",
+    "Host-IP im WLAN (RetroArch Netplay)": "Host IP on Wi-Fi (RetroArch Netplay)",
+    "🌐 LAN-Netplay (Koop)": "🌐 LAN Netplay (Co-op)",
+    "Eingefroren (0 W)": "Frozen (0 W)",
+    "Kurz (<5h)": "Short (<5h)",
+    "🎧 AIRPODS · NATIVE AAP": "🎧 AIRPODS · NATIVE AAP",
+    "🎧 BLUETOOTH-KOPFHÖRER": "🎧 BLUETOOTH HEADPHONES",
+    "Kopfhörer": "Headphones",
+    "Schalte Kopfhörer …": "Switching headphones …",
+    "🗣️ Gespräch": "🗣️ Conversation",
+    "AUFNAHME & 30S-CLIP": "RECORDING & 30S CLIP",
+    "● 30s-Puffer": "● 30s buffer",
+    "30s-Puffer": "30s buffer",
+    "⏪ 30s-Clip": "⏪ 30s clip",
+    "■ Stopp": "■ Stop",
+    "● Video": "● Video",
+    "⏪ Letzte 30 s": "⏪ Last 30s",
+    "📱 Clip per QR aufs Handy laden": "📱 Download clip to phone via QR",
+    "Mit Handy-Kamera scannen – lädt direkt im WLAN": "Scan with your phone camera – downloads directly over Wi-Fi",
+    "▶ Auftauen": "▶ Unfreeze",
+    "❄️ Freeze": "❄️ Freeze",
+    "Speichere 30s-Replay …": "Saving 30s replay …",
+    "30s-Clip gespeichert.": "30s clip saved.",
+    "30-Sekunden-Replay-Puffer (RAM)": "30-second replay buffer (RAM)",
+    "Hält im Spiel die letzten 30 Sekunden rein im Arbeitsspeicher (0 % Flash-Abnutzung) bereit – jederzeit per „⏪ 30s-Clip“ im Schnellmenü speichern & per QR aufs Handy teilen.": "Keeps the last 30 seconds purely in RAM while playing (0% flash wear) – save anytime via “⏪ 30s clip” in Quick Menu and share via QR to your phone.",
+    "Couch-Koop am TV (BT-Pad = Spieler 1)": "Couch co-op on TV (BT pad = Player 1)",
+    "Setzt im TV-/Dock-Modus ein verbundenes Bluetooth-Gamepad automatisch auf Spieler 1.": "Automatically assigns a connected Bluetooth gamepad to Player 1 while docked to a TV.",
+    "Gaming-Low-Latency-Audio (AAC / SBC-XQ)": "Gaming low-latency audio (AAC / SBC-XQ)",
+    "Aktiviert SBC-XQ, AAC mit voller Bitrate und 10-ms-PipeWire-Puffer und verhindert das Zurückfallen auf dumpfen 8-kHz-Telefonklang in Spielen.": "Enables SBC-XQ, full-bitrate AAC and 10 ms PipeWire buffers while preventing 8 kHz handsfree audio drops in games.",
+    "Links": "Left",
+    "Rechts": "Right",
+    "Ladecase": "Case",
+    "gekoppelt": "paired",
+    "Direkte Kommunikation über das Apple-Accessory-Protokoll (L2CAP 0x1001) – ganz ohne iPhone.": "Direct communication via Apple Accessory Protocol (L2CAP 0x1001) – no iPhone needed.",
+    "Geräuschkontrolle": "Noise control",
+    "Schaltet Aktive Geräuschunterdrückung (ANC), Transparenz oder Adaptives Audio direkt auf den AirPods um.": "Switches Active Noise Cancellation (ANC), Transparency or Adaptive Audio directly on your AirPods.",
+    "Konversationsbewusstsein": "Conversation Awareness",
+    "Senkt die Medienlautstärke automatisch ab und verstärkt Stimmen, sobald du sprichst (AirPods Pro 2 / AirPods 4).": "Automatically lowers media volume and enhances voices as soon as you start speaking (AirPods Pro 2 / AirPods 4).",
+    "Automatische Ohr-Erkennung": "Automatic Ear Detection",
+    "Pausiert Hintergrundmusik automatisch beim Herausnehmen eines AirPods und spielt beim Einsetzen weiter.": "Automatically pauses background music when removing an AirPod and resumes when putting it back in.",
+    "AirPods (Nativ · AAP)": "AirPods (Native · AAP)",
+    "🎮 Steuerung": "🎮 Controls",
+    "🎛️ Makro-Pad": "🎛️ Macro Pad",
+    "🕹️ Cheats": "🕹️ Cheats",
+    "✓ Bearbeiten aktiv": "✓ Edit mode on",
+    "✏️ Taste belegen": "✏️ Assign key",
+    "● TURBO AKTIV": "● TURBO ACTIVE",
+    "Taste oder Kombo (z. B. F5, CTRL+S, M)": "Key or combo (e.g. F5, CTRL+S, M)",
+    "Cheats & 60-FPS / Widescreen": "Cheats & 60 FPS / Widescreen",
+    "+ Eigener Code": "+ Custom code",
+    "Cheat-Name & Code (Name=CODE)": "Cheat name & code (Name=CODE)",
+    "Online-Cheats laden": "Load online cheats",
+    "Suche in Libretro-Datenbank …": "Searching Libretro database …",
+    "EIN": "ON",
+    "AUS": "OFF",
     "Windows-Umgebungen bereits deinstallierter Steam-Spiele (aktive Spiele & Spielstände bleiben unberührt).": "Windows environments from uninstalled Steam games (active games & savegames stay untouched).",
     "Nicht mehr benötigte Vulkan-/DXVK-Shader-Ordner deinstallierter Steam-Titel.": "Unused Vulkan/DXVK shader folders from uninstalled Steam titles.",
     "Gelöschte Dateien im Linux-Papierkorb und abgebrochene temporäre Downloads.": "Deleted files in the Linux Trash and aborted temporary downloads.",
@@ -2485,6 +2578,62 @@
     [
       "● (.+) → DEUTSCH  ·  (.+)",
       "● {1} → GERMAN  ·  {2}"
+    ],
+    [
+      "🎧 AirPods: (.+)",
+      "🎧 AirPods: {1}"
+    ],
+    [
+      "AirPods: (.+)",
+      "AirPods: {1}"
+    ],
+    [
+      "AirPods nicht erreichbar: (.+)",
+      "AirPods not reachable: {1}"
+    ],
+    [
+      "Clip speichern fehlgeschlagen: (.+)",
+      "Saving clip failed: {1}"
+    ],
+    [
+      "⏪ 30s-Clip gespeichert: (.+)",
+      "⏪ 30s clip saved: {1}"
+    ],
+    [
+      "Turbo aktiv \\((.+)\\)",
+      "Turbo active ({1})"
+    ],
+    [
+      "(\\d+) Cheats / Patches geladen\\.",
+      "{1} cheats / patches loaded."
+    ],
+    [
+      "Verbinde mit (.+) beim nächsten Start",
+      "Connecting to {1} on next launch"
+    ],
+    [
+      "LAN-Netplay: (.+)",
+      "LAN Netplay: {1}"
+    ],
+    [
+      "⚠️ Akku kritisch \\((.+) %\\) – Spiel gesichert & eingefroren!",
+      "⚠️ Battery critical ({1}%) – game saved & frozen!"
+    ],
+    [
+      "(\\d+) % \\(~(.+) Std\\.\\)",
+      "{1}% (~{2} hrs)"
+    ],
+    [
+      "Links (\\d+) %",
+      "Left {1}%"
+    ],
+    [
+      "Rechts (\\d+) %",
+      "Right {1}%"
+    ],
+    [
+      "Ladecase (\\d+) %",
+      "Case {1}%"
     ],
     [
       "Original-Verpackung · (.+)",
