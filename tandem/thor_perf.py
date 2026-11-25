@@ -565,6 +565,7 @@ def game_env(base_env=None, opt=None, system='', fex_mode='fast', turnip_driver=
             # Prevent Adreno 740 white-out bugs while keeping shader/mesh-compute streaming stutter-free:
             # disable experimental VK_EXT_mesh_shader, sparse non-coherent GMEM, and PSI eviction of GPU-written
             # auto-exposure targets; build >12ms mesh/effect compute shaders asynchronously off vk-replay
+            env.setdefault('MALLOC_ARENA_MAX', '2')
             env.setdefault('DM_VK_MESH', '0')
             env.setdefault('DM_VK_DIRECT_GMEM', '0')
             env.setdefault('DM_VK_CS_ASYNC', '1')
@@ -573,8 +574,8 @@ def game_env(base_env=None, opt=None, system='', fex_mode='fast', turnip_driver=
             env.setdefault('DM_VK_PSO_ASYNC_ALL', '1')
             env.setdefault('DM_VK_IMG_PSI', '0')
             env.setdefault('DM_VK_PUSH_DELTA', '1')
-            env.setdefault('DM_VK_PREWARM', '6')
-            env.setdefault('DM_VK_PREPARE_SLOTS', '6')
+            env.setdefault('DM_VK_PREWARM', '3')
+            env.setdefault('DM_VK_PREPARE_SLOTS', '3')
             env.setdefault('DM_VK_PREWARM_MEM_MB', '512')
             env.setdefault('DM_VK_PREWARM_OVERLAP', '1')
         env.setdefault('DM_VK_PSO_SLOTS', '4')

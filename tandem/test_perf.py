@@ -132,7 +132,8 @@ class PerfEngineTest(unittest.TestCase):
         self.assertEqual(env_b12['DM_VK_PSO_SLOTS'], '4')
         self.assertEqual(env_b12['DM_VK_PSO_ASYNC_ALL'], '1')
         self.assertEqual(env_b12['DM_VK_PUSH_DELTA'], '1')
-        self.assertEqual(env_b12['DM_VK_PREWARM'], '6')
+        self.assertEqual(env_b12['DM_VK_PREWARM'], '3')
+        self.assertEqual(env_b12['MALLOC_ARENA_MAX'], '2')
         if (thor_perf.os.cpu_count() or 0) >= 8:
             self.assertEqual(env_b12['DM_VK_AFF_ALL'], '56')
             self.assertEqual(env_b12['DM_VK_AFF_ENC'], '64')
