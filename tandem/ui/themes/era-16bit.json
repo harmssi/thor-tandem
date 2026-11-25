@@ -1,0 +1,25 @@
+{
+  "name": "16-Bit Ära (SNES / Mega Drive)",
+  "era": "16bit",
+  "bgm": "era-16bit.ogg",
+  "colors": {
+    "bg": "#08071a",
+    "panel": "#161542",
+    "raised": "#232162",
+    "line": "#6366f1",
+    "text": "#f8f7ff",
+    "muted": "#b6b6e6",
+    "accent": "#facc15",
+    "live": "#4ade80",
+    "warn": "#f43f5e"
+  },
+  "gradient": ["#6366f1", "#ec4899", "#facc15"],
+  "fonts": {
+    "ui": ["Barlow", "Inter", "Noto Sans"],
+    "display": ["Barlow Condensed", "Nimbus Sans Narrow"],
+    "body": ["Barlow", "Inter", "Noto Sans"]
+  },
+  "radius": 0.45,
+  "glow": 0.86,
+  "gameAccent": false
+}

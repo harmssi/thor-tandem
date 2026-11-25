@@ -582,15 +582,32 @@ class Looks(unittest.TestCase):
         self.assertEqual((ui.FOCUS.name(), ui.INK.name()), ('#00cc66', '#07080b'))
         ui.apply_theme(ui.read_theme('toravo'))
         self.assertEqual(ui.FOCUS.name(), '#ffb23e')
-        # iiSU Aero OLED & iiSU Pearl flagship themes + spring physics
+        # iiSU Aero OLED, iiSU Pearl, 8-Bit Era & 16-Bit Era flagship themes
         aero = ui.read_theme('iisu-aero')
         pearl = ui.read_theme('iisu-pearl')
-        self.assertEqual((aero['name'], aero['colors']['accent']), ('iiSU Aero OLED', '#38bdf8'))
+        t8 = ui.read_theme('era-8bit')
+        t16 = ui.read_theme('era-16bit')
+        self.assertEqual((aero['name'], aero['colors']['accent'], aero['era']), ('iiSU Aero OLED', '#38bdf8', 'modern'))
         self.assertEqual(pearl['name'], 'iiSU Pearl')
+        self.assertEqual((t8['era'], t8['bgm'], t8['gameAccent']), ('8bit', 'era-8bit.ogg', False))
+        self.assertEqual((t16['era'], t16['bgm'], t16['gameAccent']), ('16bit', 'era-16bit.ogg', False))
+        for e_key in ('8bit', '16bit', 'modern'):
+            p_ogg = tandem.telemetry.era_bgm_path(e_key)
+            self.assertIsNotNone(p_ogg, f'Missing era BGM track for {e_key}')
+            self.assertGreater(p_ogg.stat().st_size, 100_000)
+        self.assertGreater(len(tandem.telemetry.synth_wav([(880, 0.02, 0.2)], wave='square')), 200)
+        self.assertGreater(len(tandem.telemetry.synth_wav([(880, 0.02, 0.2)], wave='16bit')), 200)
+        ui.apply_theme(t8)
+        self.assertEqual(ui.iisu_fx.era_mode(), '8bit')
+        self.assertEqual(ui.iisu_fx.sfc_pad_color('A').name(), '#ff3b30')
+        ui.apply_theme(t16)
+        self.assertEqual(ui.iisu_fx.era_mode(), '16bit')
+        self.assertEqual(ui.iisu_fx.sfc_pad_color('Y').name(), '#22c55e')
         ui.apply_theme(pearl)
         self.assertTrue(ui.iisu_fx.is_light())
         ui.apply_theme(ui.read_theme('toravo'))
         self.assertFalse(ui.iisu_fx.is_light())
+        self.assertEqual(ui.iisu_fx.era_mode(), 'modern')
 
     def test_game_accent(self):
         red, grey = [(200, 30, 40)] * 300 + [(20, 20, 20)] * 200 + [(240, 240, 240)] * 76, [(90, 90, 90)] * 500 + [(200, 30, 40)] * 5

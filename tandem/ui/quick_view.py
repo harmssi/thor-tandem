@@ -287,6 +287,23 @@ def draw(win, p):
                            ('u', 1.52, 700 if ca_on else 500), INK if ca_on else TEXT, LIVE if ca_on else RAISED, LINE, 1.1)
             y += ap_h + gap
 
+        # ---- 2c. Konsolen-Ära (8-Bit · 16-Bit · Modern) & Loop-Hintergrundmusik ----
+        cur_era = ui.iisu_fx.era_mode()
+        ebgm_on = bool(win.CFG.get('era_bgm', True))
+        era_card = QRectF(x0, y, cw, card_h1)
+        win.box(p, era_card, 1.7 * u, PANEL, LINE)
+        win.text(p, 'KONSOLEN-ÄRA & MENÜ-MUSIK (TORAVO STUDIO)', x0 + 1.6 * u, y + 1.1 * u, f_sec, FOCUS, cw - 3.2 * u)
+        seg_w_era = cw - 19.8 * u
+        seg_row(x0 + 1.2 * u, y + 3.5 * u, seg_w_era, 4.5 * u,
+                [(lbl, lambda e=e: ui.settings_view.set_era(win, e), cur_era == e, f'era:{e}')
+                 for e, lbl in (('8bit', '8-Bit'), ('16bit', '16-Bit'), ('modern', 'Modern'))], FOCUS)
+        bgm_btn = QRectF(x0 + 1.2 * u + seg_w_era + 1.0 * u, y + 3.5 * u, 16.4 * u, 4.5 * u)
+        win.button(p, bgm_btn, '🎵 Musik: An' if ebgm_on else '🎵 Musik: Aus',
+                   lambda: cfg_set(win, era_bgm=not ebgm_on),
+                   ('u', 1.62, 700 if ebgm_on else 600), INK if ebgm_on else TEXT,
+                   LIVE if ebgm_on else RAISED, None if ebgm_on else LINE, 1.1, name='qera_bgm')
+        y += card_h1 + gap
+
         # ---- 3. OnionOS-Style Visual Game Switcher ("Schnellwechsel · Letzte Spiele") ----
         played = win.L.get('played') or {}
         cur_gid = (win.RUN or {}).get('id')

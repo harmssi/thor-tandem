@@ -541,29 +541,46 @@ def groups(win, page):
                 ('Weitere', [{'k': 'info', 't': 'Steam', 'v': 'über Apps › Steam starten', 'help': 'Steam läuft als eigene Sitzung; danach startet wieder Tandem.'},
                              {'k': 'info', 't': 'Plex', 'v': 'angemeldet' if CFG.get('plex_set') else 'über Apps › Plex', 'help': 'Anmeldung direkt in der Plex-App unter Apps.'}], None)]
     if page == 'look':
+        cur_era = ui.iisu_fx.era_mode()
+        cur_bvol = int(CFG.get('era_bgm_vol') or 30)
+        bvol_pick = 18 if cur_bvol <= 22 else (48 if cur_bvol >= 42 else 30)
         rows = [{'k': 'check', 't': t['name'], 'on': t['id'] == ui.THEME['id'], 'fn': lambda t=t: set_theme(win, t['id']), 'help': 'Farben und Stil der Oberfläche auf beiden Bildschirmen.'}
                 for t in CFG.get('themes') or []]
         cur_cols = int(CFG.get('grid_cols') or 5)
-        disp = [choice('Ansicht', [('grid', 'Kacheln'), ('stage', 'Bühne')], CFG.get('view_mode') or 'grid',
-                       lambda v: config_set(win, view_mode=v),
-                       'Kacheln zeigt ein zoombares Poster-Raster; Bühne präsentiert die Spiele groß in der Mitte als gleitendes Karussell.'),
-                choice('Raster-Größe (3DS-Zoom)', [(3, '3 Groß'), (4, '4 Mittel'), (5, '5 Standard'), (6, '6 Kompakt')],
-                       cur_cols if cur_cols in (3, 4, 5, 6) else 5,
-                       lambda v: config_set(win, grid_cols=v),
-                       'Stufenloser Konsolen-Zoom für die quadratischen Kacheln (3 bis 6 Spalten) wie am Nintendo 3DS & iiSU.'),
-                toggle('Start-Pods (Cocoon-Dashboard)', CFG.get('home_pods', False),
-                       lambda v: config_set(win, home_pods=v),
-                       'Zeigt oben auf dem Start-Tab interaktive Bento-Pods für Weiterspielen (mit Live-Szene & Fortschritt), Zufalls-Tipp und Sammlung.'),
-                toggle('3D-Spielehüllen & Modul-Vorschau', CFG.get('showcase_3d', True),
-                       lambda v: config_set(win, showcase_3d=v),
-                       'Präsentiert auf dem oberen 120-Hz-OLED schwebende 3D-Spielehüllen im Originalformat samt herausgleitendem Spielmodul bzw. Disc (iiSU-Stil).'),
-                toggle('Plattform-Rahmen', CFG.get('overlays', True), lambda v: (win.comp_cache.clear(), config_set(win, overlays=v)),
-                       'Legt farbige Konsolen-Rahmen und Plattform-Abzeichen (Cocoon) um die Spiele-Cover.'),
-                choice('Animationen', [('full', 'Flüssig'), ('reduced', 'Reduziert')], CFG.get('motion') or 'full',
-                       lambda v: config_set(win, motion=v),
-                       'Flüssige Feder-Physik für Cover, Fokusring, 3D-Hüllen und Scharnier-Aurora, oder reduzierte Bewegung.')]
+        disp = [
+            choice('Konsolen-Ära', [('8bit', '8-Bit'), ('16bit', '16-Bit'), ('modern', 'Modern')], cur_era,
+                   lambda e: set_era(win, e),
+                   'Passt beide Bildschirme komplett an die gewählte Ära an: Rahmen, Scanlines / Mode-7-Horizont, Tastenfarben, Klänge und Hintergrundmusik.'),
+            toggle('Ära-Hintergrundmusik (Loop)', CFG.get('era_bgm', True),
+                   lambda v: config_set(win, era_bgm=v),
+                   'Spielt im Menü nahtlos geloopte Instrumentalmusik aus dem Toravo Studio passend zur 8-Bit-, 16-Bit- oder Modernen Ära (pausiert automatisch im Spiel = 0 MB RAM).'),
+            choice('Ansicht', [('grid', 'Kacheln'), ('stage', 'Bühne')], CFG.get('view_mode') or 'grid',
+                   lambda v: config_set(win, view_mode=v),
+                   'Kacheln zeigt ein zoombares Poster-Raster; Bühne präsentiert die Spiele groß in der Mitte als gleitendes Karussell.'),
+            choice('Raster-Größe (3DS-Zoom)', [(3, '3 Groß'), (4, '4 Mittel'), (5, '5 Standard'), (6, '6 Kompakt')],
+                   cur_cols if cur_cols in (3, 4, 5, 6) else 5,
+                   lambda v: config_set(win, grid_cols=v),
+                   'Stufenloser Konsolen-Zoom für die quadratischen Kacheln (3 bis 6 Spalten) wie am Nintendo 3DS & iiSU.'),
+        ]
+        more_disp = [
+            choice('Menü-Musik Lautstärke', [(18, 'Dezent'), (30, 'Mittel'), (48, 'Kräftig')], bvol_pick,
+                   lambda v: config_set(win, era_bgm_vol=v),
+                   'Lautstärke der geloopten Ära-Hintergrundmusik im Menü.'),
+            toggle('Start-Pods (Cocoon-Dashboard)', CFG.get('home_pods', False),
+                   lambda v: config_set(win, home_pods=v),
+                   'Zeigt oben auf dem Start-Tab interaktive Bento-Pods für Weiterspielen (mit Live-Szene & Fortschritt), Zufalls-Tipp und Sammlung.'),
+            toggle('3D-Spielehüllen & Modul-Vorschau', CFG.get('showcase_3d', True),
+                   lambda v: config_set(win, showcase_3d=v),
+                   'Präsentiert auf dem oberen 120-Hz-OLED schwebende 3D-Spielehüllen im Originalformat samt herausgleitendem Spielmodul bzw. Disc (iiSU-Stil).'),
+            toggle('Plattform-Rahmen', CFG.get('overlays', True), lambda v: (win.comp_cache.clear(), config_set(win, overlays=v)),
+                   'Legt farbige Konsolen-Rahmen und Plattform-Abzeichen (Cocoon) um die Spiele-Cover.'),
+            choice('Animationen', [('full', 'Flüssig'), ('reduced', 'Reduziert')], CFG.get('motion') or 'full',
+                   lambda v: config_set(win, motion=v),
+                   'Flüssige Feder-Physik für Cover, Fokusring, 3D-Hüllen und Scharnier-Aurora, oder reduzierte Bewegung.'),
+        ]
         return [('Darstellung', disp, None),
                 ('Thema', rows, 'Die Hervorhebung nimmt im Spiel die Farbe des Covers an, wenn das Thema es vorsieht.'),
+                ('Ära & Musik', more_disp, 'Beim Start eines Spiels stoppt die Menü-Musik sofort (0 % CPU & 0 MB RAM während des Spiels).'),
                 ('Sprache', [choice('Sprache / Language', [('de', 'Deutsch'), ('en', 'English')], CFG.get('lang') or 'de', lambda v: config_set(win, lang=v),
                                     'Sprache der Oberfläche auf beiden Bildschirmen und der Einstellungsseite. Spiele bleiben, wie sie sind.')], None)]
     if page == 'library':
@@ -1088,6 +1105,14 @@ def choice(label, opts, cur, set_, help):
 def set_theme(win, name):
     win.set_theme(name)
     config_set(win, theme=name)
+
+
+def set_era(win, era):
+    target = 'era-8bit' if era == '8bit' else ('era-16bit' if era == '16bit' else (
+        'iisu-aero' if any(t['id'] == 'iisu-aero' for t in (win.CFG.get('themes') or ())) else 'toravo'))
+    win.set_theme(target)
+    win.CFG = {**win.CFG, 'theme': target}
+    win.post('api/config', {'era_preset': era}, then=lambda c: c and (setattr(win, 'CFG', c), win.follow_theme()))
 
 
 def apply_controls(win):

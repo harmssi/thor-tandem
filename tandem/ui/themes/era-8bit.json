@@ -1,0 +1,25 @@
+{
+  "name": "8-Bit Ära (NES / Arcade)",
+  "era": "8bit",
+  "bgm": "era-8bit.ogg",
+  "colors": {
+    "bg": "#06060c",
+    "panel": "#111324",
+    "raised": "#1b1f3a",
+    "line": "#3d4680",
+    "text": "#f8fafc",
+    "muted": "#94a3b8",
+    "accent": "#ff3b30",
+    "live": "#32d74b",
+    "warn": "#ffd60a"
+  },
+  "gradient": ["#ff3b30", "#ffd60a"],
+  "fonts": {
+    "ui": ["Hack", "Liberation Mono", "Inter"],
+    "display": ["Hack", "Liberation Mono", "Barlow Condensed"],
+    "body": ["Inter", "Adwaita Sans", "Noto Sans"]
+  },
+  "radius": 0.14,
+  "glow": 0.72,
+  "gameAccent": false
+}

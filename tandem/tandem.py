@@ -249,8 +249,11 @@ def ident(*parts): return hashlib.sha1('\0'.join(parts).encode()).hexdigest()[:1
 
 def clean(stem):
     """'Golden Sun (Germany) [!]' -> 'Golden Sun'; 'Legend of Zelda, The - X' -> 'The Legend of Zelda - X'."""
-    title = re.sub(r'\s*[\(\[][^\)\]]*[\)\]]', '', stem).strip(' -_.') or stem
-    return re.sub(r'^(.*?), (The|Der|Die|Das|A|An)\b', r'\2 \1', title)
+    mode = re.search(r'\((Easy(?:\s+Mode)?|Hard(?:\s+Mode)?|Normal(?:\s+Mode)?|Kaizo)\)', stem, re.I)
+    s = re.sub(r'[-_ ]+decrypted\b', '', stem, flags=re.I)
+    title = re.sub(r'\s*[\(\[][^\)\]]*[\)\]]', '', s).strip(' -_.') or s
+    title = re.sub(r'^(.*?), (The|Der|Die|Das|A|An)\b', r'\2 \1', title)
+    return f'{title} ({mode[1]})' if mode else title
 
 
 def which(name):
@@ -459,7 +462,8 @@ SYS_ALIASES = {'sfc': ['snes'], 'snes': ['sfc'], 'famicom': ['nes'], 'nes': ['fa
 
 
 def _box_candidates(stem):
-    """Candidate No-Intro / Redump names on libretro-thumbnails (exact stem first, then German/European/US retail boxes)."""
+    """Candidate No-Intro / Redump names on libretro-thumbnails (exact stem first, then German/European/US retail boxes,
+    plus base-game fallback for ROM hacks like 'Secret of Mana Plus Romhack' or 'Super Mario Arcade')."""
     clean_n = lambda s: re.sub(r'[&*/:`<>?\\|"]', '_', s)
     out = [clean_n(stem)]
     s2 = re.sub(r'\s*(\((?:Rev\s*[\w.]+|v[\d.]+|Uncensored|Enhanced|Beta|Proto)\)|\[[^\]]*\])+\s*$', '', stem, flags=re.I).strip()
@@ -467,11 +471,24 @@ def _box_candidates(stem):
     s3 = re.sub(r'\s*\([A-Z][a-z](?:,[A-Z][a-z])+\)', '', s2).strip()
     if s3 and clean_n(s3) not in out: out.append(clean_n(s3))
     base = re.sub(r'\s*\([^)]*\)', '', s3).strip()
-    if base:
+    bases = [base] if base else []
+    hack_base = re.sub(r'\s+(?:Plus|Romhack|ROM\s*Hack|Arcade|Redux|Remodel|Restored|DX)\b.*$', '', base, flags=re.I).strip(' -:')
+    if hack_base and hack_base != base:
+        bases.append(hack_base)
+    if ' - ' in base:
+        prefix = base.split(' - ', 1)[0].strip()
+        if len(prefix) >= 8 and prefix not in bases:
+            bases.append(prefix)
+    low_b = base.lower()
+    if 'super mario' in low_b and 'Super Mario World' not in bases:
+        bases.append('Super Mario World')
+    elif ('metroid' in low_b or 'jonny' in low_b) and 'Super Metroid' not in bases:
+        bases.append('Super Metroid')
+    for b in bases:
         for reg in ('(Germany)', '(Europe)', '(USA, Europe)', '(USA)', '(World)'):
-            cand = clean_n(f'{base} {reg}')
+            cand = clean_n(f'{b} {reg}')
             if cand not in out: out.append(cand)
-    return out[:6]
+    return out[:12]
 
 
 def _norm_box_title(t):
@@ -554,16 +571,22 @@ def scrape(games):
             if box_target.is_file() and not cov_target.is_file():
                 cov_target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(box_target, cov_target)
+        need_hero = not game.get('hero') or game.get('hero') in (game.get('cover'), game.get('box'))
+        if need_hero or not game.get('cover'):
             snap_target = MEDIA / game['s'] / 'snaps' / f'{stem}.png'
             if not snap_target.is_file():
-                sdata = fetch_libretro(playlist, 'Named_Snaps', _box_candidates(stem)[0])
-                if sdata:
-                    snap_target.parent.mkdir(parents=True, exist_ok=True)
-                    snap_target.write_bytes(sdata)
+                for cand in _box_candidates(stem):
+                    sdata = fetch_libretro(playlist, 'Named_Snaps', cand)
+                    if sdata:
+                        snap_target.parent.mkdir(parents=True, exist_ok=True)
+                        snap_target.write_bytes(sdata)
+                        got += 1
+                        break
         return got
 
     found = 0
-    retro_todo = [g for g in games if LIBRETRO.get(g.get('s')) and 'path' in g and (not g.get('box') or not g.get('cover'))]
+    retro_todo = [g for g in games if LIBRETRO.get(g.get('s')) and 'path' in g
+                  and (not g.get('box') or not g.get('cover') or not g.get('hero') or g.get('hero') in (g.get('cover'), g.get('box')))]
     if retro_todo:
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
             found += sum(pool.map(retro_job, retro_todo))
@@ -639,7 +662,7 @@ class Library:
                     (base / 'ES-DE/downloaded_media', ('covers', 'miximages', 'screenshots'), ('3dboxes', 'covers'), ('fanart', 'screenshots'), ('marquees', 'wheel'), ('screenshots',), ('videos',)),
                     (HOME / 'ES-DE/downloaded_media', ('covers', 'miximages', 'screenshots'), ('3dboxes', 'covers'), ('fanart', 'screenshots'), ('marquees', 'wheel'), ('screenshots',), ('videos',)),
                     (base / 'Cocoon/downloaded_media', ('icon', 'screenshot_title'), (), ('hero', 'screenshot_gameplay'), ('logo',), ('screenshot_gameplay', 'screenshot_title'), ('videos', 'video')),
-                    (MEDIA, ('covers', 'boxes'), ('boxes', 'covers'), ('snaps',), (), ('snaps',), ()))):
+                    (MEDIA, ('covers',), ('boxes', 'covers'), ('heroes', 'snaps'), (), ('snaps',), ()))):
                 for kinds, target in ((covers, cover), (boxes, box), (heroes, hero), (logos, logo), (shots, shot)):
                     for kind in reversed(kinds):  # earlier names win
                         target.update(self._media_index(media / sname / kind))
@@ -731,6 +754,32 @@ class Library:
                     return fp
         return None
 
+    @staticmethod
+    def _usable_hero(path):
+        """Reject ultra-thin marquee banners (w > h * 3.5 or h < 120) accidentally stored in a hero folder."""
+        if not path or not os.path.isfile(path): return None
+        try:
+            with open(path, 'rb') as f: head = f.read(32)
+            if head[:8] == b'\x89PNG\r\n\x1a\n' and len(head) >= 24:
+                import struct
+                w, h = struct.unpack('>II', head[16:24])
+                if h > 0 and (w > h * 3.5 or h < 120): return None
+        except OSError:
+            return None
+        return path
+
+    @staticmethod
+    def _rom_rank(filename):
+        low = filename.lower()
+        patch = 3 if ('decrypted' in low or 'patched' in low) else 0
+        reg = (5 if ('germany' in low or '(de' in low or ',de' in low)
+               else 4 if 'europe' in low or '(e)' in low
+               else 3 if 'world' in low or 'usa' in low
+               else 1 if 'japan' in low else 2)
+        rev = 2 if re.search(r'\brev\s*[0-9a-z]+\b', low) else 0
+        ext_ok = 0 if low.endswith('.zip') else 1
+        return (patch, reg, rev, ext_ok, len(filename))
+
     def scan(self):
         games, media = {}, {}
         self.media = media
@@ -752,6 +801,7 @@ class Library:
                                     ln = ln.strip()
                                     if ln and not ln.startswith('#'): m3u_discs.add(os.path.basename(ln).lower())
                             except OSError: pass
+                seen_sys_titles = {}
                 for entry in entries:
                     path = Path(entry.path)
                     if path.suffix.lower() not in wanted or entry.name.lower() in m3u_discs: continue
@@ -760,9 +810,11 @@ class Library:
                     if not b_raw and system == 'switch':
                         sw_tid = re.search(r'\[([0-9A-Fa-f]{16})\]', entry.name)
                         b_raw = _find_switch_box([sw_tid.group(1).upper() if sw_tid else '', path.stem])
-                    c_img, h_img = self._image(cover.get(path.stem) or b_raw), self._image(hero.get(path.stem) or cover.get(path.stem) or b_raw)
+                    s_raw = shot.get(path.stem)
+                    h_raw = self._usable_hero(hero.get(path.stem)) or s_raw or cover.get(path.stem) or b_raw
+                    c_img, h_img = self._image(cover.get(path.stem) or b_raw), self._image(h_raw)
                     b_img = self._image(b_raw)
-                    l_img, s_img = self._image(logo.get(path.stem)), self._image(shot.get(path.stem))
+                    l_img, s_img = self._image(logo.get(path.stem)), self._image(s_raw)
                     v_file = self._image(vid.get(path.stem))
                     gm = gmeta.get(path.stem) or {}
                     title = clean(gm['name']) if gm.get('name') else clean(path.stem)
@@ -773,6 +825,22 @@ class Library:
                     if v_file: game['video'] = v_file
                     for mk in ('desc', 'genre', 'dev', 'year', 'ttb'):
                         if gm.get(mk): game[mk] = gm[mk]
+                    nt_key = re.sub(r'[^a-z0-9]+', '', title.lower())
+                    if nt_key and nt_key in seen_sys_titles:
+                        prev_gid, prev_name = seen_sys_titles[nt_key]
+                        prev_g = games[prev_gid]
+                        if self._rom_rank(entry.name) > self._rom_rank(prev_name):
+                            for mk in ('cover', 'box', 'hero', 'logo', 'shot', 'video', 'desc', 'genre', 'dev', 'year', 'ttb'):
+                                if prev_g.get(mk) and not game.get(mk): game[mk] = prev_g[mk]
+                            del games[prev_gid]
+                            games[gid] = game
+                            seen_sys_titles[nt_key] = (gid, entry.name)
+                        else:
+                            for mk in ('cover', 'box', 'hero', 'logo', 'shot', 'video', 'desc', 'genre', 'dev', 'year', 'ttb'):
+                                if game.get(mk) and not prev_g.get(mk): prev_g[mk] = game[mk]
+                        continue
+                    if nt_key:
+                        seen_sys_titles[nt_key] = (gid, entry.name)
                     games[gid] = game
         for manifest in glob.glob(str(self.steam / 'steamapps/appmanifest_*.acf')):
             text = Path(manifest).read_text(errors='ignore')
@@ -835,11 +903,11 @@ class Library:
             nid = 'native-' + np['tid'].lower()
             tid_up = np['tid'].upper()
             hi_cov = self._image(self._match_switch_media(tid_up, np['title'], sw_cov))
-            hi_hero = self._image(self._match_switch_media(tid_up, np['title'], sw_hero))
+            hi_hero = self._image(self._usable_hero(self._match_switch_media(tid_up, np['title'], sw_hero)))
             hi_logo = self._image(self._match_switch_media(tid_up, np['title'], sw_logo))
             hi_shot = self._image(self._match_switch_media(tid_up, np['title'], sw_shot))
             np_cov = hi_cov or self._image(np['cover'])
-            np_box = self._image(np.get('box') or _find_switch_box([tid_up, nid]) or self._match_switch_media(tid_up, np['title'], sw_box))
+            np_box = self._image(_find_switch_box([tid_up, nid]) or np.get('box') or self._match_switch_media(tid_up, np['title'], sw_box))
             ng = {'id': nid, 't': np['title'], 's': 'switch', 'tid': tid_up, 'direct': np['direct'],
                   'native_engine': np['engine'], 'cover': np_cov or np_box, 'hero': hi_hero or hi_shot or np_cov or np_box,
                   **({'box': np_box} if np_box else {}), **({'logo': hi_logo} if hi_logo else {})}
@@ -863,11 +931,17 @@ class Library:
         for port, (title, folder, _, deck) in PORTS.items():
             if not (PORTS_DIR / folder / 'run').is_file(): continue
             own = PORTS_DIR / folder / 'dist/art/cover.png'  # art the port brings itself (no Steam release to borrow from)
-            art = lambda n: (lambda f: self._image(str(f)) if f.is_file() else None)(own if own.is_file() else self.steam / f'appcache/librarycache/{PORT_ART.get(port)}/{n}')
+            own_hero = PORTS_DIR / folder / 'dist/art/hero.jpg'
             mine = PORTS_DIR / 'art' / f'{port}.jpg'  # a cover of its own: Red Alert 2 and Yuri's Revenge share a folder and one Steam bundle (owner 19.11.)
+            mine_hero = PORTS_DIR / 'art' / f'{port}_hero.jpg'
+            scache = lambda n: (lambda f: self._image(str(f)) if f.is_file() else None)(self.steam / f'appcache/librarycache/{PORT_ART.get(port)}/{n}') if PORT_ART.get(port) else None
+            p_cov = self._image(str(mine)) if mine.is_file() else scache('library_600x900.jpg') or (self._image(str(own)) if own.is_file() else None)
+            p_hero = (self._image(str(mine_hero)) if mine_hero.is_file()
+                      else self._image(str(own_hero)) if own_hero.is_file()
+                      else scache('library_hero.jpg') or p_cov)
             p_logo = self._image(steam_art(self.steam, str(PORT_ART.get(port)), 'logo.png')) if PORT_ART.get(port) else None
             games['port-' + port] = {'id': 'port-' + port, 't': title, 's': 'port', 'port': port,
-                                     'cover': self._image(str(mine)) if mine.is_file() else art('library_600x900.jpg'), 'hero': art('library_hero.jpg'),
+                                     'cover': p_cov, 'hero': p_hero,
                                      **({'logo': p_logo} if p_logo else {})}
         # Only installed Steam games (from appmanifest_*.acf & shortcuts.vdf above) are shown in Tandem.
         for ext_g in thor_features.discover_external_pc_games(HOME):
@@ -897,8 +971,28 @@ class Library:
                 if mp.is_file():
                     m_tok = self._image(str(mp))
                     gm['moment'] = m_tok
-                    if not gm.get('hero'):
+                    if not gm.get('hero') or gm.get('hero') in (gm.get('cover'), gm.get('box')):
                         gm['hero'] = m_tok
+        # Mark ROM-hacks within the same system that share identical cover file content so tiles display a disambiguating subtitle
+        cov_sig_groups = {}
+        for gid, gm in games.items():
+            ctok = gm.get('cover')
+            cpath = self.media.get(ctok[6:]) if ctok and ctok.startswith('media/') else None
+            if cpath and os.path.isfile(cpath):
+                try: st_c = os.stat(cpath)
+                except OSError: continue
+                cov_sig_groups.setdefault((gm.get('s'), st_c.st_size), []).append((gid, cpath))
+        for (_, _), grp in cov_sig_groups.items():
+            if len(grp) < 2: continue
+            by_hash = {}
+            for gid, cpath in grp:
+                try:
+                    with open(cpath, 'rb') as cf: h = hashlib.sha1(cf.read(65536)).digest()
+                except OSError: continue
+                by_hash.setdefault(h, []).append(gid)
+            for gids in by_hash.values():
+                if len(gids) > 1:
+                    for gid in gids: games[gid]['dup_cover'] = True
         with self.lock: self.games = games
         return games
 
@@ -1291,6 +1385,8 @@ class Tandem:
                         thor_features.REPLAY.start(dpys[0] if dpys else ':0')
                 if not self.dry and game['s'] == 'wiiu' and load_config().get('wiiu_ffplay'):
                     threading.Thread(target=self.mirror_pad, args=(gid,), daemon=True).start()
+                if not self.dry:
+                    threading.Thread(target=sync_era_bgm_for, args=(self,), daemon=True).start()
         self.publish()
         return {'ok': True, 'cmd': cmd, 'tracked': tracked}
 
@@ -1539,6 +1635,7 @@ class Tandem:
                 set_bottom_off(False, self)
             threading.Thread(target=sync_wifi_powersave, args=(self,), daemon=True).start()
             threading.Thread(target=sync_gyro_power, args=(False, None, ''), daemon=True).start()
+            threading.Thread(target=sync_era_bgm_for, args=(self,), daemon=True).start()
         if is_game and not self.dry:
             saved_moment = self.moments.finish(gid)
             if saved_moment and gid in self.library.games:
@@ -1669,6 +1766,8 @@ class Tandem:
             self.mirror_stop()  # Tandem's own bottom page is needed again
             run['paused'], run['windows'] = True, windows
             self.ui = {'tab': 0, 'sys': None, 'i': 0}  # the first page, where the paused game stands in front
+        if not self.dry:
+            threading.Thread(target=sync_era_bgm_for, args=(self,), daemon=True).start()
         self.publish()
         return {'ok': True}
 
@@ -1680,6 +1779,8 @@ class Tandem:
             try: self.send(signal.SIGCONT)
             except ProcessLookupError: pass
             run['paused'] = False
+        if not self.dry:
+            threading.Thread(target=sync_era_bgm_for, args=(self,), daemon=True).start()
         if run['s'] == 'wiiu': threading.Thread(target=self.mirror_pad, args=(run['id'],), daemon=True).start()
         self.publish()
         return {'ok': True}
@@ -2718,6 +2819,7 @@ def doze(on, tandem=None, keep_audio=False):
                 SLEEP_STATE['muted'] = '[MUTED]' in run_quiet(['wpctl', 'get-volume', '@DEFAULT_AUDIO_SINK@'])
                 run_quiet(['wpctl', 'set-mute', '@DEFAULT_AUDIO_SINK@', '1'])
                 telemetry.stop_speaker_dsp()
+                telemetry.sync_era_bgm(enabled=False, suspend_for_game=True)
             if shutil.which('armada-rgb'): run_quiet(['armada-rgb', 'sleep'])
             telemetry.set_wifi_powersave(True)
             st_now = thor.state() if shutil.which(thor.POWER[0]) else {}
@@ -2761,6 +2863,7 @@ def doze(on, tandem=None, keep_audio=False):
             dsp_m = load_config().get('speaker_dsp', 'cinema')
             if dsp_m in telemetry.SPEAKER_DSP_MODES and dsp_m != 'off':
                 threading.Thread(target=telemetry.apply_speaker_dsp, args=(dsp_m,), daemon=True).start()
+            threading.Thread(target=sync_era_bgm_for, args=(tandem,), daemon=True).start()
         SLEEP_STATE['muted'], SLEEP_STATE['profile'], SLEEP_STATE['gyro'] = None, None, False
         sleep_game(tandem, False)
         if tandem:
@@ -2837,7 +2940,33 @@ def save_config(data):
         config['rgb_sync'] = data['rgb_sync']
         config['rgb_mode'] = ('cover' if data['rgb_sync'] else 'static') if config.get('rgb_mode') in (None, 'cover', 'static') else ('static' if not data['rgb_sync'] else config['rgb_mode'])
     if data.get('lang') in ('de', 'en'): config['lang'] = data['lang']
-    if data.get('theme') in [t['id'] for t in themes()]: config['theme'] = data['theme']
+    all_themes = themes()
+    valid_theme_ids = {t['id'] for t in all_themes}
+    if data.get('era_preset') in ('8bit', '16bit', 'modern'):
+        ep = data['era_preset']
+        if ep == '8bit' and 'era-8bit' in valid_theme_ids:
+            config['theme'] = 'era-8bit'
+            if 'ui_sounds' not in config:
+                config['ui_sounds'] = 'subtle'
+        elif ep == '16bit' and 'era-16bit' in valid_theme_ids:
+            config['theme'] = 'era-16bit'
+            if 'ui_sounds' not in config:
+                config['ui_sounds'] = 'subtle'
+        elif ep == 'modern':
+            pref_mod = config.get('modern_theme')
+            config['theme'] = pref_mod if (pref_mod in valid_theme_ids and theme_meta(pref_mod)['era'] == 'modern') else (
+                'iisu-aero' if 'iisu-aero' in valid_theme_ids else 'toravo')
+    if data.get('theme') in valid_theme_ids:
+        config['theme'] = data['theme']
+        t_era = theme_meta(data['theme'])['era']
+        if t_era == 'modern':
+            config['modern_theme'] = data['theme']
+        elif 'ui_sounds' not in config:
+            config['ui_sounds'] = 'subtle'
+    if isinstance(data.get('era_bgm'), bool):
+        config['era_bgm'] = data['era_bgm']
+    if isinstance(data.get('era_bgm_vol'), (int, float)) and not isinstance(data.get('era_bgm_vol'), bool):
+        config['era_bgm_vol'] = max(5, min(100, int(data['era_bgm_vol'])))
     if data.get('view_mode') in ('grid', 'stage'): config['view_mode'] = data['view_mode']
     if data.get('grid_cols') in (3, 4, 5, 6): config['grid_cols'] = int(data['grid_cols'])
     if isinstance(data.get('home_pods'), bool): config['home_pods'] = data['home_pods']
@@ -3037,16 +3166,53 @@ def apply_ra(user, token):
     return done
 
 
+def theme_meta(theme_id):
+    """Return {'era': '8bit'|'16bit'|'modern', 'bgm': filename} for `theme_id`."""
+    tid = str(theme_id or 'toravo')
+    data = None
+    for folder in (CONFIG.parent / 'themes', HERE / 'ui/themes'):
+        f = folder / f'{tid}.json'
+        if f.is_file():
+            try:
+                data = json.loads(f.read_text())
+                break
+            except (OSError, ValueError):
+                pass
+    if not isinstance(data, dict):
+        return {'era': 'modern', 'bgm': 'era-modern.ogg'}
+    era = data.get('era') if data.get('era') in ('8bit', '16bit', 'modern') else 'modern'
+    bgm = os.path.basename(data['bgm'].strip()) if isinstance(data.get('bgm'), str) and data['bgm'].strip() else f'era-{era}.ogg'
+    return {'era': era, 'bgm': bgm}
+
+
+def sync_era_bgm_for(tandem=None):
+    """Synchronize loopable Era background music with active theme, game launch/pause state, and DOZE standby."""
+    cfg = load_config()
+    meta = theme_meta(cfg.get('theme') or 'toravo')
+    enabled = bool(cfg.get('era_bgm', True))
+    vol = int(cfg.get('era_bgm_vol', 30)) if isinstance(cfg.get('era_bgm_vol'), (int, float)) else 30
+    game_active = bool(tandem and tandem.run and not tandem.run.get('paused'))
+    in_doze = bool(DOZE and not DOZE.get('music'))
+    return telemetry.sync_era_bgm(
+        era=meta['era'], bgm_file=meta['bgm'], enabled=enabled, vol=vol,
+        suspend_for_game=(game_active or in_doze), dry=bool(tandem and tandem.dry),
+    )
+
+
 def themes():
-    """The looks to choose from: [{'id', 'name'}]. A theme is one JSON file (format: README); the ones that come with
+    """The looks to choose from: [{'id', 'name', 'era'}]. A theme is one JSON file (format: README); the ones that come with
     Tandem lie in ui/themes, the user's own in ~/.config/tandem/themes and win over a shipped one of the same file name."""
     found = {}
     for folder in (HERE / 'ui/themes', CONFIG.parent / 'themes'):
         for file in sorted(folder.glob('*.json')):
-            try: name = json.loads(file.read_text()).get('name')
+            try: raw = json.loads(file.read_text())
             except (OSError, ValueError, AttributeError): continue  # a broken file is no theme
-            found[file.stem] = {'id': file.stem, 'name': name if isinstance(name, str) and name.strip() else file.stem}
-    return sorted(found.values(), key=lambda t: (t['id'] != 'toravo', t['name'].lower()))
+            if not isinstance(raw, dict): continue
+            name = raw.get('name')
+            era = raw.get('era') if raw.get('era') in ('8bit', '16bit', 'modern') else 'modern'
+            found[file.stem] = {'id': file.stem, 'name': name if isinstance(name, str) and name.strip() else file.stem, 'era': era}
+    prio = {'toravo': 0, 'iisu-aero': 1, 'era-16bit': 2, 'era-8bit': 3, 'iisu-pearl': 4, 'cocoon': 5}
+    return sorted(found.values(), key=lambda t: (prio.get(t['id'], 10), t['name'].lower()))
 
 
 UPDATE_URL = 'https://github.com/harmssi/thor-tandem/releases/latest/download'  # manifest.json and the archive are release assets
@@ -3143,6 +3309,8 @@ def public_config():
             'saver_style': config.get('saver_style') if config.get('saver_style') in ('kosmos', 'arcade', 'aurora', 'minimal') else 'kosmos',
             'charge_alert': int(config['charge_alert']) if config.get('charge_alert') in (0, 80, 90) else 0,
             'ui_sounds': config.get('ui_sounds') if config.get('ui_sounds') in ('off', 'subtle') else 'off',
+            'era_bgm': bool(config.get('era_bgm', True)),
+            'era_bgm_vol': max(5, min(100, int(config.get('era_bgm_vol', 30)))) if isinstance(config.get('era_bgm_vol'), (int, float)) else 30,
             'lang': 'en' if config.get('lang') == 'en' else 'de', 'remote_url': config.get('remote_url', ''), 'rest_min': config.get('rest_min', 3), 'version': VERSION, 'update_url': config.get('update_url', UPDATE_URL), 'theme': config.get('theme') if config.get('theme') in [t['id'] for t in looks] else 'toravo', 'themes': looks}
 
 
@@ -4417,6 +4585,8 @@ def handler(tandem):
             if path == '/api/config':
                 result = save_config(data)
                 tandem.publish('config', {'config': public_config()})  # both screens follow (theme)
+                if not tandem.dry and any(k in data for k in ('theme', 'era_preset', 'era_bgm', 'era_bgm_vol')):
+                    threading.Thread(target=sync_era_bgm_for, args=(tandem,), daemon=True).start()
                 return self.send(200, result)
             if path == '/api/thor': return self.send(200, thor_change(tandem, data))
             if path == '/api/controls': return self.send(200, controls_apply())
@@ -4538,8 +4708,9 @@ def handler(tandem):
                 tandem.publish('saver', {'open': bool(data.get('open', True))})
                 return self.send(200, {'ok': True, 'open': bool(data.get('open', True))})
             if path == '/api/sound':
-                if public_config().get('ui_sounds') == 'subtle':
-                    telemetry.play_sound(str(data.get('kind', 'tick')))
+                cfg_s = public_config()
+                if cfg_s.get('ui_sounds') == 'subtle':
+                    telemetry.play_sound(str(data.get('kind', 'tick')), era=theme_meta(cfg_s.get('theme'))['era'])
                 return self.send(200, {'ok': True})
             if path == '/api/switch_native':
                 gm = tandem.library.games.get(str(data.get('id', '')))
@@ -4717,6 +4888,8 @@ def pair_handler(tandem):
                 if (data.get('bnet_password') or data.get('yt_cookies')) and not (PAIR['tls'] or self.headers.get('X-Forwarded-Proto') == 'https'):
                     return self.reply(403, {'error': 'Zugangsdaten und Cookies nur über die https-Adresse übertragen.'}, 'application/json')
                 result = save_config(data); tandem.publish('config', {'config': public_config()})
+                if not tandem.dry and any(k in data for k in ('theme', 'era_preset', 'era_bgm', 'era_bgm_vol')):
+                    threading.Thread(target=sync_era_bgm_for, args=(tandem,), daemon=True).start()
             elif what == 'ytlogin':
                 act = data.get('a') if data.get('a') in ('qr', 'qr_new', 'open', 'done', 'cancel', 'logout') else 'qr'
                 result = yt_login(tandem, act)
@@ -4997,9 +5170,16 @@ def watch_buttons(tandem):
 
 
 def rom_roots(extra):
-    found = [p for p in extra if os.path.isdir(p)]
+    found, seen_real = [], set()
+    def _add(p):
+        if not os.path.isdir(p): return
+        rp = os.path.realpath(p)
+        if rp not in seen_real:
+            seen_real.add(rp)
+            found.append(p)
+    for p in extra: _add(p)
     for pattern in (str(HOME / 'ROMs'), '/run/media/*/*/ROMs', '/run/media/*/ROMs', '/media/*/*/ROMs'):
-        found += [p for p in sorted(glob.glob(pattern)) if p not in found]
+        for p in sorted(glob.glob(pattern)): _add(p)
     return found
 
 
@@ -5200,6 +5380,7 @@ def main():
         init_dsp = load_config().get('speaker_dsp', 'cinema')
         if init_dsp in telemetry.SPEAKER_DSP_MODES and init_dsp != 'off':
             threading.Thread(target=telemetry.apply_speaker_dsp, args=(init_dsp,), daemon=True).start()
+        threading.Thread(target=sync_era_bgm_for, args=(tandem,), daemon=True).start()
     if not args.dry_run: threading.Thread(target=hide_steam, args=(tandem,), daemon=True).start()
     new_pin()
     if not args.dry_run: kill_stale()

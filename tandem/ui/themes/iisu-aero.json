@@ -1,5 +1,7 @@
 {
   "name": "iiSU Aero OLED",
+  "era": "modern",
+  "bgm": "era-modern.ogg",
   "colors": {
     "bg": "#04060c",
     "panel": "#101726",

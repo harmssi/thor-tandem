@@ -224,7 +224,57 @@ MEDIA_PROFILES = {
 }
 
 _SVG_CACHE = {}
+_PATTERN_CACHE = {}
 atexit.register(_SVG_CACHE.clear)
+atexit.register(_PATTERN_CACHE.clear)
+
+
+def era_mode():
+    """Active console visual era: '8bit' (NES/Arcade), '16bit' (SNES/JRPG), or 'modern' (iiSU/Aero)."""
+    e = ui.THEME.get('era', 'modern')
+    return e if e in ('8bit', '16bit', 'modern') else 'modern'
+
+
+def sfc_pad_color(letter):
+    """Era-authentic controller face-button colours (NES Crimson/Gold in 8-bit, Super Famicom 4-Color in 16-bit)."""
+    era = era_mode()
+    if era == '8bit':
+        return QColor('#ff3b30') if letter in ('A', 'B') else QColor('#ffd60a')
+    if era == '16bit':
+        return {'A': QColor('#ef4444'), 'B': QColor('#facc15'),
+                'X': QColor('#3b82f6'), 'Y': QColor('#22c55e')}.get(letter, ui.FOCUS)
+    return None
+
+
+def _scanline_brush(era):
+    key = ('scan', era)
+    br = _PATTERN_CACHE.get(key)
+    if br is None:
+        if era == '8bit':
+            img = QImage(8, 3, QImage.Format.Format_ARGB32_Premultiplied)
+            img.fill(0)
+            qp = QPainter(img)
+            qp.fillRect(0, 2, 8, 1, QColor(0, 0, 0, 52))
+            qp.fillRect(0, 0, 8, 1, QColor(255, 255, 255, 6))
+            qp.end()
+        else:
+            img = QImage(8, 4, QImage.Format.Format_ARGB32_Premultiplied)
+            img.fill(0)
+            qp = QPainter(img)
+            qp.fillRect(0, 3, 8, 1, QColor(8, 6, 28, 30))
+            qp.end()
+        br = QBrush(img)
+        _PATTERN_CACHE[key] = br
+    return br
+
+
+def draw_era_backdrop(win, p):
+    """Paint subtle CRT phosphor scanlines ('8bit') or 16-bit Trinitron aperture grille ('16bit') at zero CPU cost."""
+    era = era_mode()
+    if era == 'modern':
+        return
+    W, H = win.width(), win.height()
+    p.fillRect(QRectF(0, 0, W, H), _scanline_brush(era))
 
 
 def is_light():
@@ -311,11 +361,12 @@ def dual_aurora_colors(accent_qcolor):
 
 
 def draw_hinge_bridge(win, p, side):
-    """Paint the dual-screen Hinge-Bridge: twin aurora plumes aligned at 27% and 74% X across the physical hinge."""
+    """Paint the dual-screen Hinge-Bridge: adapts automatically to Modern Aurora, 16-Bit Mode-7 Horizon, or 8-Bit CRT Arcade."""
     glow = ui.THEME.get('glow', 1.0)
     if glow <= 0.01:
         return
-    W, H = win.width(), win.height()
+    era = era_mode()
+    W, H, u = win.width(), win.height(), win.u
     c1, c2 = dual_aurora_colors(ui.FOCUS)
     light = is_light()
     a1 = (0.13 if light else 0.20) * glow
@@ -335,6 +386,55 @@ def draw_hinge_bridge(win, p, side):
     g2.setColorAt(1.0, ui.faded(c2, 0.0))
     p.fillRect(QRectF(0, max(0.0, H - rad2) if side == 'top' else 0.0, W, min(float(H), rad2)), QBrush(g2))
 
+    if era == '8bit':
+        # Deterministic 8-bit arcade pixel starfield + stepped Famicom Red/Gold pixel-brick seam across the hinge
+        px = max(2.0, round(0.24 * u))
+        for k in range(28):
+            sx = ((k * 73 + (19 if side == 'bottom' else 7)) % 96 + 2) * 0.01 * W
+            dist = ((k * 41 + 11) % 100) * 0.01 * (H * 0.36)
+            sy = (H - 1.2 * u - dist) if side == 'top' else (1.2 * u + dist)
+            col = QColor('#ffd60a') if k % 3 == 0 else (QColor('#ff3b30') if k % 5 == 0 else QColor('#93c5fd'))
+            p.fillRect(QRectF(round(sx), round(sy), px, px), ui.faded(col, 0.32 * glow))
+        seam_h = max(2.0, round(0.26 * u))
+        seam_y = H - seam_h if side == 'top' else 0.0
+        seg_w = max(8.0, round(1.2 * u))
+        n_seg = int(W // seg_w) + 1
+        for si in range(n_seg):
+            if si % 2 == 0:
+                frac = 1.0 - abs((si / max(1, n_seg)) - 0.5) * 1.85
+                if frac > 0.05:
+                    bc = QColor('#ffd60a') if (si // 2) % 2 == 0 else QColor('#ff3b30')
+                    p.fillRect(QRectF(si * seg_w, seam_y, seg_w * 0.72, seam_h), ui.faded(bc, 0.55 * frac * glow))
+        return
+
+    if era == '16bit':
+        # Super Nintendo Mode-7 perspective horizon grid radiating from the physical hinge into both screens
+        band_h = H * 0.28
+        p.save()
+        grid_col = QColor('#818cf8')
+        p.setPen(QPen(ui.faded(grid_col, 0.16 * glow), max(1.0, 0.09 * u)))
+        vp_x = W * 0.50
+        vp_y = (H + 6.0 * u) if side == 'top' else (-6.0 * u)
+        edge_y = (H - band_h) if side == 'top' else band_h
+        for gi in range(-6, 7):
+            ex = vp_x + gi * (W * 0.115)
+            p.drawLine(QPointF(vp_x + gi * (W * 0.038), anchor_y), QPointF(ex, edge_y))
+        for hi in range(1, 6):
+            t_h = (hi / 5.0) ** 1.65
+            hy = (H - band_h * (1.0 - t_h)) if side == 'top' else (band_h * (1.0 - t_h))
+            p.setPen(QPen(ui.faded(QColor('#ec4899') if hi == 5 else grid_col, (0.08 + 0.12 * t_h) * glow), 1.0))
+            p.drawLine(QPointF(W * 0.04, hy), QPointF(W * 0.96, hy))
+        p.restore()
+        seam_y = H - 2.0 if side == 'top' else 0.0
+        seam = QLinearGradient(W * 0.05, seam_y, W * 0.95, seam_y)
+        seam.setColorAt(0.0, ui.rgba(99, 102, 241, 0.0))
+        seam.setColorAt(0.25, ui.faded(QColor('#6366f1'), 0.55 * glow))
+        seam.setColorAt(0.50, ui.faded(QColor('#ec4899'), 0.60 * glow))
+        seam.setColorAt(0.75, ui.faded(QColor('#facc15'), 0.50 * glow))
+        seam.setColorAt(1.0, ui.rgba(250, 204, 21, 0.0))
+        p.fillRect(QRectF(0, seam_y, W, 2.0), QBrush(seam))
+        return
+
     seam_y = H - 1.5 if side == 'top' else 0.0
     seam = QLinearGradient(W * 0.08, seam_y, W * 0.92, seam_y)
     seam.setColorAt(0.0, ui.faded(c1, 0.0))
@@ -344,12 +444,75 @@ def draw_hinge_bridge(win, p, side):
     p.fillRect(QRectF(0, seam_y, W, 1.5), QBrush(seam))
 
 
+def draw_sfc_4dots(p, cx, cy, r_dot):
+    """Draw the iconic 4-colour Super Famicom button diamond (X=Blue, A=Red, B=Yellow, Y=Green)."""
+    step = r_dot * 2.15
+    p.setPen(Qt.PenStyle.NoPen)
+    for dx, dy, hx in ((0, -step, '#3b82f6'), (step, 0, '#ef4444'), (0, step, '#facc15'), (-step, 0, '#22c55e')):
+        p.setBrush(QColor(hx))
+        p.drawEllipse(QPointF(cx + dx, cy + dy), r_dot, r_dot)
+
+
 def glass_card(win, p, rect, radius, base_color=None, border_color=None, shadow=True, accent_tint=0.0):
-    """Frutiger-Aero / Liquid-Glass surface with offset soft shadow, subtle sheen, and 1px top specular catchlight."""
+    """Era-aware surface: 8-Bit Arcade Double-Pixel Frame, 16-Bit SNES JRPG Window Bevel, or Modern Liquid Glass."""
     u = win.u
+    era = era_mode()
+    fill = base_color or ui.PANEL
+
+    if era == '8bit':
+        px = max(2.0, round(0.22 * u))
+        if shadow:
+            p.fillRect(rect.translated(px * 1.5, px * 1.8), ui.rgba(0, 0, 0, 0.55))
+        grad = QLinearGradient(rect.left(), rect.top(), rect.left(), rect.bottom())
+        top_c = win.lerp_color(fill, ui.FOCUS, accent_tint * 0.65) if accent_tint > 0 else fill.lighter(112)
+        grad.setColorAt(0.0, top_c)
+        grad.setColorAt(1.0, fill.darker(130))
+        p.fillRect(rect, QBrush(grad))
+        outer_c = border_color or (QColor('#ffd60a') if accent_tint > 0 else ui.LINE)
+        inner_c = QColor('#ff3b30') if accent_tint > 0 else ui.faded(QColor('#93c5fd'), 0.28)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(outer_c, px))
+        p.drawRect(rect.adjusted(px * 0.5, px * 0.5, -px * 0.5, -px * 0.5))
+        inset = px * 1.9
+        if rect.width() > inset * 4 and rect.height() > inset * 3:
+            p.setPen(QPen(inner_c, max(1.0, px * 0.55)))
+            p.drawRect(rect.adjusted(inset, inset, -inset, -inset))
+        for cx, cy in ((rect.left() + px, rect.top() + px), (rect.right() - 2 * px, rect.top() + px),
+                       (rect.left() + px, rect.bottom() - 2 * px), (rect.right() - 2 * px, rect.bottom() - 2 * px)):
+            p.fillRect(QRectF(cx, cy, px, px), QColor('#ffd60a'))
+        return
+
+    if era == '16bit':
+        r = max(2.0, min(rect.height() / 2, radius * ui.THEME['radius']))
+        if shadow:
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(ui.rgba(2, 2, 12, 0.52))
+            p.drawRoundedRect(rect.translated(0.22 * u, 0.36 * u), r, r)
+        # Authentic Chrono Trigger / Final Fantasy VI Royal-Indigo JRPG gradient + silver/gold double bevel
+        grad = QLinearGradient(rect.left(), rect.top(), rect.left(), rect.bottom())
+        top_c = win.lerp_color(QColor('#282572'), ui.FOCUS, accent_tint * 0.45) if accent_tint > 0 else QColor('#26246c')
+        grad.setColorAt(0.0, top_c)
+        grad.setColorAt(0.55, fill)
+        grad.setColorAt(1.0, QColor('#0d0c29'))
+        bw = max(1.5, 0.18 * u)
+        p.setPen(QPen(border_color or QColor('#e2e8f0'), bw))
+        p.setBrush(QBrush(grad))
+        p.drawRoundedRect(rect, r, r)
+        ins = bw * 1.45
+        if rect.width() > ins * 4 and rect.height() > ins * 3:
+            p.setPen(QPen(QColor('#facc15') if accent_tint > 0 else QColor('#6366f1'), max(1.0, bw * 0.65)))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawRoundedRect(rect.adjusted(ins, ins, -ins, -ins), max(1.0, r - ins * 0.6), max(1.0, r - ins * 0.6))
+        stud = max(2.0, 0.24 * u)
+        for sx, sy in ((rect.left() + ins * 0.9, rect.top() + ins * 0.9),
+                       (rect.right() - ins * 0.9 - stud, rect.top() + ins * 0.9),
+                       (rect.left() + ins * 0.9, rect.bottom() - ins * 0.9 - stud),
+                       (rect.right() - ins * 0.9 - stud, rect.bottom() - ins * 0.9 - stud)):
+            p.fillRect(QRectF(sx, sy, stud, stud), QColor('#facc15'))
+        return
+
     light = is_light()
     r = min(rect.height() / 2, radius * ui.THEME['radius'])
-    fill = base_color or ui.PANEL
     if shadow:
         for dy, expand, alpha in ((0.40 * u, 0.48 * u, 0.08 if light else 0.26),
                                   (0.16 * u, 0.16 * u, 0.05 if light else 0.16)):
@@ -381,8 +544,29 @@ def glass_card(win, p, rect, radius, base_color=None, border_color=None, shadow=
 
 
 def draw_square_rim(win, p, rect, item, radius, on=False):
-    """Unified Cocoon × iiSU 2-tone luminous squircle border for square tiles that have no external overlay.png."""
+    """Era-aware square tile border: 8-bit pixel cartridge frame, 16-bit RPG silver bevel, or Modern luminous squircle."""
     u = win.u
+    era = era_mode()
+    if era == '8bit':
+        bw = max(2.0, round(0.24 * u))
+        ins = bw * 0.5
+        col = QColor('#ffd60a') if on else QColor('#3d4680')
+        p.setPen(QPen(col, bw))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawRect(rect.adjusted(ins, ins, -ins, -ins))
+        p.setPen(QPen(QColor('#ff3b30') if on else ui.rgba(255, 59, 48, 0.55), max(1.0, bw * 0.5)))
+        p.drawRect(rect.adjusted(bw * 1.6, bw * 1.6, -bw * 1.6, -bw * 1.6))
+        return
+    if era == '16bit':
+        bw = max(1.8, 0.22 * u)
+        ins = bw * 0.5
+        r = max(2.0, radius * ui.THEME['radius'])
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(QColor('#facc15') if on else QColor('#e2e8f0'), bw))
+        p.drawRoundedRect(rect.adjusted(ins, ins, -ins, -ins), max(1.0, r - ins), max(1.0, r - ins))
+        p.setPen(QPen(QColor('#ec4899') if on else QColor('#6366f1'), max(1.0, bw * 0.65)))
+        p.drawRoundedRect(rect.adjusted(bw * 1.5, bw * 1.5, -bw * 1.5, -bw * 1.5), max(1.0, r - bw * 1.5), max(1.0, r - bw * 1.5))
+        return
     s = str(item.get('s') or '')
     if s in ('app', 'term'):
         hue = app_profile(item)['hue']
@@ -401,6 +585,45 @@ def draw_square_rim(win, p, rect, item, radius, on=False):
     p.setPen(QPen(QBrush(grad), bw))
     p.setBrush(Qt.BrushStyle.NoBrush)
     p.drawRoundedRect(rect.adjusted(inset, inset, -inset, -inset), max(1.0, r - inset), max(1.0, r - inset))
+
+
+def draw_era_focus(win, p, rect, r, t, framed=False):
+    """Draw the active selection cursor around the focused tile: 8-bit Arcade L-brackets, 16-bit JRPG gold frame, or Modern glow ring."""
+    u = win.u
+    era = era_mode()
+    alpha = 0.38 + 0.62 * min(1.0, max(0.0, t))
+    if era == '8bit':
+        pad = 0.52 * u
+        outer = rect.adjusted(-pad, -pad, pad, pad)
+        arm = min(outer.width(), outer.height()) * 0.24
+        th = max(2.2, round(0.32 * u))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(ui.faded(QColor('#ff3b30'), alpha * 0.85))
+        p.drawRect(QRectF(outer.left(), outer.top(), outer.width(), max(1.5, th * 0.45)))
+        p.drawRect(QRectF(outer.left(), outer.bottom() - max(1.5, th * 0.45), outer.width(), max(1.5, th * 0.45)))
+        gold = ui.faded(QColor('#ffd60a'), alpha)
+        for cx, cy, sx, sy in ((outer.left(), outer.top(), 1, 1),
+                               (outer.right(), outer.top(), -1, 1),
+                               (outer.left(), outer.bottom(), 1, -1),
+                               (outer.right(), outer.bottom(), -1, -1)):
+            hx = cx if sx > 0 else cx - arm
+            hy = cy if sy > 0 else cy - th
+            vx = cx if sx > 0 else cx - th
+            vy = cy if sy > 0 else cy - arm
+            p.fillRect(QRectF(hx, hy, arm, th), gold)
+            p.fillRect(QRectF(vx, vy, th, arm), gold)
+        return
+    if era == '16bit':
+        ring = rect.adjusted(-0.48 * u, -0.48 * u, 0.48 * u, 0.48 * u)
+        rr = max(2.0, (r * 0.68 if framed else r * ui.THEME['radius']) + 0.45 * u)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(ui.faded(QColor('#ffffff'), alpha * 0.90), max(1.2, 0.14 * u)))
+        p.drawRoundedRect(ring.adjusted(-0.22 * u, -0.22 * u, 0.22 * u, 0.22 * u), rr + 0.2 * u, rr + 0.2 * u)
+        p.setPen(QPen(ui.faded(QColor('#facc15'), alpha), max(2.0, 0.28 * u)))
+        p.drawRoundedRect(ring, rr, rr)
+        return
+    ring = rect.adjusted(-0.45 * u, -0.45 * u, 0.45 * u, 0.45 * u)
+    win.box(p, ring, (r * 0.68 if framed else r) + 0.45 * u, None, ui.faded(ui.FOCUS, alpha), 0.3 * u)
 
 
 def draw_top_header(win, p, items, dx=0.0, dy=0.0):
@@ -439,18 +662,25 @@ def draw_top_header(win, p, items, dx=0.0, dy=0.0):
     fb, fm = ('u', 1.32, 700), ('u', 1.28, 500)
     h, pad, ic = 3.15 * u, 1.35 * u, 1.65 * u
     sep = '  ·  '
-    w = (pad + ic + 0.75 * u + win.width_of(lead_txt, fb)
+    era = era_mode()
+    sfc_extra = 1.6 * u if era == '16bit' else 0.0
+    w = (pad + sfc_extra + ic + 0.75 * u + win.width_of(lead_txt, fb)
          + (win.width_of(sep, fm) + win.width_of(sub_txt, fm) if sub_txt else 0) + pad)
     rect = QRectF(4.2 * u + dx, 1.85 * u + dy, w, h)
-    if light:
+    if era in ('8bit', '16bit'):
+        glass_card(win, p, rect, h * 0.45, shadow=False, accent_tint=0.08)
+        ink, dim = ui.TEXT, ui.MUTED
+    elif light:
         ink, dim = ui.rgba(17, 24, 39, 0.94), ui.rgba(71, 85, 105, 0.84)
         win.capsule(p, rect, ui.rgba(255, 255, 255, 0.80), ui.rgba(15, 23, 42, 0.12))
     else:
         ink, dim = ui.rgba(241, 245, 249, 0.92), ui.rgba(203, 213, 225, 0.68)
         win.capsule(p, rect, ui.rgba(8, 11, 20, 0.58), ui.rgba(255, 255, 255, 0.13))
 
-    draw_svg(p, svg_name, QRectF(rect.x() + pad, rect.center().y() - ic / 2, ic, ic), icon_col)
-    tx = rect.x() + pad + ic + 0.75 * u
+    if era == '16bit':
+        draw_sfc_4dots(p, rect.x() + pad + 0.35 * u, rect.center().y(), 0.22 * u)
+    draw_svg(p, svg_name, QRectF(rect.x() + pad + sfc_extra, rect.center().y() - ic / 2, ic, ic), icon_col)
+    tx = rect.x() + pad + sfc_extra + ic + 0.75 * u
     ty = rect.y() + (h - 1.32 * u * 1.2) / 2
     win.text(p, lead_txt, tx, ty, fb, ink)
     tx += win.width_of(lead_txt, fb)
@@ -587,7 +817,16 @@ def draw_console_dock(win, p, items, title=None, buttons=None):
         px = ar.x() if win.CFG.get('motion') == 'reduced' else ta['fx'] + (ta['tx'] - ta['fx']) * tt
         pw = ar.width() if win.CFG.get('motion') == 'reduced' else ta['fw'] + (ta['tw'] - ta['fw']) * tt
         pill = QRectF(px, by, pw, bh)
-        win.capsule(p, pill, ui.faded(ui.FOCUS, 0.22 if light else 0.20), ui.faded(ui.FOCUS, 0.55))
+        era = era_mode()
+        if era == '8bit':
+            p.fillRect(pill, ui.faded(ui.FOCUS, 0.24))
+            p.setPen(QPen(QColor('#ffd60a'), max(1.5, round(0.20 * u))))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawRect(pill.adjusted(1, 1, -1, -1))
+        elif era == '16bit':
+            win.box(p, pill, 1.4 * u, ui.faded(ui.FOCUS, 0.20), QColor('#facc15'), max(1.4, 0.18 * u))
+        else:
+            win.capsule(p, pill, ui.faded(ui.FOCUS, 0.22 if light else 0.20), ui.faded(ui.FOCUS, 0.55))
 
     for n, label in enumerate(ui.TABS):
         rect = rects[n]
@@ -601,19 +840,20 @@ def draw_console_dock(win, p, items, title=None, buttons=None):
     return y + h + 2.0 * u
 
 
-def _draw_media_peek(win, p, box_rect, media_kind, spine_col, art_img, t_pop):
-    """Draw the physical Cartridge, Switch Game Card, or Optical Disc peeking out from behind the 3D retail case."""
+def _draw_media_peek(win, p, box_rect, media_kind, spine_col, sys_id, t_pop):
+    """Draw the physical Cartridge, Switch Game Card, or Optical Disc peeking out from behind the 3D retail case
+    (pure hardware media styling with console emblem — never duplicating the cover photo next to the case)."""
     if media_kind == 'none' or t_pop <= 0.02:
         return
     u = win.u
     bw, bh = box_rect.width(), box_rect.height()
-    slide = (.22 if 'disc' in media_kind else .19) * bw * t_pop
+    slide = (.21 if 'disc' in media_kind else .18) * bw * t_pop
 
     p.save()
     if 'disc' in media_kind:
         scale_d = 0.74 if media_kind == 'mini_disc' else 0.86
         diam = min(bh * scale_d, bw * 0.94)
-        cx = box_rect.right() - diam * 0.35 + slide
+        cx = box_rect.right() - diam * 0.36 + slide
         cy = box_rect.center().y()
         drect = QRectF(cx - diam / 2, cy - diam / 2, diam, diam)
 
@@ -629,29 +869,22 @@ def _draw_media_peek(win, p, box_rect, media_kind, spine_col, art_img, t_pop):
 
         dgrad = QLinearGradient(drect.topLeft(), drect.bottomRight())
         dgrad.setColorAt(0.0, QColor('#e2e8f0'))
-        dgrad.setColorAt(0.28, ui.faded(spine_col, 0.92))
-        dgrad.setColorAt(0.52, QColor('#f8fafc'))
-        dgrad.setColorAt(0.76, QColor('#38bdf8'))
+        dgrad.setColorAt(0.25, ui.faded(spine_col.lighter(135), 0.90))
+        dgrad.setColorAt(0.50, QColor('#f8fafc'))
+        dgrad.setColorAt(0.75, QColor('#7dd3fc'))
         dgrad.setColorAt(1.0, QColor('#94a3b8'))
         p.fillPath(disc_ring, QBrush(dgrad))
 
-        if art_img and not art_img.isNull():
-            p.save()
-            p.setClipPath(disc_ring)
-            p.setOpacity(0.42)
-            p.drawImage(drect, art_img)
-            p.restore()
-
-        p.setPen(QPen(ui.rgba(255, 255, 255, 0.55), max(1.0, 0.12 * u)))
+        p.setPen(QPen(ui.rgba(255, 255, 255, 0.60), max(1.0, 0.12 * u)))
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawEllipse(drect)
-        p.setPen(QPen(ui.rgba(255, 255, 255, 0.45), max(1.0, 0.22 * u)))
-        p.drawEllipse(QPointF(cx, cy), diam * 0.22, diam * 0.22)
+        p.setPen(QPen(ui.faded(spine_col, 0.65), max(1.2, 0.24 * u)))
+        p.drawEllipse(QPointF(cx, cy), diam * 0.24, diam * 0.24)
     else:
         is_card = (media_kind == 'card')
-        cw = bw * (0.44 if is_card else 0.54)
-        ch = bh * (0.56 if is_card else 0.66)
-        cx = box_rect.right() - cw * 0.64 + slide
+        cw = bw * (0.42 if is_card else 0.50)
+        ch = bh * (0.54 if is_card else 0.64)
+        cx = box_rect.right() - cw * 0.66 + slide
         cy = box_rect.center().y() - ch * 0.46
         crect = QRectF(cx, cy, cw, ch)
         crad = (0.9 if is_card else 1.1) * u
@@ -663,7 +896,7 @@ def _draw_media_peek(win, p, box_rect, media_kind, spine_col, art_img, t_pop):
         shell = QColor('#1f2937') if is_card else QColor('#334155')
         sh_grad = QLinearGradient(crect.topLeft(), crect.topRight())
         sh_grad.setColorAt(0.0, shell.lighter(125))
-        sh_grad.setColorAt(1.0, shell.darker(118))
+        sh_grad.setColorAt(1.0, shell.darker(120))
         p.setPen(QPen(ui.rgba(255, 255, 255, 0.22), 1.0))
         p.setBrush(QBrush(sh_grad))
         p.drawRoundedRect(crect, crad, crad)
@@ -678,11 +911,17 @@ def _draw_media_peek(win, p, box_rect, media_kind, spine_col, art_img, t_pop):
             lclip.addRoundedRect(lbl, 0.55 * u, 0.55 * u)
             p.save()
             p.setClipPath(lclip)
-            p.fillRect(lbl, spine_col)
-            if art_img and not art_img.isNull():
-                p.drawImage(lbl.adjusted(0, 0.9 * u, 0, 0), art_img)
+            lg = QLinearGradient(lbl.topLeft(), lbl.bottomLeft())
+            lg.setColorAt(0.0, spine_col)
+            lg.setColorAt(0.28, spine_col.darker(125))
+            lg.setColorAt(0.29, QColor('#0f172a'))
+            lg.setColorAt(1.0, QColor('#1e293b'))
+            p.fillRect(lbl, QBrush(lg))
+            ic_s = min(lbl.width() * 0.58, lbl.height() * 0.42)
+            ic_r = QRectF(lbl.right() - ic_s - 0.55 * u, lbl.center().y() - ic_s * 0.30, ic_s, ic_s)
+            draw_svg(p, console_svg_for(sys_id), ic_r, ui.rgba(255, 255, 255, 0.85))
             p.restore()
-            p.setPen(QPen(ui.rgba(255, 255, 255, 0.28), 0.9))
+            p.setPen(QPen(ui.rgba(255, 255, 255, 0.26), 0.9))
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawRoundedRect(lbl, 0.55 * u, 0.55 * u)
     p.restore()
@@ -743,7 +982,7 @@ def draw_3d_showcase(win, p, it, t_enter, has_moment, shot_img):
         p.fillRect(QRectF(brect.x() - 6 * u, brect.bottom() - 4 * u, bw + 14 * u, 9 * u), QBrush(puddle))
 
     t_media = max(0.0, min(1.0, (t_sp - 0.16) / 0.84))
-    _draw_media_peek(win, p, brect, media_kind, spine_col, box_img, t_media)
+    _draw_media_peek(win, p, brect, media_kind, spine_col, sys_id, t_media)
 
     # Single crisp contact shadow directly behind the case
     p.setPen(Qt.PenStyle.NoPen)

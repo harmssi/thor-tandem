@@ -170,7 +170,7 @@ def faded(color, a): return QColor(color.red(), color.green(), color.blue(), rou
 # A theme is one JSON file (format: README). The shipped ones lie in ui/themes, the user's own in ~/.config/tandem/themes
 # (same file name: the user's wins). The built-in values below are the Toravo look; a theme only says what differs.
 THEME_DIRS = [Path(__file__).resolve().parent / 'themes', Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config') / 'tandem/themes']
-DEFAULT_THEME = {'id': 'toravo', 'name': 'Toravo', 'radius': 1.0, 'glow': 1.0, 'gradient': None, 'background': None, 'gameAccent': True,
+DEFAULT_THEME = {'id': 'toravo', 'name': 'Toravo', 'era': 'modern', 'bgm': 'era-modern.ogg', 'radius': 1.0, 'glow': 1.0, 'gradient': None, 'background': None, 'gameAccent': True,
                  'colors': {'bg': '#07080b', 'panel': '#15161b', 'raised': '#202128', 'line': '#2c2d35', 'text': '#f5f5f7', 'muted': '#9a9ba4', 'accent': '#ffb23e', 'live': '#34d399', 'warn': '#ff6b5e'},
                  'fonts': {'ui': ['Inter', 'Adwaita Sans', 'Noto Sans'], 'display': ['Barlow Condensed', 'Nimbus Sans Narrow'], 'body': ['Barlow', 'Noto Sans']}}
 THEME = dict(DEFAULT_THEME)  # the active one, complete
@@ -190,6 +190,9 @@ def read_theme(name):
     theme['id'] = str(name)
     if isinstance(data.get('name'), str) and data['name'].strip(): theme['name'] = data['name'].strip()[:40]
     else: theme['name'] = str(name)
+    if data.get('era') in ('8bit', '16bit', 'modern'): theme['era'] = data['era']
+    if isinstance(data.get('bgm'), str) and data['bgm'].strip(): theme['bgm'] = os.path.basename(data['bgm'].strip())
+    elif theme['era'] in ('8bit', '16bit'): theme['bgm'] = f'era-{theme["era"]}.ogg'
     colors, fonts, number = data.get('colors'), data.get('fonts'), lambda v: isinstance(v, (int, float)) and not isinstance(v, bool)
     for key in theme['colors']:
         if isinstance(colors, dict) and is_color(colors.get(key)): theme['colors'][key] = colors[key]
@@ -289,18 +292,33 @@ def load_image(path, w, h, cover=True, addr=None):
     is_pixel_art = bool(0 < orig_w <= 512 and 0 < orig_h <= 480 and orig_w != orig_h)
 
     if cover == 'hero':
-        if w and h and orig_w and orig_h and (orig_w < 720 or orig_h < 360 or (orig_w / orig_h) < 1.15):
-            img = reader.read()
-            if img.isNull(): return False
-            blur = img.scaled(28, 18, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
-            blur = blur.scaled(w, h, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
-            out = QImage(w, h, QImage.Format.Format_ARGB32_Premultiplied)
-            p = QPainter(out)
-            p.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
-            p.drawImage(0, 0, blur, (blur.width() - w) // 2, (blur.height() - h) // 2, w, h)
-            p.fillRect(0, 0, w, h, QColor(8, 10, 18, 148))
-            p.end()
-            return out
+        if w and h and orig_w and orig_h:
+            ar = orig_w / orig_h
+            if ar < 1.10 or ar > 3.5 or orig_h < 120:
+                img = reader.read()
+                if img.isNull(): return False
+                blur = img.scaled(28, 18, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+                blur = blur.scaled(w, h, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+                out = QImage(w, h, QImage.Format.Format_ARGB32_Premultiplied)
+                p = QPainter(out)
+                p.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
+                p.drawImage(0, 0, blur, (blur.width() - w) // 2, (blur.height() - h) // 2, w, h)
+                p.fillRect(0, 0, w, h, QColor(8, 10, 18, 148))
+                p.end()
+                return out
+            if orig_w < 720 or orig_h < 360:
+                img = reader.read()
+                if img.isNull(): return False
+                if orig_w <= 400 and orig_h <= 320:
+                    img = img.scaled(orig_w * 2, orig_h * 2,
+                                     Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.FastTransformation)
+                scaled = img.scaled(w, h, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+                out = QImage(w, h, QImage.Format.Format_ARGB32_Premultiplied)
+                p = QPainter(out)
+                p.drawImage(0, 0, scaled, (scaled.width() - w) // 2, (scaled.height() - h) // 2, w, h)
+                p.fillRect(0, 0, w, h, QColor(8, 10, 18, 52))
+                p.end()
+                return out
         cover = True
 
     if cover == 'square':
@@ -1978,7 +1996,10 @@ class Tandem(QRasterWindow):
              + (1.9 * u + 1.2 * u if self.WIFI is not None else 0)
              + ((self.width_of(batt, f) + .6 * u + 2.05 * ic + .2 * ic) if self.BATT else 0) + pad)
         rect = QRectF(W - 4.2 * u - w + dx, 1.85 * u + dy, w, h)
-        if iisu_fx.is_light():
+        if iisu_fx.era_mode() in ('8bit', '16bit'):
+            iisu_fx.glass_card(self, p, rect, h * 0.45, shadow=False, accent_tint=0.06)
+            ink, dim = TEXT, MUTED
+        elif iisu_fx.is_light():
             ink, dim = rgba(17, 24, 39, .94), rgba(71, 85, 105, .84)
             self.capsule(p, rect, rgba(255, 255, 255, .80), rgba(15, 23, 42, .12))
         else:
@@ -2190,20 +2211,31 @@ class Tandem(QRasterWindow):
         self.text(p, str(self.OSD), rect.right() - 2.6 * u - num, mid - size * u * .6, ('u', size, 600), TEXT, num, 2)
 
     def keycap(self, p, x, y, d, letter, fill):
-        p.setPen(Qt.PenStyle.NoPen); p.setBrush(fill)
-        p.drawEllipse(QRectF(x, y, d, d))
-        self.text(p, letter, x, y, ('u', d / self.u * .5, 700), INK, d, 1, 2)
+        era = iisu_fx.era_mode()
+        era_c = iisu_fx.sfc_pad_color(letter)
+        btn_fill = era_c if era_c is not None else fill
+        p.setPen(Qt.PenStyle.NoPen); p.setBrush(btn_fill)
+        if era == '8bit':
+            p.drawRoundedRect(QRectF(x, y, d, d), 0.16 * d, 0.16 * d)
+        else:
+            p.drawEllipse(QRectF(x, y, d, d))
+        fg_k = QColor('#ffffff') if (era == '8bit' and letter in ('A', 'B')) or (era == '16bit' and letter in ('A', 'X')) else INK
+        self.text(p, letter, x, y, ('u', d / self.u * .5, 700), fg_k, d, 1, 2)
 
     def pads(self, p, x, y, hints, size=1.7, gap=2.4, actions=None):
-        """Controller hints as interactive glass capsules: works both as pad legend AND direct touchscreen buttons."""
+        """Controller hints as interactive era-styled capsules: works both as pad legend AND direct touchscreen buttons."""
         u, f = self.u, ('u', 1.6 * size / 1.7, 500)
         h = 3.6 * u * size / 1.7
         d = h - 1.1 * u * size / 1.7
+        era = iisu_fx.era_mode()
         key_map = {'A': 'ok', 'B': 'back', 'X': 'close', 'Y': 'fav', '+': 'menu', '−': 'search'}
         for n, (letter, label) in enumerate(hints):
             w = (h - d) / 2 + d + .9 * u + self.width_of(label, f) + 1.5 * u
             crect = QRectF(x, y, w, h)
-            self.capsule(p, crect, faded(TEXT, .16 if n == 0 else .08), faded(TEXT, .1))
+            if era in ('8bit', '16bit'):
+                iisu_fx.glass_card(self, p, crect, h * 0.42, shadow=False, accent_tint=0.14 if n == 0 else 0.0)
+            else:
+                self.capsule(p, crect, faded(TEXT, .16 if n == 0 else .08), faded(TEXT, .1))
             self.keycap(p, x + (h - d) / 2, y + (h - d) / 2, d, letter, FOCUS if n == 0 else faded(TEXT, .85))
             self.text(p, label, x + (h - d) / 2 + d + .9 * u, y, f if n else (f[0], f[1], 600), TEXT, lh=h / (f[1] * u))
             custom_fn = (actions or {}).get(letter)
@@ -2262,6 +2294,7 @@ class Tandem(QRasterWindow):
             iisu_fx.draw_hinge_bridge(self, p, 'top')
         else:  # nothing in front: Hinge-Bridge aurora instead of a flat wall
             iisu_fx.draw_hinge_bridge(self, p, 'top')
+        iisu_fx.draw_era_backdrop(self, p)
         self.status_bar(p, items)
         held = bool(it and RUN and RUN.get('paused') and it['id'] == RUN['id'])
         sysinfo = L['systems'].get(it['s']) if it else None
@@ -2666,6 +2699,7 @@ class Tandem(QRasterWindow):
                 y += qh + 1.2 * u
             return self.keyboard(p, y, self.term_key)
         if P and self.show_deck(p): return  # HOOK: native deck, see DECKS above
+        iisu_fx.draw_era_backdrop(self, p)
         iisu_fx.draw_hinge_bridge(self, p, 'bottom')
         if P: return self.ingame(p)
         if not self.S.get('q') and settings_view.open_now(self): return settings_view.draw(self, p)
@@ -2976,8 +3010,9 @@ class Tandem(QRasterWindow):
         return y - u
 
     def framed_cover(self, x, cover, size):
-        """Composites a game cover through Cocoon's platform mask.png + overlay.png when available and enabled."""
-        if self.side != 'bottom' or not self.CFG.get('overlays', True) or x.get('kind') or x['s'] in ('app', 'term'): return cover, False
+        """Composites a game cover through Cocoon's platform mask.png + overlay.png in Modern era (8-bit/16-bit use era frames)."""
+        if self.side != 'bottom' or iisu_fx.era_mode() != 'modern' or not self.CFG.get('overlays', True) or x.get('kind') or x['s'] in ('app', 'term'):
+            return cover, False
         ov = (self.L.get('overlays') or {}).get(x['s'])
         if not ov: return cover, False
         key = (x['cover'], ov['mask'], ov['overlay'], size)
@@ -3039,6 +3074,13 @@ class Tandem(QRasterWindow):
                 brush.setTransform(brush.transform().translate(rect.x(), rect.y()).scale(kx, ky))
                 self.box(p, rect, r, brush)
             if x.get('inst'): p.setOpacity(1.0 if tp >= 1 else (.45 + .55 * tp))
+            if x.get('dup_cover'):
+                sub_t = x['t'].split(' - ', 1)[-1].split(': ', 1)[-1].strip() or x['t']
+                sf = ('u', 1.24, 700, -.01)
+                band_h = 2.6 * u
+                band = QRectF(rect.x() + .55 * u, rect.bottom() - band_h - .55 * u, rect.width() - 1.1 * u, band_h)
+                self.box(p, band, .85 * u, rgba(8, 11, 18, .82), rgba(255, 255, 255, .16), 0.9)
+                self.text(p, sub_t, band.x() + .65 * u, band.y(), sf, QColor('#f8fafc'), band.width() - 2.6 * u if framed else band.width() - 1.3 * u, 0, band_h / (1.24 * u))
         else:
             self.box(p, rect, r, QBrush(self.paint_of(x, rect)))
             if cover is False:
@@ -3071,12 +3113,24 @@ class Tandem(QRasterWindow):
             w = self.width_of(badge, f) + 1.8 * u
             self.capsule(p, QRectF(rect.right() - .9 * u - w, rect.y() + .9 * u, w, 2.6 * u), rgba(0, 0, 0, .62))
             self.text(p, badge, rect.right() - .9 * u - w, rect.y() + .9 * u, f, ON_ART, w, 1, 2.6 / 1.5)
-        elif not framed and not x.get('kind') and x['s'] not in ('app', 'term') and not self.S['sys'] and self.S['tab'] == 0:
+        elif not framed and not x.get('kind') and x['s'] not in ('app', 'term') and (iisu_fx.era_mode() != 'modern' or (not self.S['sys'] and self.S['tab'] == 0)):
             tag = x['s'].upper()[:6]
+            era_t = iisu_fx.era_mode()
             tf = ('u', 1.15, 700, .04)
             tw = self.width_of(tag, tf) + 1.4 * u
-            self.capsule(p, QRectF(rect.right() - .7 * u - tw, rect.bottom() - 2.6 * u, tw, 1.9 * u), rgba(0, 0, 0, .66), rgba(255, 255, 255, .12))
-            self.text(p, tag, rect.right() - .7 * u - tw, rect.bottom() - 2.6 * u, tf, ON_ART, tw, 1, 1.9 / 1.15)
+            trect_b = QRectF(rect.right() - .7 * u - tw, rect.bottom() - 2.6 * u, tw, 1.9 * u)
+            if era_t == '8bit':
+                p.fillRect(trect_b, QColor('#090a14'))
+                p.setPen(QPen(QColor('#ffd60a') if on else QColor('#ff3b30'), max(1.0, .14 * u)))
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                p.drawRect(trect_b)
+                self.text(p, tag, trect_b.x(), trect_b.y(), tf, QColor('#ffd60a') if on else ON_ART, tw, 1, 1.9 / 1.15)
+            elif era_t == '16bit':
+                self.box(p, trect_b, .55 * u, QColor('#161542'), QColor('#facc15') if on else QColor('#818cf8'), max(1.0, .13 * u))
+                self.text(p, tag, trect_b.x(), trect_b.y(), tf, QColor('#facc15') if on else ON_ART, tw, 1, 1.9 / 1.15)
+            else:
+                self.capsule(p, trect_b, rgba(0, 0, 0, .66), rgba(255, 255, 255, .12))
+                self.text(p, tag, trect_b.x(), trect_b.y(), tf, ON_ART, tw, 1, 1.9 / 1.15)
         held = RUN and RUN.get('paused') and x['id'] == RUN['id']
         if held or x['id'] in self.L['fav']:
             c = QPointF(rect.x() + 2.2 * u, rect.y() + 2.2 * u)
@@ -3100,8 +3154,7 @@ class Tandem(QRasterWindow):
             self.capsule(p, pr, faded(FOCUS, .92))
             self.text(p, 'PIN', pr.x(), pr.y(), pf, INK, pw, 1, 2.0 / 1.12)
         if on:
-            ring = rect.adjusted(-.45 * u, -.45 * u, .45 * u, .45 * u)
-            self.box(p, ring, (r * .68 if framed else r) + .45 * u, None, faded(FOCUS, .38 + .62 * t), .3 * u)
+            iisu_fx.draw_era_focus(self, p, rect, r, t, framed=framed)
         p.restore()
         def tap(n=n):
             if n == self.S['i']: self.go('ok')

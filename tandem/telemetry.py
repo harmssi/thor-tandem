@@ -7,10 +7,12 @@ from pathlib import Path
 import thor
 
 BGM_SOCKET = Path(f'/tmp/tandem-bgm-{os.getuid()}.sock')
+ERA_BGM_DIR = Path(__file__).resolve().parent / 'ui/bgm'
+ERA_TRACKS = {'8bit': 'era-8bit.ogg', '16bit': 'era-16bit.ogg', 'modern': 'era-modern.ogg'}
 LOCK = threading.Lock()
 _CPU_PREV = [0, 0]
 _HIST = {'watts': deque(maxlen=36), 'cpu': deque(maxlen=36), 'temp': deque(maxlen=36), 'at': 0.0}
-_BGM = {'proc': None, 'track': '', 'playlist': [], 'idx': 0, 'paused': False, 'vol': 65}
+_BGM = {'proc': None, 'track': '', 'playlist': [], 'idx': 0, 'paused': False, 'vol': 65, 'loop': False, 'era_auto': False, 'era_path': ''}
 
 
 def _read_int(path):
@@ -279,19 +281,22 @@ def bgm_playing():
 def bgm_status():
     p = _BGM['proc']
     alive = bool(p and p.poll() is None)
-    if not alive: _BGM['track'] = ''
+    if not alive:
+        _BGM['track'], _BGM['era_auto'], _BGM['era_path'] = '', False, ''
     return {'playing': alive and not _BGM['paused'] and bool(_BGM['track']), 'paused': bool(alive and _BGM['paused']),
-            'track': _BGM['track'], 'vol': _BGM['vol'], 'tracks': music_tracks()[:80], 'streams': audio_streams()}
+            'track': _BGM['track'], 'vol': _BGM['vol'], 'loop': bool(_BGM.get('loop')),
+            'era_auto': bool(_BGM.get('era_auto')), 'tracks': music_tracks()[:80], 'streams': audio_streams()}
 
 
-def bgm_control(action, path='', vol=None):
+def bgm_control(action, path='', vol=None, loop=False, era_auto=False):
     """action: 'play' | 'toggle' | 'next' | 'prev' | 'stop' | 'vol'."""
     if action == 'vol' and vol is not None:
         _BGM['vol'] = max(0, min(100, int(vol)))
         _bgm_ipc('set_property', 'volume', _BGM['vol'])
         return bgm_status()
     if action == 'stop':
-        p, _BGM['proc'], _BGM['track'], _BGM['paused'] = _BGM['proc'], None, '', False
+        p = _BGM['proc']
+        _BGM.update(proc=None, track='', paused=False, loop=False, era_auto=False, era_path='')
         if p and p.poll() is None:
             p.terminate()
             threading.Thread(target=p.wait, daemon=True).start()
@@ -301,32 +306,78 @@ def bgm_control(action, path='', vol=None):
     if action in ('next', 'prev') and tracks:
         cur = next((i for i, t in enumerate(tracks) if t['title'] == _BGM['track']), 0)
         pick = tracks[(cur + (1 if action == 'next' else -1)) % len(tracks)]
-        action, path = 'play', pick['path']
+        action, path, loop, era_auto = 'play', pick['path'], False, False
     if action == 'toggle':
         if _BGM['proc'] and _BGM['proc'].poll() is None:
             _BGM['paused'] = not _BGM['paused']
             _bgm_ipc('set_property', 'pause', _BGM['paused'])
             return bgm_status()
-        if tracks: action, path = 'play', tracks[0]['path']
-        else: return {**bgm_status(), 'error': 'Keine Musikdateien in ~/Music oder auf der Karte (Music/) gefunden.'}
+        if tracks:
+            action, path, loop, era_auto = 'play', tracks[0]['path'], False, False
+        else:
+            return {**bgm_status(), 'error': 'Keine Musikdateien in ~/Music oder auf der Karte (Music/) gefunden.'}
     if action == 'play' and path:
         if not os.path.isfile(path) and not path.startswith(('http://', 'https://')):
             return {'error': 'Datei nicht gefunden.'}
+        if vol is not None:
+            _BGM['vol'] = max(0, min(100, int(vol)))
         if not (_BGM['proc'] and _BGM['proc'].poll() is None):
             BGM_SOCKET.unlink(missing_ok=True)
             cmd = (['mpv'] if shutil.which('mpv') else ['flatpak', 'run', 'io.mpv.Mpv']) + [
-                '--no-video', '--idle=yes', '--really-quiet', f'--volume={_BGM["vol"]}',
+                '--no-video', '--idle=yes', '--really-quiet', '--gapless-audio=yes',
+                f'--loop-file={"inf" if loop else "no"}', f'--volume={_BGM["vol"]}',
                 '--audio-client-name=tandem-bgm', f'--input-ipc-server={BGM_SOCKET}']
             try: _BGM['proc'] = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
             except OSError as e: return {'error': f'Musik-Player nicht verfügbar ({e}).'}
             for _ in range(25):
                 if BGM_SOCKET.exists(): break
                 time.sleep(0.08)
+        _bgm_ipc('set_property', 'loop-file', 'inf' if loop else 'no')
+        _bgm_ipc('set_property', 'volume', _BGM['vol'])
         _bgm_ipc('loadfile', path, 'replace')
         _bgm_ipc('set_property', 'pause', False)
         _BGM['paused'] = False
+        _BGM['loop'] = bool(loop)
+        _BGM['era_auto'] = bool(era_auto)
+        _BGM['era_path'] = str(path) if era_auto else ''
         _BGM['track'] = Path(path).stem.replace('_', ' ') if not path.startswith('http') else path
     return bgm_status()
+
+
+def era_bgm_path(era='modern', bgm_file=''):
+    """Resolve shipped or custom loopable Era BGM audio file -> Path or None."""
+    fname = os.path.basename(str(bgm_file or '').strip()) or ERA_TRACKS.get(str(era or 'modern'), 'era-modern.ogg')
+    cand = ERA_BGM_DIR / fname
+    if cand.is_file():
+        return cand
+    fallback = ERA_BGM_DIR / ERA_TRACKS.get(str(era or 'modern'), 'era-modern.ogg')
+    return fallback if fallback.is_file() else None
+
+
+def sync_era_bgm(era='modern', bgm_file='', enabled=True, vol=32, suspend_for_game=False, dry=False):
+    """Start, seamlessly switch, or zero-RAM stop the loopable Era menu soundtrack (`8bit`, `16bit`, `modern`)."""
+    if dry or os.environ.get('QT_QPA_PLATFORM') == 'offscreen':
+        return {'ok': True, 'dry': True}
+    p = _BGM['proc']
+    alive = bool(p and p.poll() is None)
+    if not enabled or suspend_for_game:
+        if alive and _BGM.get('era_auto'):
+            bgm_control('stop')
+        return {'ok': True, 'playing': False}
+    # Respect manual user music playback from ~/Music
+    if alive and not _BGM.get('era_auto') and _BGM.get('track'):
+        return {'ok': True, 'user_music': True}
+    target = era_bgm_path(era, bgm_file)
+    if not target:
+        return {'ok': False, 'missing': True}
+    t_str = str(target)
+    v_clamped = max(5, min(100, int(vol)))
+    if alive and _BGM.get('era_auto') and _BGM.get('era_path') == t_str and not _BGM.get('paused'):
+        if _BGM.get('vol') != v_clamped:
+            bgm_control('vol', vol=v_clamped)
+        return {'ok': True, 'playing': True, 'track': _BGM['track']}
+    bgm_control('play', path=t_str, vol=v_clamped, loop=True, era_auto=True)
+    return {'ok': True, 'playing': bgm_playing(), 'track': _BGM['track']}
 
 
 def snapshot(sample=True):
@@ -419,23 +470,35 @@ def set_hud(level, tmp_dir='/tmp'):
 _WAV_CACHE = {}
 
 
-def synth_wav(notes, rate=24000):
-    """Synthesize a clean 16-bit mono PCM WAV in memory from [(freq_hz, dur_sec, vol_0_1), ...]."""
+def synth_wav(notes, rate=24000, wave='sine'):
+    """Synthesize a clean 16-bit mono PCM WAV in memory from [(freq_hz, dur_sec, vol_0_1), ...] ('sine'|'square'|'16bit')."""
     import math, struct
-    key = (tuple(notes), rate)
+    key = (tuple(notes), rate, wave)
     if key in _WAV_CACHE:
         return _WAV_CACHE[key]
     samples = bytearray()
     for freq, dur, vol in notes:
         n = max(1, int(rate * dur))
-        attack = max(1, min(int(rate * 0.004), n // 4))
+        attack = max(1, min(int(rate * (0.002 if wave == 'square' else 0.004)), n // 4))
         for i in range(n):
             if freq <= 0:
                 val = 0.0
             else:
-                env = (i / attack) if i < attack else math.exp(-3.6 * (i - attack) / max(1, n - attack))
+                decay_k = 2.4 if wave == 'square' else (3.1 if wave == '16bit' else 3.6)
+                env = (i / attack) if i < attack else math.exp(-decay_k * (i - attack) / max(1, n - attack))
                 t = i / rate
-                val = vol * env * (0.82 * math.sin(2 * math.pi * freq * t) + 0.18 * math.sin(4 * math.pi * freq * t))
+                ph = (freq * t) % 1.0
+                if wave == 'square':
+                    # Authentic 2A03 25% pulse duty cycle for unmistakable NES/Famicom chiptune character
+                    raw = 0.78 if ph < 0.25 else -0.26
+                    val = vol * env * raw
+                elif wave == '16bit':
+                    # Warm SPC700 / YM2612 bell-chime FM partial blend
+                    val = vol * env * (0.62 * math.sin(2 * math.pi * freq * t)
+                                       + 0.26 * math.sin(4 * math.pi * freq * t)
+                                       + 0.12 * math.sin(6 * math.pi * freq * t))
+                else:
+                    val = vol * env * (0.82 * math.sin(2 * math.pi * freq * t) + 0.18 * math.sin(4 * math.pi * freq * t))
             s = max(-32767, min(32767, int(val * 32767)))
             samples += struct.pack('<h', s)
     data_len = len(samples)
@@ -457,15 +520,34 @@ SOUNDS = {
                 (0, 0.10, 0.0), (1046, 0.11, 0.55), (1318, 0.11, 0.58), (1568, 0.11, 0.62), (2093, 0.26, 0.72)],
 }
 
+SOUNDS_8BIT = {
+    'tick': [(1047, 0.016, 0.16)],
+    'ok': [(988, 0.040, 0.22), (1319, 0.085, 0.24)],
+    'back': [(784, 0.032, 0.18), (523, 0.052, 0.18)],
+    'launch': [(523, 0.042, 0.22), (659, 0.042, 0.22), (784, 0.042, 0.24), (1047, 0.048, 0.25), (1319, 0.055, 0.26), (1568, 0.130, 0.28)],
+    'zoom': [(659, 0.024, 0.18), (988, 0.040, 0.20)],
+}
 
-def play_sound(kind='tick'):
-    notes = SOUNDS.get(kind)
+SOUNDS_16BIT = {
+    'tick': [(880, 0.022, 0.16), (1320, 0.018, 0.12)],
+    'ok': [(659, 0.035, 0.20), (988, 0.038, 0.22), (1319, 0.075, 0.24)],
+    'back': [(880, 0.032, 0.19), (587, 0.058, 0.18)],
+    'launch': [(440, 0.040, 0.20), (554, 0.040, 0.22), (659, 0.042, 0.24), (880, 0.048, 0.26), (1109, 0.055, 0.27), (1319, 0.135, 0.29)],
+    'zoom': [(587, 0.026, 0.17), (880, 0.042, 0.20)],
+}
+
+
+def play_sound(kind='tick', era='modern'):
+    era_s = str(era or 'modern')
+    bank = SOUNDS_8BIT if era_s == '8bit' else (SOUNDS_16BIT if era_s == '16bit' else SOUNDS)
+    notes = bank.get(kind) or SOUNDS.get(kind)
     if not notes or os.environ.get('QT_QPA_PLATFORM') == 'offscreen':
         return False
     player = ['pw-play', '-'] if shutil.which('pw-play') else (['aplay', '-q', '-'] if shutil.which('aplay') else None)
     if not player:
         return False
-    wav = synth_wav(notes)
+    wave = 'square' if era_s == '8bit' else ('16bit' if era_s == '16bit' else 'sine')
+    wav = synth_wav(notes, wave=wave if kind in bank else 'sine')
     def run():
         try:
             subprocess.run(player, input=wav, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)

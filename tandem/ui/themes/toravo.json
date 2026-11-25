@@ -1,5 +1,7 @@
 {
   "name": "Toravo",
+  "era": "modern",
+  "bgm": "era-modern.ogg",
   "colors": {"bg": "#07080b", "panel": "#15161b", "raised": "#202128", "line": "#2c2d35", "text": "#f5f5f7", "muted": "#9a9ba4", "accent": "#ffb23e", "live": "#34d399", "warn": "#ff6b5e"},
   "fonts": {"ui": ["Inter", "Adwaita Sans", "Noto Sans"], "display": ["Barlow Condensed", "Nimbus Sans Narrow"], "body": ["Barlow", "Noto Sans"]},
   "radius": 1.0,
