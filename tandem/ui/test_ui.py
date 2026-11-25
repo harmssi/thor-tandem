@@ -1253,6 +1253,12 @@ class Views(unittest.TestCase):
                 'linux_free_gib': 18.1, 'reclaimable_max_gib': 105, 'extra_chunks': [],
                 'job': {'running': False, 'step': '', 'error': ''},
             },
+            'cleanup': {
+                'total_mb': 1420.5,
+                'compatdata': {'count': 2, 'mb': 980.0, 'items': ['413150', '620']},
+                'shadercache': {'count': 1, 'mb': 320.5},
+                'temp': {'count': 3, 'mb': 120.0},
+            },
         }
         old_sysbk = tandem.sysbackup_state
         tandem.sysbackup_state = lambda: fake_sysbk
@@ -1260,6 +1266,9 @@ class Views(unittest.TestCase):
             for win in (top, bottom): win.SYSBK = None; win.sysbk_at = 0
             self.tap('Bibliothek'); self.wait(lambda: top.S.get('page') == 'library' and bottom.SYSBK and top.SYSBK)
             self.paint('settings-library')
+            self.tap('Speicher-Bereinigung'); self.wait(lambda: top.S.get('page') == 'library>cleanup')
+            self.paint('settings-cleanup')
+            self.tap('nav-back'); self.wait(lambda: top.S.get('page') == 'library')
             self.tap('Linux- & Tandem-Backup'); self.wait(lambda: top.S.get('page') == 'library>sysbackup')
             self.paint('settings-sysbackup')
             self.tap('nav-back'); self.wait(lambda: top.S.get('page') == 'library')
@@ -1486,10 +1495,30 @@ class CompanionDecksAndGameMenuTest(unittest.TestCase):
         w_top.hero.update(key='g1', kt=time.time() - 5.0, cur=hero_img, prev=None, t0=time.time() - 5.0)
         pm = ui.QPainter(img_top)
         pm.setRenderHints(ui.QPainter.RenderHint.Antialiasing | ui.QPainter.RenderHint.TextAntialiasing)
-        w_top.draw_top(pm, [{**w_top.L['games'][0], 'hero': 'h1', 'moment': 'm1'}])
+        w_top.draw_top(pm, [{**w_top.L['games'][0], 'hero': 'h1', 'moment': 'm1', 'protondb': 'platinum'}])
         pm.end()
         if SHOTS:
             img_top.save(str(Path(SHOTS) / 'top-moment-preview.png'))
+
+        # Verify PDF/CBZ manual book reader UI + Artwork Picker inside GAME_MENU
+        u_book = universal.Deck(w)
+        u_book.tab = 3
+        u_book.open_guide = {'name': 'Handbuch.pdf', 'title': 'Handbuch (PDF)', 'kind': 'book',
+                             'pages': 24, 'page': 0, 'img': mom_img, 'zoom': 1.0, 'px': 0.0, 'py': 0.0}
+        hb = render(u_book, 'univ-manual-book')
+        self.assertTrue({'guide_back', 'bpage:◀', 'bpage:1/24', 'bpage:▶', 'zoom:+'} <= set(hb))
+        u_book.close()
+
+        w.GAME_MENU = {'id': 'g1', 'i': 0, 'art_picker': True, 'art_loading': False, 'art_has_custom': True,
+                       'art_items': [{'label': 'Chrono Trigger · Libretro Cover', 'url': 'https://example.com/c.png', 'slot': 'cover'}]}
+        w.hits, w.scrolls = [], []
+        pa = ui.QPainter(img)
+        pa.setRenderHints(ui.QPainter.RenderHint.Antialiasing | ui.QPainter.RenderHint.TextAntialiasing)
+        w.draw_game_menu(pa); pa.end()
+        ahits = {h[3] for h in w.hits}
+        self.assertIn('gopt:↺ Standard-Cover wiederherstellen', ahits)
+        self.assertIn('gopt:Chrono Trigger · Libretro Cover', ahits)
+        w.GAME_MENU = None
 
         # Regression check: universal deck initializes cleanly via ADDR fallback even if URL is unset
         from decks import universal as udeck

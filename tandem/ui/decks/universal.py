@@ -166,7 +166,19 @@ class Deck:
 
     def _open_guide_item(self, it):
         url = f'api/guide_file?id={quote(self.gid)}&name={quote(it["name"])}'
-        if it['kind'] == 'image':
+        if it['kind'] == 'book':
+            def on_meta(r):
+                if not isinstance(r, dict) or r.get('error'):
+                    return
+                pages = max(1, int(r.get('pages') or 1))
+                saved_p = int(self.w.memo.setdefault('book_page', {}).get((self.gid, it['name']), 0))
+                saved_p = max(0, min(pages - 1, saved_p))
+                og = {'name': it['name'], 'title': it['title'], 'kind': 'book', 'pages': pages,
+                      'page': saved_p, 'img': None, 'zoom': 1.0, 'px': 0.0, 'py': 0.0}
+                self.open_guide = og
+                self._load_book_page(og, saved_p)
+            self._bg_get(f'api/book_info?id={quote(self.gid)}&name={quote(it["name"])}', on_meta)
+        elif it['kind'] == 'image':
             def on_img(raw):
                 if not raw: return
                 img = QImage()
@@ -178,6 +190,23 @@ class Deck:
                 if isinstance(r, dict):
                     self.open_guide = {'name': it['name'], 'title': it['title'], 'kind': 'text', 'text': r.get('text', ''), 'font': 2.0}
             self._bg_get(url, on_txt)
+
+    def _load_book_page(self, og, page_idx):
+        pages = max(1, int(og.get('pages') or 1))
+        idx = max(0, min(pages - 1, int(page_idx)))
+        og['page'] = idx
+        og['px'] = og['py'] = 0.0
+        self.w.memo.setdefault('book_page', {})[(self.gid, og['name'])] = idx
+        self.w.update()
+        url = f'api/book_page?id={quote(self.gid)}&name={quote(og["name"])}&page={idx}'
+        def on_img(raw):
+            if not raw or self.open_guide is not og:
+                return
+            img = QImage()
+            if img.loadFromData(raw):
+                og['img'] = img
+                self.w.update()
+        self._bg_get(url, on_img, raw=True)
 
     def _fetch_bgm(self):
         self._bg_get('api/bgm', lambda r: r and setattr(self, 'bgm', r))
@@ -219,7 +248,7 @@ class Deck:
             self.last_pt = self._to_canvas(pos)
             self._stroke_to(self.last_pt)
             self.w.update()
-        elif self.tab == 3 and self.open_guide and self.open_guide['kind'] == 'image' and self.map_rect.contains(pos):
+        elif self.tab == 3 and self.open_guide and self.open_guide['kind'] in ('image', 'book') and self.map_rect.contains(pos):
             self.pan_start = (pos, self.open_guide['px'], self.open_guide['py'])
 
     def move(self, pos):
@@ -245,7 +274,7 @@ class Deck:
             self.last_pt = pt
             self.w.update()
             return True
-        if self.pan_start is not None and self.open_guide and self.open_guide['kind'] == 'image':
+        if self.pan_start is not None and self.open_guide and self.open_guide['kind'] in ('image', 'book'):
             p0, ox, oy = self.pan_start
             self.open_guide['px'] = ox + (pos.x() - p0.x())
             self.open_guide['py'] = oy + (pos.y() - p0.y())
@@ -511,8 +540,40 @@ class Deck:
             w.capsule(p, back, ui.RAISED, ui.LINE)
             w.text(p, '‹ Liste', back.x(), back.y(), ('u', 1.8, 600), ui.TEXT, back.width(), 1, 4.6 / 1.8)
             w.hit(back, lambda: setattr(self, 'open_guide', None), name='guide_back')
-            w.text(p, og['title'], x0 + 12.4 * u, y, ('u', 2.2, 700), ui.TEXT, cw - 36 * u, 0, 4.6 / 2.2)
-            if og['kind'] == 'image':
+            w.text(p, og['title'], x0 + 12.4 * u, y, ('u', 2.2, 700), ui.TEXT, cw - (54 if og['kind'] == 'book' else 36) * u, 0, 4.6 / 2.2)
+            if og['kind'] == 'book':
+                cur_p, tot_p = int(og.get('page', 0)), max(1, int(og.get('pages', 1)))
+                nav_x = x0 + cw - 41.6 * u
+                for lbl, dp, bw_n in (('◀', -1, 5.4), (f'{cur_p + 1}/{tot_p}', 5, 9.6), ('▶', 1, 5.4)):
+                    nr = QRectF(nav_x, y, bw_n * u, 4.6 * u)
+                    w.capsule(p, nr, ui.RAISED, ui.LINE)
+                    w.text(p, lbl, nr.x(), nr.y(), ('u', 1.68, 700), ui.FOCUS if '/' in lbl else ui.TEXT, nr.width(), 1, 4.6 / 1.68)
+                    w.hit(nr, lambda dp=dp: (w.haptic(), self._load_book_page(og, (cur_p + dp) % tot_p if dp == 5 else cur_p + dp)),
+                          name='bpage:' + lbl)
+                    nav_x += (bw_n + .6) * u
+                for bi, (lbl, dz) in enumerate((('−', -.4), ('1:1', 0.0), ('+', .4))):
+                    zr = QRectF(x0 + cw - (3 - bi) * 6.6 * u, y, 6.0 * u, 4.6 * u)
+                    w.capsule(p, zr, ui.RAISED, ui.LINE)
+                    w.text(p, lbl, zr.x(), zr.y(), ('u', 1.75, 700), ui.TEXT, zr.width(), 1, 4.6 / 1.75)
+                    def step_bz(dz=dz):
+                        if dz == 0.0: og['zoom'], og['px'], og['py'] = 1.0, 0.0, 0.0
+                        else: og['zoom'] = max(1.0, min(4.5, round(og['zoom'] + dz, 2)))
+                    w.hit(zr, step_bz, name='zoom:' + lbl)
+                y += 5.8 * u
+                mrect = QRectF(x0, y, cw, bot - y)
+                self.map_rect = mrect
+                w.box(p, mrect, 1.6 * u, QColor('#0a0b0f'), ui.LINE)
+                img = og.get('img')
+                if img and not img.isNull():
+                    scale = min(mrect.width() / max(1, img.width()), mrect.height() / max(1, img.height())) * og['zoom']
+                    dw, dh = img.width() * scale, img.height() * scale
+                    dx = mrect.center().x() - dw / 2 + og['px']
+                    dy = mrect.center().y() - dh / 2 + og['py']
+                    clip = QPainterPath(); clip.addRoundedRect(mrect, 1.6 * u, 1.6 * u)
+                    p.save(); p.setClipPath(clip); p.drawImage(QRectF(dx, dy, dw, dh), img); p.restore()
+                else:
+                    w.text(p, 'Rendere Handbuch-Seite …', mrect.x(), mrect.center().y() - u, ('u', 1.85, 500), ui.MUTED, mrect.width(), 1)
+            elif og['kind'] == 'image':
                 for bi, (lbl, dz) in enumerate((('−', -.4), ('1:1', 0.0), ('+', .4))):
                     zr = QRectF(x0 + cw - (3 - bi) * 7.2 * u, y, 6.6 * u, 4.6 * u)
                     w.capsule(p, zr, ui.RAISED, ui.LINE)
@@ -579,7 +640,7 @@ class Deck:
             for it in self.guides:
                 r = QRectF(x0, cy, cw, 6.2 * u)
                 w.box(p, r, 1.4 * u, ui.PANEL, ui.LINE)
-                badge = 'KARTE / BILD' if it['kind'] == 'image' else 'TEXT / GUIDE'
+                badge = 'HANDBUCH (PDF/CBZ)' if it['kind'] == 'book' else ('KARTE / BILD' if it['kind'] == 'image' else 'TEXT / GUIDE')
                 w.text(p, badge, x0 + 1.8 * u, cy + .9 * u, ('u', 1.35, 700, .08), ui.FOCUS, 22 * u)
                 w.text(p, it['title'], x0 + 1.8 * u, cy + 2.8 * u, ('u', 2.05, 600), ui.TEXT, cw - 12 * u)
                 w.text(p, '›', r.right() - 4.0 * u, cy, ('u', 2.8, 600), ui.MUTED, 3 * u, 1, 6.2 / 2.8)

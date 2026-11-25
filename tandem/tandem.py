@@ -843,6 +843,15 @@ class Library:
                                      'cover': self._image(str(mine)) if mine.is_file() else art('library_600x900.jpg'), 'hero': art('library_hero.jpg'),
                                      **({'logo': p_logo} if p_logo else {})}
         # Only installed Steam games (from appmanifest_*.acf & shortcuts.vdf above) are shown in Tandem.
+        pdb = companion.load_protondb_cache()
+        for gid, gm in games.items():
+            if gm.get('appid') and (pdb.get(str(gm['appid'])) or {}).get('tier'):
+                gm['protondb'] = pdb[str(gm['appid'])]['tier']
+            ca = companion.custom_art_paths(gid)
+            if ca.get('cover'):
+                gm['cover'] = self._image(ca['cover'])
+            if ca.get('hero'):
+                gm['hero'] = self._image(ca['hero'])
         moments_dir = STATE / 'moments'
         if moments_dir.is_dir():
             for gid, gm in games.items():
@@ -2599,7 +2608,12 @@ def save_config(data):
         telemetry.set_hud(config['hud_level'])
     if isinstance(data.get('kb_haptics'), bool): config['kb_haptics'] = data['kb_haptics']
     if isinstance(data.get('ui_haptics'), bool): config['ui_haptics'] = data['ui_haptics']
-    if isinstance(data.get('rgb_sync'), bool): config['rgb_sync'] = data['rgb_sync']
+    if data.get('rgb_mode') in telemetry.RGB_MODES:
+        config['rgb_mode'] = data['rgb_mode']
+        config['rgb_sync'] = (data['rgb_mode'] != 'static')
+    elif isinstance(data.get('rgb_sync'), bool):
+        config['rgb_sync'] = data['rgb_sync']
+        config['rgb_mode'] = ('cover' if data['rgb_sync'] else 'static') if config.get('rgb_mode') in (None, 'cover', 'static') else ('static' if not data['rgb_sync'] else config['rgb_mode'])
     if data.get('lang') in ('de', 'en'): config['lang'] = data['lang']
     if data.get('theme') in [t['id'] for t in themes()]: config['theme'] = data['theme']
     if data.get('view_mode') in ('grid', 'stage'): config['view_mode'] = data['view_mode']
@@ -2845,7 +2859,9 @@ def public_config():
             'overlays': config.get('overlays', True),
             'motion': config.get('motion') if config.get('motion') in ('full', 'reduced') else 'full',
             'kb_layout': config.get('kb_layout', ''), 'kb_haptics': config.get('kb_haptics', True),
-            'ui_haptics': config.get('ui_haptics', True), 'rgb_sync': config.get('rgb_sync', True),
+            'ui_haptics': config.get('ui_haptics', True),
+            'rgb_mode': config['rgb_mode'] if config.get('rgb_mode') in telemetry.RGB_MODES else ('cover' if config.get('rgb_sync', True) else 'static'),
+            'rgb_sync': (config['rgb_mode'] != 'static') if config.get('rgb_mode') in telemetry.RGB_MODES else config.get('rgb_sync', True),
             'controls_style': config.get('controls_style') if config.get('controls_style') in ('thor', 'xbox') else 'thor',
             'hud_level': int(config['hud_level']) if config.get('hud_level') in (0, 1, 2, 3) else 0,
             'saver_style': config.get('saver_style') if config.get('saver_style') in ('kosmos', 'arcade', 'aurora', 'minimal') else 'kosmos',
@@ -3518,8 +3534,10 @@ def controls_apply():
     return {'text': ('Angeglichen: ' + ', '.join(done)) if done else 'Alle Emulatoren haben schon die Tandem-Belegung.'}
 
 
-def sysbackup_state():
-    return {'backups': thor_storage.backup_overview(), 'storage': thor_storage.storage_layout()}
+def sysbackup_state(tandem=None):
+    steam_dir = tandem.library.steam if tandem else (HOME / '.local/share/Steam')
+    cl = {k: v for k, v in thor_storage.scan_storage_cleanup(HOME, steam_dir).items() if k != '_targets'}
+    return {'backups': thor_storage.backup_overview(), 'storage': thor_storage.storage_layout(), 'cleanup': cl}
 
 
 def updater_state(tandem):
@@ -3612,6 +3630,11 @@ def handle_sysbackup(tandem, data):
             tandem.publish('sysbackup', sysbackup_state())
             tandem.publish('toast', {'text': r.get('error') or r.get('text', '')})
         res = thor_storage.start_shrink_async(gib, sudo_password=data.get('password') or None, on_done=_done_sh)
+        tandem.publish('sysbackup', sysbackup_state())
+        return res
+    if act == 'cleanup':
+        which = str(data.get('which') or 'all')
+        res = thor_storage.run_storage_cleanup(which, HOME, tandem.library.steam)
         tandem.publish('sysbackup', sysbackup_state())
         return res
     return {'error': 'unbekannt'}
@@ -3724,6 +3747,31 @@ def handler(tandem):
                 ext = gf.suffix.lower()
                 if ext in IMAGES: return self.send(200, gf.read_bytes(), IMAGES[ext])
                 return self.send(200, {'name': gf.name, 'text': gf.read_text(encoding='utf-8', errors='replace')[:250000]})
+            if path == '/api/book_info':
+                from urllib.parse import parse_qs
+                qs = parse_qs(urlparse(self.path).query)
+                gid = (qs.get('id') or [(tandem.run or {}).get('id', '')])[0]
+                name = (qs.get('name') or [''])[0]
+                gf = companion.guide_file(gid, name, tandem.library.games.get(gid))
+                return self.send(200, companion.book_info(gf)) if gf else self.send(404, {'error': 'nicht gefunden'})
+            if path == '/api/book_page':
+                from urllib.parse import parse_qs
+                qs = parse_qs(urlparse(self.path).query)
+                gid = (qs.get('id') or [(tandem.run or {}).get('id', '')])[0]
+                name = (qs.get('name') or [''])[0]
+                try: page_n = int((qs.get('page') or ['0'])[0])
+                except ValueError: page_n = 0
+                gf = companion.guide_file(gid, name, tandem.library.games.get(gid))
+                if not gf: return self.send(404, {'error': 'nicht gefunden'})
+                raw_p, mime = companion.book_page_png(gf, page_n)
+                return self.send(200, raw_p, mime, 'max-age=3600') if raw_p else self.send(404, {'error': 'kein Bild'})
+            if path == '/api/artwork':
+                from urllib.parse import parse_qs
+                qs = parse_qs(urlparse(self.path).query)
+                gid = (qs.get('id') or [''])[0]
+                q = (qs.get('q') or [''])[0]
+                gm = tandem.library.games.get(gid)
+                return self.send(200, companion.artwork_candidates(gm, q)) if gm else self.send(404, {'error': 'nicht gefunden'})
             if path == '/api/achievements':
                 run = tandem.run and tandem.library.games.get(tandem.run['id'])
                 return self.send(200, achievements(run) if run else {'note': 'Es läuft kein Spiel.'})
@@ -3967,6 +4015,15 @@ def handler(tandem):
             if path == '/api/guides':
                 gid = str(data.get('id') or (tandem.run or {}).get('id', ''))
                 return self.send(200, companion.guide_fetch_wiki(gid, data.get('q', ''), public_config()['lang']))
+            if path == '/api/artwork':
+                gid = str(data.get('id') or '')
+                act = str(data.get('action') or 'apply')
+                res = (companion.reset_custom_artwork(gid) if act == 'reset'
+                       else companion.apply_custom_artwork(gid, str(data.get('url') or ''), str(data.get('slot') or 'cover')))
+                if res.get('ok'):
+                    tandem.library.scan()
+                    tandem.publish('library')
+                return self.send(200, res)
             if path == '/api/translate':
                 gid = str(data.get('id') or (tandem.run or {}).get('id', ''))
                 act = str(data.get('action') or 'now')
@@ -4481,14 +4538,47 @@ def main():
     library.scan()
     tandem = Tandem(library, args.dry_run)
     tandem.sync_gba_packs_bg(force=False)
+    def sync_protondb_bg():
+        appids = [g['appid'] for g in library.games.values() if g.get('appid') and g.get('inst') != 'no']
+        if not appids:
+            return
+        res = companion.sync_protondb(appids[:60])
+        if res.get('updated'):
+            library.scan()
+            tandem.publish('library')
+    if not args.dry_run:
+        threading.Thread(target=sync_protondb_bg, daemon=True).start()
     if DOZE and not args.dry_run: doze(False, tandem)  # restarted during a doze: bring the panels back right away
     server = QuietHTTPServer(('127.0.0.1', args.port), handler(tandem))
     threading.Thread(target=watch_buttons, args=(tandem,), daemon=True).start()
     def watch_dock():
-        prev, dimmed, charge_notified, prev_on_bat, tick = False, {}, False, None, 0
+        prev, dimmed, charge_notified, prev_on_bat, last_bifrost, tick = False, {}, False, None, '', 0
         while True:
             time.sleep(4)
             tick += 1
+            if not DOZE:
+                rm = public_config().get('rgb_mode', 'cover')
+                if rm in ('battery', 'thermal', 'ambilight'):
+                    st_rgb = (thor.state().get('rgb') or {})
+                    if st_rgb.get('enabled', True):
+                        hc_b = None
+                        if rm == 'battery':
+                            b_now = battery()
+                            chg_d = telemetry.charger_detail() if (b_now and b_now.get('charging')) else {}
+                            hc_b = telemetry.bifrost_rgb_color('battery', b_now, fast_chg=bool(chg_d.get('fast_charging')))
+                        elif rm == 'thermal':
+                            pw_now = thor.power() or {}
+                            hc_b = telemetry.bifrost_rgb_color('thermal', temp_c=pw_now.get('temp'))
+                        elif rm == 'ambilight' and tandem.run and not tandem.run.get('paused'):
+                            ambi_png = Path(f'/run/user/{os.getuid()}/tandem-ambi.png')
+                            dpys = _x11_displays()
+                            if companion.capture_screen_frame(ambi_png, display=dpys[0] if dpys else ':0'):
+                                hc_b = telemetry.sample_ambilight_hex(ambi_png)
+                        if hc_b and hc_b != last_bifrost:
+                            last_bifrost = hc_b
+                            thor.change('rgb', {'color': hc_b, 'enabled': True})
+                else:
+                    last_bifrost = ''
             st = telemetry.dock_state()
             now_dock = bool(st.get('connected'))
             if now_dock != prev:

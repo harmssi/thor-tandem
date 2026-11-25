@@ -1548,8 +1548,52 @@ class ThorStorageTests(unittest.TestCase):
         self.assertEqual((st_opt['mode'], st_opt['src'], st_opt['target']), ('offline', 'ja', 'de'))
         thor_translate.set_options(None, auto=False, mode='auto', src='auto', clear_history=True)
 
+        # v1.4.0: CBZ/PDF Manual Reader, Bifrost LED modes, Custom Artwork overrides & Safe Storage Cleaner
+        import zipfile
+        cbz_path = TMP / 'manual.cbz'
+        tiny_png = (
+            b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x02\x00\x00\x00\x02\x08\x02\x00\x00\x00\xfd\xd4\x9as'
+            b'\x00\x00\x00\x16IDATx\x9cc\xf8\xcf\xc0\x00\x00\x03\x01\x01\x00\xc9\xfe\x92\xef\x00\x00\x00\x00IEND\xaeB`\x82'
+        )
+        with zipfile.ZipFile(cbz_path, 'w') as zf:
+            zf.writestr('01_cover.png', tiny_png)
+            zf.writestr('02_controls.png', tiny_png)
+        b_info = tandem.companion.book_info(cbz_path)
+        self.assertEqual((b_info['format'], b_info['pages']), ('cbz', 2))
+        raw_p0, mime_p0 = tandem.companion.book_page_png(cbz_path, 0)
+        self.assertEqual(mime_p0, 'image/png')
+        self.assertTrue(raw_p0.startswith(b'\x89PNG'))
+
+        # Bifrost smart LED modes (battery + fast-charge cyan + thermal guardian)
+        self.assertEqual(telemetry.bifrost_rgb_color('battery', {'level': 85, 'charging': True}, fast_chg=True), '00D0C0')
+        self.assertEqual(telemetry.bifrost_rgb_color('battery', {'level': 12, 'charging': False}), 'FF2000')
+        self.assertEqual(telemetry.bifrost_rgb_color('thermal', temp_c=44), '00D0C0')
+        self.assertEqual(telemetry.bifrost_rgb_color('thermal', temp_c=80), 'FF2000')
+        c14 = tandem.save_config({'rgb_mode': 'ambilight'})
+        self.assertEqual((c14['rgb_mode'], c14['rgb_sync']), ('ambilight', True))
+        c14_s = tandem.save_config({'rgb_mode': 'static'})
+        self.assertEqual((c14_s['rgb_mode'], c14_s['rgb_sync']), ('static', False))
+
+        # Safe Storage Cleaner: keeps installed AppIDs + Proton runtimes, cleans orphaned compatdata/shadercache/trash
+        import thor_storage
+        cl_home = TMP / 'clean-home'
+        cl_steam = cl_home / '.local/share/Steam'
+        touch(cl_steam / 'steamapps/appmanifest_1091500.acf', '"AppState" { "appid" "1091500" "name" "Installed Game" }\n')
+        touch(cl_steam / 'steamapps/appmanifest_1493710.acf', '"AppState" { "appid" "1493710" "name" "Proton Experimental" }\n')
+        touch(cl_steam / 'steamapps/compatdata/1091500/pfx/system.reg', 'keep' * 500)
+        touch(cl_steam / 'steamapps/compatdata/999999/pfx/system.reg', 'orphan' * 2000)
+        touch(cl_steam / 'steamapps/shadercache/999999/foz.bin', 'shader' * 2000)
+        touch(cl_home / '.local/share/Trash/files/old.iso', 'trash' * 2000)
+        scan_before = thor_storage.scan_storage_cleanup(home=cl_home, steam_dir=cl_steam)
+        self.assertEqual(scan_before['compatdata']['items'], ['999999'])
+        self.assertEqual(scan_before['shadercache']['count'], 1)
+        res_cl = thor_storage.run_storage_cleanup('all', home=cl_home, steam_dir=cl_steam)
+        self.assertTrue(res_cl['ok'] and res_cl['removed'] >= 3)
+        self.assertTrue((cl_steam / 'steamapps/compatdata/1091500/pfx/system.reg').is_file())
+        self.assertFalse((cl_steam / 'steamapps/compatdata/999999').exists())
+
         tandem.save_config({'speaker_dsp': 'cinema', 'ra_zerolag': True, 'ra_autoresume': True, 'ra_shader': 'sharp',
-                            'panel_hz': 120, 'auto_travel': False, 'ai_workdir': ''})
+                            'rgb_mode': 'cover', 'panel_hz': 120, 'auto_travel': False, 'ai_workdir': ''})
 
 
 if __name__ == '__main__':

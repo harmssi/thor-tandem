@@ -26,7 +26,18 @@ The interface speaks English or German (Settings › Look › Language; the inst
 
 ![Dual-Screen PC & Retro Library on AYN Thor](docs/screenshots/steam-library-dual.png)
 
-## New in 1.3.0 — Live Screen Game Translator (PlayTranslate Style · Offline & Hybrid)
+## New in 1.4.0 — Manuals Reader, Bifrost LEDs, ProtonDB & Storage Cleaner
+
+- **Native Dual-Screen PDF & CBZ Game Manual Reader (`companion.py`, `ui/decks/universal.py`, `tandem.py`):**
+  - Open original game booklets, strategy guides, and comic manuals (`.pdf`, `.cbz`) directly on the bottom OLED screen while your game keeps running on top — rendered natively in memory via `PySide6.QtPdf.QPdfDocument` (`pdftoppm` fallback) with instant `◀ / ▶ / +5` page turning, `1:1 / + / −` pinch/tap zoom, finger pan, per-game page bookmarks, and automatic discovery of `ES-DE/downloaded_media/<system>/manuals/*.pdf` & `ROMs/<system>/manuals/*.pdf`.
+- **ProtonDB Compatibility Badges & On-Device Cover/Hero Picker (`companion.py`, `ui/tandem_ui.py`):**
+  - Displays cached **ProtonDB Tier Badges** (`Platinum · Gold · Silver · Bronze`) directly on the top OLED info bar for installed Steam games, plus a built-in **`🎨 Choose cover & art`** gallery inside every game's `+` Options menu to browse and apply alternative Steam / Libretro Boxart / Title-Screen covers & hero banners (or restore defaults) right on the Thor.
+- **"Thor Bifrost" Smart Stick-LED Modes (`telemetry.py`, `tandem.py`, `ui/settings_view.py`, `ui/quick_view.py`):**
+  - Five intelligent lighting modes for the analog-stick RGB rings (`Settings › Lighting` & Quick Menu): **Game colour** (cover accent), **Ambilight** (live gameplay screen color sampling while playing), **Battery** (traffic-light charge indicator + Cyan pulse during USB-PD/PPS fast charging), **Temp** (cool blue -> amber -> red thermal guardian above 65 °C), and **Static**.
+- **Safe Storage Cleaner (`thor_storage.py`, `ui/settings_view.py`):**
+  - Built-in **`Storage cleanup` (`Speicher-Bereinigung`)** analyzer & 1-tap cleaner under `Settings › Library` that reclaims gigabytes from orphaned Steam `compatdata` prefixes of uninstalled games, stale `shadercache` folders, and Trash/temp leftovers while strictly protecting all installed Steam manifests, non-Steam `shortcuts.vdf` entries, Proton/SLR runtimes, and savegames.
+
+Earlier in 1.3.0 — Live Screen Game Translator (PlayTranslate Style · Offline & Hybrid):
 
 - **Real-Time Dual-Screen Game Translator (`thor_translate.py`, `thor_ocr_worker.py`, `ui/decks/translator.py`):**
   - Built-in **`Translate` (`Übersetzen`)** tab in the Universal Companion Deck, every bespoke game companion (`Tools`), and Dual-Screen decks, plus a 1-tap **`🌐 Translate`** button in the Thor Quick Menu.

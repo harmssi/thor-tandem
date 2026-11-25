@@ -6,7 +6,7 @@
 - Virtual uinput relative trackpad/mouse (for Moonlight / PC streaming)
 - Streaming wireless ROM / guide / companion-pack upload handler
 Standard library + libX11 ctypes + /dev/uinput only."""
-import ctypes, glob, json, os, re, shutil, struct, subprocess, sys, threading, time, urllib.parse, urllib.request, zipfile
+import ctypes, glob, hashlib, json, os, re, shutil, struct, subprocess, sys, threading, time, urllib.parse, urllib.request, zipfile
 from pathlib import Path
 
 HOME = Path.home()
@@ -14,7 +14,7 @@ STATE = Path(os.environ.get('XDG_STATE_HOME', HOME / '.local/state')) / 'tandem'
 DATA_DIR = Path(os.environ.get('XDG_DATA_HOME', HOME / '.local/share')) / 'tandem'
 
 SAFE_ID = re.compile(r'^[A-Za-z0-9_\-]{2,64}$')
-GUIDE_EXTS = {'.png', '.jpg', '.jpeg', '.webp', '.txt', '.md'}
+GUIDE_EXTS = {'.png', '.jpg', '.jpeg', '.webp', '.txt', '.md', '.pdf', '.cbz'}
 
 # Extension -> default ES-DE ROM folder when uploading with system='auto'
 EXT_SYSTEM = {
@@ -253,10 +253,47 @@ def sketch_save(gid, png_bytes):
     return {'ok': True, 'has_sketch': True, 'sketch_mtime': int(pfile.stat().st_mtime)}
 
 
-# ---- Per-game Guides, Maps & Web Wiki Reader -------------------------------------------------------------------------
+# ---- Per-game Guides, Maps, PDF/CBZ Manuals & Web Wiki Reader -------------------------------------------------------
+def _guide_kind(suffix):
+    suf = suffix.lower()
+    if suf in {'.pdf', '.cbz'}:
+        return 'book'
+    if suf in {'.png', '.jpg', '.jpeg', '.webp'}:
+        return 'image'
+    return 'text'
+
+
+def _esde_manual_candidates(game):
+    """Locate ES-DE / EmuDeck manuals (`downloaded_media/<sys>/manuals/<stem>.pdf` or `ROMs/<sys>/manuals/<stem>.pdf`)."""
+    if not game or not game.get('path'):
+        return []
+    rom = Path(game['path'])
+    sys_name = game.get('s') or rom.parent.name
+    roots = [
+        rom.parent / 'manuals',
+        rom.parent.parent.parent / 'ES-DE/downloaded_media' / sys_name / 'manuals',
+        HOME / 'ES-DE/downloaded_media' / sys_name / 'manuals',
+    ]
+    found = []
+    for mdir in roots:
+        if not mdir.is_dir():
+            continue
+        for ext in ('.pdf', '.cbz'):
+            exact = mdir / (rom.stem + ext)
+            if exact.is_file():
+                found.append(exact)
+    return found
+
+
 def guides_list(gid, game=None):
     if not SAFE_ID.fullmatch(str(gid or '')): return {'items': []}
     items, seen = [], set()
+    for mf in _esde_manual_candidates(game):
+        rp = str(mf.resolve())
+        if rp not in seen:
+            seen.add(rp)
+            items.append({'name': '__manual__' + mf.name, 'title': f'Handbuch · {mf.stem.replace("_", " ")}',
+                          'kind': 'book', 'src': 'manual', 'size': mf.stat().st_size})
     folders = [_guides_dir(gid)]
     if game and game.get('path'):
         rom = Path(game['path'])
@@ -264,28 +301,154 @@ def guides_list(gid, game=None):
         if gdir.is_dir():
             for f in sorted(gdir.iterdir()):
                 if f.is_file() and f.suffix.lower() in GUIDE_EXTS and f.stem.lower().startswith(rom.stem.lower()):
-                    seen.add(str(f))
+                    seen.add(str(f.resolve()))
                     items.append({'name': f.name, 'title': f.stem.replace('_', ' '),
-                                  'kind': 'image' if f.suffix.lower() in {'.png', '.jpg', '.jpeg', '.webp'} else 'text',
+                                  'kind': _guide_kind(f.suffix),
                                   'src': 'rom', 'size': f.stat().st_size})
     for folder in folders:
         if not folder.is_dir(): continue
         for f in sorted(folder.iterdir()):
-            if not f.is_file() or f.suffix.lower() not in GUIDE_EXTS or str(f) in seen: continue
+            if not f.is_file() or f.suffix.lower() not in GUIDE_EXTS or str(f.resolve()) in seen: continue
             items.append({'name': f.name, 'title': f.stem.replace('_', ' '),
-                          'kind': 'image' if f.suffix.lower() in {'.png', '.jpg', '.jpeg', '.webp'} else 'text',
+                          'kind': _guide_kind(f.suffix),
                           'src': 'local', 'size': f.stat().st_size})
     return {'gid': gid, 'items': items}
 
 
 def guide_file(gid, name, game=None):
     if not SAFE_ID.fullmatch(str(gid or '')): return None
-    safe = os.path.basename(str(name or ''))
+    raw_name = str(name or '')
+    if raw_name.startswith('__manual__'):
+        want = os.path.basename(raw_name[len('__manual__'):])
+        for mf in _esde_manual_candidates(game):
+            if mf.name == want:
+                return mf
+        return None
+    safe = os.path.basename(raw_name)
     if not safe or Path(safe).suffix.lower() not in GUIDE_EXTS: return None
     cand = [_guides_dir(gid) / safe]
     if game and game.get('path'):
         cand.append(Path(game['path']).parent / 'guides' / safe)
     return next((p for p in cand if p.is_file()), None)
+
+
+def book_info(path):
+    """Return {'pages': N, 'format': 'pdf'|'cbz'} for a PDF or CBZ game manual."""
+    p = Path(path)
+    suf = p.suffix.lower()
+    if suf == '.cbz':
+        try:
+            with zipfile.ZipFile(p) as zf:
+                imgs = [n for n in zf.namelist() if not n.startswith('__MACOSX') and Path(n).suffix.lower() in {'.jpg', '.jpeg', '.png', '.webp'}]
+            return {'ok': True, 'pages': len(imgs), 'format': 'cbz'}
+        except Exception as exc:
+            return {'error': f'CBZ-Fehler: {exc}'}
+    if suf == '.pdf':
+        if shutil.which('pdfinfo'):
+            out = _run_q(['pdfinfo', str(p)])
+            m = re.search(r'(?m)^Pages:\s*(\d+)', out)
+            if m:
+                return {'ok': True, 'pages': int(m[1]), 'format': 'pdf'}
+        try:
+            from PySide6.QtGui import QGuiApplication
+            if QGuiApplication.instance() is not None and threading.current_thread() is threading.main_thread():
+                from PySide6.QtPdf import QPdfDocument
+                doc = QPdfDocument()
+                doc.load(str(p))
+                cnt = doc.pageCount()
+                doc.close()
+                if cnt > 0:
+                    return {'ok': True, 'pages': cnt, 'format': 'pdf'}
+        except Exception:
+            pass
+        # Fallback regex scan for /Type /Page
+        try:
+            raw = p.read_bytes()
+            cnt = len(re.findall(rb'/Type\s*/Page\b', raw))
+            return {'ok': True, 'pages': max(1, cnt), 'format': 'pdf'}
+        except OSError as exc:
+            return {'error': str(exc)}
+    return {'error': 'Nicht unterstütztes Buchformat.'}
+
+
+def book_page_png(path, page_idx=0, max_width=1280):
+    """Render 0-based `page_idx` of a `.pdf` or `.cbz` manual to PNG/image bytes (with fast tmpfs cache)."""
+    p = Path(path)
+    suf = p.suffix.lower()
+    idx = max(0, int(page_idx))
+    rt = Path(os.environ.get('XDG_RUNTIME_DIR') or '/tmp') / 'tandem-books'
+    rt.mkdir(parents=True, exist_ok=True)
+    st = p.stat()
+    ckey = f'{hashlib.sha1(f"{p}:{st.st_mtime_ns}:{max_width}".encode()).hexdigest()[:14]}-p{idx}.png'
+    cached = rt / ckey
+    if cached.is_file() and cached.stat().st_size > 256:
+        return cached.read_bytes(), 'image/png'
+
+    if suf == '.cbz':
+        try:
+            with zipfile.ZipFile(p) as zf:
+                imgs = sorted(n for n in zf.namelist() if not n.startswith('__MACOSX') and Path(n).suffix.lower() in {'.jpg', '.jpeg', '.png', '.webp'})
+                if not imgs:
+                    return b'', 'image/png'
+                pick = imgs[min(idx, len(imgs) - 1)]
+                ext = Path(pick).suffix.lower()
+                mime = 'image/png' if ext == '.png' else ('image/webp' if ext == '.webp' else 'image/jpeg')
+                return zf.read(pick), mime
+        except Exception:
+            return b'', 'image/png'
+
+    if suf == '.pdf':
+        if shutil.which('pdftoppm'):
+            p1 = str(idx + 1)
+            prefix = rt / f'.ppm-{ckey}'
+            try:
+                subprocess.run(['pdftoppm', '-png', '-f', p1, '-l', p1, '-scale-to-x', str(max_width), '-scale-to-y', '-1',
+                                str(p), str(prefix)], capture_output=True, timeout=10)
+                outs = sorted(rt.glob(f'.ppm-{ckey}*.png'))
+                if outs:
+                    raw = outs[0].read_bytes()
+                    for o in outs:
+                        o.unlink(missing_ok=True)
+                    cached.write_bytes(raw)
+                    return raw, 'image/png'
+            except Exception:
+                pass
+        try:
+            from PySide6.QtGui import QColor, QGuiApplication, QImage, QPainter
+            if QGuiApplication.instance() is not None and threading.current_thread() is threading.main_thread():
+                from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QSize
+                from PySide6.QtPdf import QPdfDocument
+                doc = QPdfDocument()
+                doc.load(str(p))
+                cnt = doc.pageCount()
+                if cnt > 0:
+                    pno = min(idx, cnt - 1)
+                    pt_sz = doc.pagePointSize(pno)
+                    pw = max(1.0, pt_sz.width())
+                    ph = max(1.0, pt_sz.height())
+                    tw = int(max_width)
+                    th = max(64, round(tw * (ph / pw)))
+                    qimg = doc.render(pno, QSize(tw, th))
+                    doc.close()
+                    if not qimg.isNull():
+                        paper = QImage(qimg.width(), qimg.height(), QImage.Format.Format_RGB32)
+                        paper.fill(QColor('#f8f8f6'))
+                        qp = QPainter(paper)
+                        qp.drawImage(0, 0, qimg)
+                        qp.end()
+                        ba = QByteArray()
+                        buf = QBuffer(ba)
+                        buf.open(QIODevice.OpenModeFlag.WriteOnly)
+                        paper.save(buf, 'PNG')
+                        raw = bytes(ba)
+                        if raw:
+                            cached.write_bytes(raw)
+                            return raw, 'image/png'
+                else:
+                    doc.close()
+        except Exception:
+            pass
+    return b'', 'image/png'
 
 
 def guide_fetch_wiki(gid, query, lang='de'):
@@ -318,6 +481,209 @@ def guide_fetch_wiki(gid, query, lang='de'):
         except (OSError, ValueError):
             continue
     return {'error': f'Kein Artikel zu „{q}“ gefunden.'}
+
+
+# ---- ProtonDB Compatibility Cache & On-Device Artwork Picker (SteamGridDB / Libretro / Steam CDN) --------------------
+PROTONDB_CACHE_FILE = STATE / 'protondb.json'
+CUSTOM_ART_DIR = DATA_DIR / 'custom_art'
+
+LIBRETRO_REPO_MAP = {
+    'nes': 'Nintendo_-_Nintendo_Entertainment_System',
+    'famicom': 'Nintendo_-_Family_Computer_Disk_System',
+    'fds': 'Nintendo_-_Family_Computer_Disk_System',
+    'snes': 'Nintendo_-_Super_Nintendo_Entertainment_System',
+    'sfc': 'Nintendo_-_Super_Nintendo_Entertainment_System',
+    'n64': 'Nintendo_-_Nintendo_64',
+    'gb': 'Nintendo_-_Game_Boy',
+    'gbc': 'Nintendo_-_Game_Boy_Color',
+    'gba': 'Nintendo_-_Game_Boy_Advance',
+    'nds': 'Nintendo_-_Nintendo_DS',
+    'n3ds': 'Nintendo_-_Nintendo_3DS',
+    'gc': 'Nintendo_-_GameCube',
+    'wii': 'Nintendo_-_Wii',
+    'wiiu': 'Nintendo_-_Wii_U',
+    'switch': 'Nintendo_-_Nintendo_Switch',
+    'psx': 'Sony_-_PlayStation',
+    'ps2': 'Sony_-_PlayStation_2',
+    'psp': 'Sony_-_PlayStation_Portable',
+    'megadrive': 'Sega_-_Mega_Drive_-_Genesis',
+    'genesis': 'Sega_-_Mega_Drive_-_Genesis',
+    'mastersystem': 'Sega_-_Master_System_-_Mark_III',
+    'gamegear': 'Sega_-_Game_Gear',
+    'saturn': 'Sega_-_Saturn',
+    'dreamcast': 'Sega_-_Dreamcast',
+    'pcengine': 'NEC_-_PC_Engine_-_TurboGrafx_16',
+    'neogeo': 'SNK_-_Neo_Geo',
+    'arcade': 'FBNeo_-_Arcade_Games',
+    'fbneo': 'FBNeo_-_Arcade_Games',
+}
+
+
+def load_protondb_cache(cache_file=PROTONDB_CACHE_FILE):
+    try:
+        return json.loads(Path(cache_file).read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return {}
+
+
+def sync_protondb(appids, cache_file=PROTONDB_CACHE_FILE):
+    """Fetch & cache ProtonDB tier ('platinum', 'gold', 'silver', 'bronze', 'borked') for installed Steam AppIDs."""
+    cache = load_protondb_cache(cache_file)
+    now = int(time.time())
+    changed = False
+    for aid in appids:
+        s_aid = str(aid or '').strip()
+        if not s_aid.isdigit() or int(s_aid) > 2_000_000_000:
+            continue
+        cur = cache.get(s_aid)
+        if isinstance(cur, dict) and now - int(cur.get('at') or 0) < 14 * 86400:
+            continue
+        url = f'https://www.protondb.com/api/v1/reports/summaries/{s_aid}.json'
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': 'Toravo-Tandem/1.4'})
+            with urllib.request.urlopen(req, timeout=4.5) as r:
+                data = json.loads(r.read().decode('utf-8', 'replace'))
+            tier = str(data.get('tier') or data.get('trendingTier') or '').lower()
+            if tier in ('platinum', 'gold', 'silver', 'bronze', 'borked', 'pending'):
+                cache[s_aid] = {'tier': tier, 'score': data.get('score'), 'total': data.get('total', 0), 'at': now}
+                changed = True
+        except Exception:
+            # Negative cache for 2 days so non-existent/unlisted IDs aren't hammered
+            cache[s_aid] = {'tier': '', 'at': now - 12 * 86400}
+            changed = True
+    if changed:
+        try:
+            Path(cache_file).parent.mkdir(parents=True, exist_ok=True)
+            tmp = Path(cache_file).with_suffix('.tmp')
+            tmp.write_text(json.dumps(cache, ensure_ascii=False), encoding='utf-8')
+            os.replace(tmp, cache_file)
+        except OSError:
+            pass
+    return {k: v['tier'] for k, v in cache.items() if isinstance(v, dict) and v.get('tier')}
+
+
+def custom_art_paths(gid, art_dir=CUSTOM_ART_DIR):
+    """Return {'cover': str, 'hero': str} for user-overridden artwork in custom_art/."""
+    out = {}
+    base = Path(art_dir)
+    if not base.is_dir() or not SAFE_ID.fullmatch(str(gid or '')):
+        return out
+    for slot in ('cover', 'hero'):
+        for ext in ('.png', '.jpg', '.webp'):
+            p = base / f'{gid}-{slot}{ext}'
+            if p.is_file():
+                out[slot] = str(p)
+                break
+    return out
+
+
+def artwork_candidates(game, query=''):
+    """Build candidate Cover & Hero artwork URLs from Steam CDN & Libretro Thumbnails for on-device Cover Picker."""
+    if not game:
+        return {'items': []}
+    q = (str(query or '').strip() or str(game.get('t') or '').strip())
+    clean_q = re.sub(r'\s*\((?:PeanutsNative|BananaNative)\)\s*$', '', q).strip()
+    s = str(game.get('s') or '')
+    appid = str(game.get('appid') or '')
+    cands = []
+
+    if appid.isdigit() and int(appid) < 2_000_000_000:
+        cands.extend([
+            {'label': 'Steam Hochformat-Cover', 'slot': 'cover',
+             'url': f'https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/{appid}/library_600x900_2x.jpg'},
+            {'label': 'Steam Breitbild-Header', 'slot': 'cover',
+             'url': f'https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/{appid}/header.jpg'},
+            {'label': 'Steam Bühnen-Hintergrund (Hero)', 'slot': 'hero',
+             'url': f'https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/{appid}/library_hero.jpg'},
+        ])
+
+    repo = LIBRETRO_REPO_MAP.get(s)
+    if repo and clean_q:
+        safe_t = re.sub(r'[&*/:`<>?\\|"]', '_', clean_q)
+        variants = [safe_t]
+        for reg in (' (Europe)', ' (USA)', ' (Germany)', ' (World)', ' (Japan)'):
+            if '(' not in safe_t:
+                variants.append(safe_t + reg)
+        for v in variants[:3]:
+            enc = urllib.parse.quote(v + '.png')
+            reg_tag = v[len(safe_t):].strip() or 'Standard'
+            cands.append({
+                'label': f'Original-Verpackung · {reg_tag}', 'slot': 'cover',
+                'url': f'https://raw.githubusercontent.com/libretro-thumbnails/{repo}/master/Named_Boxarts/{enc}',
+            })
+        enc0 = urllib.parse.quote(variants[1 if len(variants) > 1 else 0] + '.png')
+        cands.append({
+            'label': 'Titelbild (Named_Titles)', 'slot': 'cover',
+            'url': f'https://raw.githubusercontent.com/libretro-thumbnails/{repo}/master/Named_Titles/{enc0}',
+        })
+        cands.append({
+            'label': 'Spielszene als Hero (Named_Snaps)', 'slot': 'hero',
+            'url': f'https://raw.githubusercontent.com/libretro-thumbnails/{repo}/master/Named_Snaps/{enc0}',
+        })
+
+    # Probe which candidate URLs actually exist (HEAD/Range check in parallel, fast 2.5s timeout)
+    verified = []
+    lock = threading.Lock()
+
+    def _probe(item):
+        try:
+            req = urllib.request.Request(item['url'], method='HEAD', headers={'User-Agent': 'Toravo-Tandem/1.4'})
+            with urllib.request.urlopen(req, timeout=2.8) as r:
+                if r.status == 200:
+                    with lock:
+                        verified.append(item)
+        except Exception:
+            pass
+
+    threads = [threading.Thread(target=_probe, args=(it,), daemon=True) for it in cands]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=3.0)
+    # Keep deterministic order matching `cands`
+    ok_urls = {v['url'] for v in verified}
+    ordered = [it for it in cands if it['url'] in ok_urls]
+    return {'gid': game.get('id'), 'query': clean_q, 'has_custom': bool(custom_art_paths(game.get('id'))), 'items': ordered}
+
+
+def apply_custom_artwork(gid, url, slot='cover', art_dir=CUSTOM_ART_DIR):
+    """Download `url` and save it as custom cover or hero for `gid`."""
+    if not SAFE_ID.fullmatch(str(gid or '')) or slot not in ('cover', 'hero'):
+        return {'error': 'Ungültige Anfrage.'}
+    u = str(url or '').strip()
+    if not u.startswith('https://'):
+        return {'error': 'Nur https-Bildquellen erlaubt.'}
+    try:
+        req = urllib.request.Request(u, headers={'User-Agent': 'Toravo-Tandem/1.4'})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            data = r.read(12 << 20)
+        ext = '.png' if data[:8] == b'\x89PNG\r\n\x1a\n' else ('.jpg' if data[:3] == b'\xff\xd8\xff' else '.webp')
+        base = Path(art_dir)
+        base.mkdir(parents=True, exist_ok=True)
+        for old_ext in ('.png', '.jpg', '.webp'):
+            (base / f'{gid}-{slot}{old_ext}').unlink(missing_ok=True)
+        dest = base / f'{gid}-{slot}{ext}'
+        tmp = dest.with_suffix('.tmp')
+        tmp.write_bytes(data)
+        os.replace(tmp, dest)
+        return {'ok': True, 'slot': slot, 'path': str(dest), 'text': 'Neues Bild gespeichert.'}
+    except Exception as exc:
+        return {'error': f'Download fehlgeschlagen: {exc}'}
+
+
+def reset_custom_artwork(gid, art_dir=CUSTOM_ART_DIR):
+    if not SAFE_ID.fullmatch(str(gid or '')):
+        return {'error': 'Ungültige ID.'}
+    base = Path(art_dir)
+    removed = 0
+    if base.is_dir():
+        for slot in ('cover', 'hero'):
+            for ext in ('.png', '.jpg', '.webp'):
+                p = base / f'{gid}-{slot}{ext}'
+                if p.is_file():
+                    p.unlink(missing_ok=True)
+                    removed += 1
+    return {'ok': True, 'removed': removed, 'text': 'Standard-Cover wiederhergestellt.'}
 
 
 # ---- Visual Emulator Save-States -------------------------------------------------------------------------------------

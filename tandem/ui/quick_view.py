@@ -343,12 +343,17 @@ def draw(win, p):
             rc_right = QRectF(x0 + col_w + gap, y, col_w, 9.0 * u)
             win.box(p, rc_left, 1.7 * u, PANEL, LINE)
             win.text(p, 'STICK-BELEUCHTUNG', rc_left.x() + 1.6 * u, y + 1.0 * u, f_sec, MUTED, col_w - 13 * u)
-            sync_on = bool(win.CFG.get('rgb_sync', True))
+            rm_opts = (('cover', 'Spiel-Farbe'), ('ambilight', 'Ambilight'), ('battery', 'Akku'), ('thermal', 'Temp'), ('static', 'Fest'))
+            cur_rm = win.CFG.get('rgb_mode') or ('cover' if win.CFG.get('rgb_sync', True) else 'static')
+            rm_ids = [x[0] for x in rm_opts]
+            nxt_rm = rm_ids[(rm_ids.index(cur_rm) + 1) % len(rm_ids)] if cur_rm in rm_ids else 'cover'
+            rm_lbl = dict(rm_opts).get(cur_rm, 'Spiel-Farbe')
+            sync_on = (cur_rm != 'static')
             sr_btn = QRectF(rc_left.right() - 11.4 * u, y + .65 * u, 10.2 * u, 2.3 * u)
             win.capsule(p, sr_btn, ui.faded(FOCUS, .22) if sync_on else RAISED, FOCUS if sync_on else LINE)
-            win.text(p, 'Spiel-Farbe', sr_btn.x(), sr_btn.y(), ('u', 1.28, 700 if sync_on else 500),
+            win.text(p, rm_lbl, sr_btn.x(), sr_btn.y(), ('u', 1.28, 700 if sync_on else 500),
                      FOCUS if sync_on else MUTED, sr_btn.width(), 1, 2.3 / 1.28)
-            win.hit(sr_btn, lambda: (win.ui_haptic(), touched(win), cfg_set(win, rgb_sync=not sync_on)), name='qrgb_sync')
+            win.hit(sr_btn, lambda nrm=nxt_rm: (win.ui_haptic(), touched(win), cfg_set(win, rgb_mode=nrm, rgb_sync=(nrm != 'static'))), name='qrgb_sync')
             on_rgb = bool(rgb.get('enabled'))
             cur_c = str(rgb.get('color', 'FFFFFF')).upper()
             tog_r = QRectF(rc_left.x() + 1.2 * u, y + 3.4 * u, 9.5 * u, 4.4 * u)

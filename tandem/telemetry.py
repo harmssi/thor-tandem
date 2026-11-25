@@ -754,4 +754,70 @@ def apply_speaker_dsp(mode='cinema'):
         return {'ok': True, 'mode': mode, 'written': str(conf_path), 'active': bool(dsp_id)}
 
 
+# ---- Bifrost-Style Smart Stick-LED Engine (Cover, Live-Ambilight, Battery Gauge, Thermal Guard) ----------------------
+RGB_MODES = ('cover', 'ambilight', 'battery', 'thermal', 'static')
+
+
+def bifrost_rgb_color(mode, battery_info=None, temp_c=None, fast_chg=False):
+    """Compute RRGGBB hex color for battery or thermal Bifrost stick-LED modes."""
+    if mode == 'battery':
+        b = battery_info or {}
+        lvl = int(b.get('level') if b.get('level') is not None else 100)
+        if b.get('charging'):
+            return '00D0C0' if fast_chg else '20E040'
+        if lvl > 50:
+            return '20E040'
+        if lvl > 25:
+            return 'FFD000'
+        if lvl > 15:
+            return 'FF7A00'
+        return 'FF2000'
+    if mode == 'thermal':
+        t = float(temp_c if temp_c is not None else 42.0)
+        if t < 48:
+            return '00D0C0'
+        if t < 58:
+            return '20E040'
+        if t < 68:
+            return 'FFD000'
+        if t < 75:
+            return 'FF7A00'
+        return 'FF2000'
+    return None
+
+
+def sample_ambilight_hex(png_path):
+    """Extract a vivid dominant scene color from a top-screen capture for Bifrost Live-Ambilight stick rings."""
+    try:
+        from PySide6.QtGui import QImage
+        img = QImage(str(png_path))
+        if img.isNull():
+            return None
+        tiny = img.scaled(20, 12)
+        r_sum = g_sum = b_sum = w_sum = 0.0
+        for y in range(12):
+            for x in range(20):
+                px = tiny.pixel(x, y)
+                r, g, b = (px >> 16) & 255, (px >> 8) & 255, px & 255
+                mx, mn = max(r, g, b), min(r, g, b)
+                if mx < 24:
+                    continue
+                sat = (mx - mn) / max(1, mx)
+                weight = 0.25 + sat * 2.5
+                r_sum += r * weight
+                g_sum += g * weight
+                b_sum += b * weight
+                w_sum += weight
+        if w_sum <= 0.01:
+            return None
+        rr, gg, bb = int(r_sum / w_sum), int(g_sum / w_sum), int(b_sum / w_sum)
+        peak = max(rr, gg, bb, 1)
+        # Normalize brightness so LED rings stay vivid
+        scale = min(2.2, 235.0 / peak)
+        return '%02X%02X%02X' % (min(255, round(rr * scale)), min(255, round(gg * scale)), min(255, round(bb * scale)))
+    except Exception:
+        return None
+
+
+
 

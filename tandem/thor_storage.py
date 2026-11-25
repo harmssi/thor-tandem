@@ -109,6 +109,152 @@ def job_state():
     return dict(_JOB)
 
 
+# ---- Safe Storage Cleaner (Orphaned Proton Prefixes, Stale Shader Caches & Temp Leftovers) ---------------------------
+def _dir_bytes(path):
+    total = 0
+    try:
+        for root, _, files in os.walk(path, followlinks=False):
+            for f in files:
+                try:
+                    total += os.lstat(os.path.join(root, f)).st_size
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    return total
+
+
+def _installed_steam_ids(steam_dir):
+    """Collect all installed Steam AppIDs AND non-Steam shortcut AppIDs/GameIDs so active prefixes are NEVER touched."""
+    keep = set()
+    sdir = Path(steam_dir)
+    for acf in sdir.glob('steamapps/appmanifest_*.acf'):
+        m = re.search(r'appmanifest_(\d+)\.acf$', acf.name)
+        if m:
+            keep.add(m[1])
+    # Always keep Proton / Steam Linux Runtime / Steamworks Common Redistributables (228980)
+    keep.update({'228980', '1391110', '1628350', '1493710', '1887720', '2180100', '2348590', '2805730'})
+    for vdf in sdir.glob('userdata/[0-9]*/config/shortcuts.vdf'):
+        try:
+            data = vdf.read_bytes()
+            for m in re.finditer(rb'\x02appid\x00(.{4})', data, re.S):
+                aid = struct.unpack('<I', m[1])[0] if 'struct' in globals() else int.from_bytes(m[1], 'little')
+                keep.add(str(aid))
+                keep.add(str((aid << 32) | 0x02000000))
+        except OSError:
+            pass
+    return keep
+
+
+def scan_storage_cleanup(home=None, steam_dir=None):
+    """Analyze safely reclaimable disk space: orphaned Steam compatdata, stale shadercache, Trash & temp files."""
+    h = Path(home) if home else HOME
+    sdir = Path(steam_dir) if steam_dir else (h / '.local/share/Steam')
+    keep_ids = _installed_steam_ids(sdir) if sdir.is_dir() else set()
+
+    orphan_compat = []
+    compat_root = sdir / 'steamapps/compatdata'
+    if compat_root.is_dir() and keep_ids:
+        for d in sorted(compat_root.iterdir()):
+            if d.is_dir() and d.name.isdigit() and d.name != '0' and d.name not in keep_ids:
+                sz = _dir_bytes(d)
+                if sz > 0:
+                    orphan_compat.append({'id': d.name, 'path': str(d), 'bytes': sz})
+
+    orphan_shaders = []
+    shader_root = sdir / 'steamapps/shadercache'
+    if shader_root.is_dir() and keep_ids:
+        for d in sorted(shader_root.iterdir()):
+            if d.is_dir() and d.name.isdigit() and d.name not in keep_ids:
+                sz = _dir_bytes(d)
+                if sz > 0:
+                    orphan_shaders.append({'id': d.name, 'path': str(d), 'bytes': sz})
+
+    trash_bytes = 0
+    trash_dir = h / '.local/share/Trash'
+    if trash_dir.is_dir():
+        trash_bytes = _dir_bytes(trash_dir)
+
+    temp_bytes = 0
+    temp_paths = []
+    for cand in (
+        *glob.glob(str(h / '.cache/tandem/*.tmp')),
+        *glob.glob(str(h / '.cache/tandem/*.part')),
+        *glob.glob(str(h / '.local/state/tandem/*.tmp')),
+        *glob.glob(str(sdir / 'steamapps/downloading/*')),
+    ):
+        # Never touch active Steam downloads if stateflags manifest exists in downloading
+        p = Path(cand)
+        if 'downloading' in str(p):
+            aid_m = re.match(r'^(\d+)$', p.name)
+            if aid_m and (sdir / f'steamapps/appmanifest_{aid_m[1]}.acf').is_file():
+                continue
+        sz = _dir_bytes(p) if p.is_dir() else (p.stat().st_size if p.is_file() else 0)
+        if sz > 0:
+            temp_bytes += sz
+            temp_paths.append(str(p))
+
+    c_bytes = sum(x['bytes'] for x in orphan_compat)
+    s_bytes = sum(x['bytes'] for x in orphan_shaders)
+    t_cnt = (1 if trash_bytes else 0) + len(temp_paths)
+    t_mb = round((trash_bytes + temp_bytes) / MIB, 1)
+    total = c_bytes + s_bytes + trash_bytes + temp_bytes
+    c_dict = {'id': 'compatdata', 'title': 'Verwaiste Proton-Prefixe', 'count': len(orphan_compat),
+              'bytes': c_bytes, 'mb': round(c_bytes / MIB, 1), 'items': [x['id'] for x in orphan_compat],
+              'desc': 'Windows-Umgebungen bereits deinstallierter Steam-Spiele (aktive Spiele & Spielstände bleiben unberührt).'}
+    s_dict = {'id': 'shadercache', 'title': 'Alte Steam-Shader-Caches', 'count': len(orphan_shaders),
+              'bytes': s_bytes, 'mb': round(s_bytes / MIB, 1),
+              'desc': 'Nicht mehr benötigte Vulkan-/DXVK-Shader-Ordner deinstallierter Steam-Titel.'}
+    t_dict = {'id': 'trash', 'title': 'Papierkorb & Temp-Reste', 'count': t_cnt,
+              'bytes': trash_bytes + temp_bytes, 'mb': t_mb,
+              'desc': 'Gelöschte Dateien im Linux-Papierkorb und abgebrochene temporäre Downloads.'}
+    return {
+        'total_bytes': total,
+        'total_mb': round(total / MIB, 1),
+        'total_gib': round(total / GIB, 2),
+        'compatdata': c_dict,
+        'shadercache': s_dict,
+        'trash': t_dict,
+        'temp': t_dict,
+        'categories': [c_dict, s_dict, t_dict],
+        '_targets': {
+            'compatdata': [x['path'] for x in orphan_compat],
+            'shadercache': [x['path'] for x in orphan_shaders],
+            'trash': ([str(trash_dir / 'files'), str(trash_dir / 'info')] if trash_bytes else []) + temp_paths,
+        },
+    }
+
+
+def run_storage_cleanup(which='all', home=None, steam_dir=None):
+    """Delete selected ('all' | 'compatdata' | 'shadercache' | 'trash') safely reclaimable directories."""
+    if which == 'temp':
+        which = 'trash'
+    scan = scan_storage_cleanup(home=home, steam_dir=steam_dir)
+    targets_map = scan.get('_targets') or {}
+    keys = ('compatdata', 'shadercache', 'trash') if which == 'all' else ((which,) if which in targets_map else ())
+    freed = 0
+    removed = 0
+    for k in keys:
+        for p_str in targets_map.get(k, ()):
+            p = Path(p_str)
+            sz = _dir_bytes(p) if p.is_dir() else (p.stat().st_size if p.is_file() else 0)
+            try:
+                if p.is_dir():
+                    shutil.rmtree(p, ignore_errors=True)
+                elif p.exists():
+                    p.unlink(missing_ok=True)
+                freed += sz
+                removed += 1
+            except OSError:
+                pass
+    after = scan_storage_cleanup(home=home, steam_dir=steam_dir)
+    after.pop('_targets', None)
+    mb = round(freed / MIB, 1)
+    lbl = f'{freed / GIB:.2f} GiB'.replace('.', ',') if freed >= 512 * MIB else f'{mb:g} MB'.replace('.', ',')
+    return {'ok': True, 'freed_bytes': freed, 'removed': removed,
+            'text': f'Speicher bereinigt: {lbl} freigegeben.' if freed else 'Alles bereits sauber.', 'cleanup': after}
+
+
 def _align_up_1m(byte_offset):
     return ((int(byte_offset) + MIB - 1) // MIB) * MIB
 

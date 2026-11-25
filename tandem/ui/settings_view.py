@@ -33,7 +33,7 @@ CATS = [  # id, title, icon, icon colour, what the top screen says while the lis
     ('onoff', 'Ein / Aus', 'off', '#ff453a', 'Standby, Neustart, Ausschalten und der Desktop.'),
 ]
 AREAS = [c for c in CATS if c]
-TITLES = {c[0]: c[1] for c in AREAS} | {'controls>map': 'Tastenbelegung', 'network>wifi': 'WLAN', 'bluetooth>dev': 'Gerät', 'library>restore': 'Wiederherstellen', 'library>stats': 'Spielzeit & Statistik', 'library>sysbackup': 'Linux- & Tandem-Backup', 'library>storage': 'Android- & Linux-Speicher', 'updates>companions': 'Spiel-Begleiter', 'updates>apps': 'Emulatoren & Quellen', 'updates>native': 'Switch-Spiele nativ'}
+TITLES = {c[0]: c[1] for c in AREAS} | {'controls>map': 'Tastenbelegung', 'network>wifi': 'WLAN', 'bluetooth>dev': 'Gerät', 'library>restore': 'Wiederherstellen', 'library>stats': 'Spielzeit & Statistik', 'library>sysbackup': 'Linux- & Tandem-Backup', 'library>storage': 'Android- & Linux-Speicher', 'library>cleanup': 'Speicher-Bereinigung', 'updates>companions': 'Spiel-Begleiter', 'updates>apps': 'Emulatoren & Quellen', 'updates>native': 'Switch-Spiele nativ'}
 ICONS = {
     'screens': '<rect x="5" y="3" width="14" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="5" y="13" width="14" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/>',
     'light': '<circle cx="12" cy="12" r="4.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 2.5v2.6M12 18.9v2.6M2.5 12h2.6M18.9 12h2.6M5.3 5.3l1.8 1.8M16.9 16.9l1.8 1.8M5.3 18.7l1.8-1.8M16.9 7.1l1.8-1.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
@@ -269,8 +269,11 @@ def groups(win, page):
                          'help': 'Wie hell die Ringe leuchten. Mit „Mit dem Bildschirm“ ist das die größte Helligkeit.'},
                         toggle('Mit dem Bildschirm', rgb.get('linkBrightness'), lambda v: thor_set(win, 'rgb', {'linkBrightness': v, 'brightness': rgb.get('level', 50)}),
                                'Die Ringe werden mit dem oberen Bildschirm heller und dunkler.'),
-                        toggle('Mit Spiel-Farbe (Ambient)', CFG.get('rgb_sync', True), lambda v: config_set(win, rgb_sync=v),
-                               'Passt die Stick-Beleuchtung automatisch an die Cover-Farbe des ausgewählten oder laufenden Spiels an.')],
+                        choice('Stick-Modus (Bifrost)',
+                               [('cover', 'Spiel-Farbe'), ('ambilight', 'Ambilight'), ('battery', 'Akku'), ('thermal', 'Temp'), ('static', 'Fest')],
+                               CFG.get('rgb_mode') or ('cover' if CFG.get('rgb_sync', True) else 'static'),
+                               lambda v: config_set(win, rgb_mode=v, rgb_sync=(v != 'static')),
+                               'Spiel-Farbe folgt dem Cover; Ambilight liest live die Bildfarbe beim Spielen; Akku zeigt Ladestand & Schnellladen; Temp warnt ab 65 °C; Fest behält deine gewählte Farbe.')],
                  'Die Einstellung bleibt auch nach einem Neustart.')]
     if page == 'perf':
         if T is None: return loading
@@ -508,7 +511,14 @@ def groups(win, page):
                   else f'{len(BK.get("archives") or [])} Archive' if BK.get('archives') else 'bereit')
         st_val = (f'{round(ST["linux_total_gib"])} / {round(ST["android_gib"])} GiB'
                   if ST.get('supported') else 'prüfe …')
+        CL = SB.get('cleanup') or {}
+        cl_mb = float(CL.get('total_mb') or 0)
+        cl_val = (f'{cl_mb / 1024:.1f} GB frei machen'.replace('.', ',') if cl_mb >= 1024
+                  else f'{round(cl_mb)} MB frei machen' if cl_mb >= 1 else 'sauber')
         sys_rows = [
+            {'k': 'link', 't': 'Speicher-Bereinigung', 'v': cl_val,
+             'fn': lambda: go_page(win, 'library>cleanup'),
+             'help': 'Findet verwaiste Steam-Proton-Prefixe deinstallierter Spiele, alte Shader-Caches und Papierkorb-Reste – ohne jemals Spielstände oder installierte Spiele anzufassen.'},
             {'k': 'link', 't': 'Linux- & Tandem-Backup', 'v': bk_val,
              'fn': lambda: go_page(win, 'library>sysbackup'),
              'help': 'Integriertes System-Backup für Tandem, Emulatoren, Begleiter-Pakete, Ports und das komplette Linux-Home auf SD-Karte und SSH-Server.'},
@@ -518,6 +528,56 @@ def groups(win, page):
         ]
         store = [{'k': 'info', 't': s['name'], 'v': f'{round(s["free"] / 1e9)} von {round(s["total"] / 1e9)} GB frei', 'help': 'Freier Platz.'} for s in SYS.get('storage') or []]
         return [(None, rows, None), ('System & interner Speicher', sys_rows, None), ('Spielstände', sv_rows, None), ('Speicher', store, None)]
+    if page == 'library>cleanup':
+        SB = getattr(win, 'SYSBK', None) or {}
+        CL = SB.get('cleanup')
+        if CL is None:
+            return loading
+        def _fmt_sz(mb):
+            mb = float(mb or 0)
+            if mb >= 1024: return f'{mb / 1024:.1f} GB'.replace('.', ',')
+            if mb >= 1: return f'{round(mb)} MB'
+            return '0 MB'
+        def _clean(which):
+            win.toast('Bereinige Speicher …')
+            win.post('api/sysbackup', {'action': 'cleanup', 'which': which},
+                     then=lambda r: (setattr(win, 'sysbk_at', 0),
+                                     win.toast('Keine Antwort.' if r is None else r.get('error') or r.get('text', '')),
+                                     win.update()))
+        c_comp = CL.get('compatdata') or {}
+        c_shd = CL.get('shadercache') or {}
+        c_tmp = CL.get('trash') or CL.get('temp') or {}
+        tot_mb = float(CL.get('total_mb') or 0)
+        ov_c = [
+            {'k': 'info', 't': 'Freigebbarer Speicher', 'v': _fmt_sz(tot_mb),
+             'help': 'Gesamter Speicherplatz aus verwaisten Proton-Prefixen, alten Shader-Caches und Papierkorb-Resten.'},
+            {'k': 'info', 't': 'Verwaiste Proton-Prefixe', 'v': f'{c_comp.get("count", 0)} · {_fmt_sz(c_comp.get("mb", 0))}',
+             'sub': ', '.join((c_comp.get('items') or [])[:5]),
+             'help': 'Übriggebliebene compatdata-Ordner bereits deinstallierter Steam-Spiele (installierte Spiele & Shortcuts bleiben 100 % geschützt).'},
+            {'k': 'info', 't': 'Alte Steam-Shader-Caches', 'v': f'{c_shd.get("count", 0)} · {_fmt_sz(c_shd.get("mb", 0))}',
+             'help': 'Nicht mehr benötigte Vulkan-Shader-Caches deinstallierter Titel.'},
+            {'k': 'info', 't': 'Papierkorb & Temp-Reste', 'v': _fmt_sz(c_tmp.get('mb', 0)),
+             'help': 'Dateien im Linux-Papierkorb, abgebrochene .part-Downloads und alte Crash-Dumps.'},
+        ]
+        act_c = [
+            {'k': 'button', 't': 'Alles sicher bereinigen', 'v': _fmt_sz(tot_mb) if tot_mb >= 1 else 'sauber',
+             'fn': lambda: _clean('all'),
+             'help': 'Räumt verwaiste Proton-Prefixe, alte Shader-Caches und Papierkorb-Reste in einem Durchgang auf. Spielstände werden niemals gelöscht.'},
+        ]
+        if c_comp.get('count'):
+            act_c.append({'k': 'button', 't': 'Nur verwaiste Proton-Prefixe löschen', 'v': _fmt_sz(c_comp.get('mb', 0)),
+                          'fn': lambda: _clean('compatdata'),
+                          'help': 'Entfernt nur übriggebliebene compatdata-Ordner deinstallierter Spiele.'})
+        if c_shd.get('count'):
+            act_c.append({'k': 'button', 't': 'Nur alte Shader-Caches löschen', 'v': _fmt_sz(c_shd.get('mb', 0)),
+                          'fn': lambda: _clean('shadercache'),
+                          'help': 'Entfernt nur nicht mehr benötigte Steam-Shader-Caches.'})
+        if float(c_tmp.get('mb') or 0) >= 0.5:
+            act_c.append({'k': 'button', 't': 'Papierkorb & Temp leeren', 'v': _fmt_sz(c_tmp.get('mb', 0)),
+                          'fn': lambda: _clean('temp'),
+                          'help': 'Leert den Papierkorb und temporäre Download-Reste.'})
+        return [('Analyse', ov_c, None),
+                ('Bereinigen', act_c, 'Installierte Spiele, Shortcuts, Emulatoren und Spielstände bleiben unangetastet.')]
     if page == 'library>sysbackup':
         SB = getattr(win, 'SYSBK', None) or {}
         BK = SB.get('backups') or {}

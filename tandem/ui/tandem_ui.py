@@ -1165,6 +1165,7 @@ class Tandem(QRasterWindow):
                      lambda: self.post('api/collection', {'a': 'pin', 'id': gid})))
         is_fav = gid in (L.get('fav') or [])
         rows.append(('Favorit', '★ Ja' if is_fav else 'Nein', lambda: self.post('api/fav', {'id': gid})))
+        rows.append(('🎨 Cover & Bild wählen', '', lambda: self._open_art_picker(g)))
         if s == 'switch' and not gid.startswith('native-'):
             rows.append(('Nativ umwandeln (Peanuts)', 'Starten',
                          lambda: (setattr(self, 'GAME_MENU', None),
@@ -1183,15 +1184,62 @@ class Tandem(QRasterWindow):
         rows.append(('Schließen', '', lambda: setattr(self, 'GAME_MENU', None)))
         return rows
 
+    def _open_art_picker(self, g, query=''):
+        gm = self.GAME_MENU
+        if not gm: return
+        gm.update(art_picker=True, art_loading=True, art_items=[], art_has_custom=False, art_q=query, i=0)
+        self.update()
+        from urllib.parse import quote
+        url = f'api/artwork?id={quote(g["id"])}' + (f'&q={quote(query)}' if query else '')
+        def _got(r):
+            if self.GAME_MENU is not gm: return
+            gm['art_loading'] = False
+            if isinstance(r, dict):
+                gm['art_items'] = r.get('items') or []
+                gm['art_has_custom'] = bool(r.get('has_custom'))
+            self.update()
+        self.call(url, then=_got)
+
+    def _art_picker_rows(self, g):
+        gm = self.GAME_MENU or {}
+        rows = [
+            ('‹ Zurück zu Optionen', '', lambda: (gm.update(art_picker=False, i=0), self.update())),
+            ('Titel manuell suchen …', gm.get('art_q') or g['t'],
+             lambda: self.ask('Spieltitel für Cover-Suche', False, lambda v: v.strip() and self._open_art_picker(g, v.strip()))),
+        ]
+        if gm.get('art_has_custom'):
+            rows.append(('↺ Standard-Cover wiederherstellen', '',
+                         lambda: (self.toast('Stelle Standard-Cover wieder her …'),
+                                  self.post('api/artwork', {'id': g['id'], 'action': 'reset'},
+                                            then=lambda r: (self.toast((r or {}).get('error') or (r or {}).get('text', '')),
+                                                            self._open_art_picker(g, gm.get('art_q', '')))))))
+        if gm.get('art_loading'):
+            rows.append(('Suche Cover & Hero-Bilder …', '', lambda: None))
+        elif not gm.get('art_items'):
+            rows.append(('Keine passenden Bilder gefunden', 'Titel oben anpassen', lambda: None))
+        else:
+            for cand in gm['art_items']:
+                slot = cand.get('slot', 'cover')
+                act_lbl = 'Als Hero setzen' if slot == 'hero' else 'Als Cover setzen'
+                rows.append((cand.get('label') or 'Cover', act_lbl,
+                             lambda u_c=cand['url'], sl=slot: (
+                                 self.toast('Lade & speichere Bild …'),
+                                 self.post('api/artwork', {'id': g['id'], 'action': 'apply', 'url': u_c, 'slot': sl},
+                                           then=lambda r: (self.toast((r or {}).get('error') or (r or {}).get('text', '')),
+                                                           setattr(self, 'GAME_MENU', None) if (r or {}).get('ok') else None)))))
+        return rows
+
     def game_menu_key(self, a):
         gm = self.GAME_MENU
         if not gm: return
         g = next((x for x in self.L['games'] if x['id'] == gm['id']), None)
         if not g:
             self.GAME_MENU = None; return
-        rows = self._game_menu_rows(g)
+        rows = self._art_picker_rows(g) if gm.get('art_picker') else self._game_menu_rows(g)
         if a == 'up': gm['i'] = (gm['i'] - 1) % len(rows)
         elif a == 'down': gm['i'] = (gm['i'] + 1) % len(rows)
+        elif a == 'back' and gm.get('art_picker'):
+            gm.update(art_picker=False, i=0)
         elif a in ('back', 'close', 'menu'): self.GAME_MENU = None
         elif a == 'ok' and rows: rows[min(gm['i'], len(rows) - 1)][2]()
 
@@ -1264,8 +1312,12 @@ class Tandem(QRasterWindow):
     def ui_haptic(self):
         if self.CFG.get('ui_haptics', True): HAPTICS.tap()
 
+    def _rgb_cover_allowed(self):
+        rm = self.CFG.get('rgb_mode') or ('cover' if self.CFG.get('rgb_sync', True) else 'static')
+        return rm == 'cover' or (rm == 'ambilight' and not self.playing())
+
     def _queue_rgb(self, hex_color):
-        if self.side != 'bottom' or not self.CFG.get('rgb_sync', True): return
+        if self.side != 'bottom' or not self._rgb_cover_allowed(): return
         if self.THOR and self.THOR.get('rgb') and not self.THOR['rgb'].get('enabled'): return
         hc = str(hex_color or '').lstrip('#').upper()
         if len(hc) != 6 or hc == self._rgb_last or hc == self._rgb_pending: return
@@ -1275,7 +1327,7 @@ class Tandem(QRasterWindow):
     def _flush_rgb(self):
         hc = self._rgb_pending
         self._rgb_pending = None
-        if not hc or hc == self._rgb_last or not self.CFG.get('rgb_sync', True): return
+        if not hc or hc == self._rgb_last or not self._rgb_cover_allowed(): return
         if self.THOR and self.THOR.get('rgb') and not self.THOR['rgb'].get('enabled'): return
         self._rgb_last = hc
         self.post('api/thor', {'rgb': {'color': hc, 'enabled': True}})
@@ -2063,7 +2115,12 @@ class Tandem(QRasterWindow):
             if P: meta = [lead, fact('Emulator', RUN['emu']), fact('Läuft seit', hours(time.time() - RUN['since']))]
             elif it.get('kind') == 'sys': meta = [lead, [(str(it['n']), mv, TEXT), (' Spiele', m, MUTED)], fact('Emulator', sysinfo.get('emu') or 'fehlt')]
             else:
-                extra_facts = (([fact('Jahr', it['year'])] if it.get('year') else [])
+                pdb_map = {'platinum': ('Platin', QColor('#67e8f9')), 'gold': ('Gold', QColor('#facc15')),
+                           'silver': ('Silber', QColor('#cbd5e1')), 'bronze': ('Bronze', QColor('#fb923c'))}
+                pdb_fact = ([[('ProtonDB ', m, MUTED), (pdb_map[it['protondb']][0], ('u', 1.5, 700), pdb_map[it['protondb']][1])]]
+                            if it.get('protondb') in pdb_map else [])
+                extra_facts = (pdb_fact
+                               + ([fact('Jahr', it['year'])] if it.get('year') else [])
                                + ([fact('Genre', it['genre'])] if it.get('genre') else [])
                                + ([fact('Studio', it['dev'])] if it.get('dev') and not played.get('last') else [])
                                + ([fact('Spielumfang', f'~{it["ttb"]:g} Std.')] if it.get('ttb') else []))
@@ -2634,7 +2691,7 @@ class Tandem(QRasterWindow):
         u, W, H = self.u, self.width(), self.height()
         x0, cw, bottom = 2.6 * u, W - 5.2 * u, H - 2.6 * u
         y = self.tabs(p, g['t'], [('Fertig', True, lambda: setattr(self, 'GAME_MENU', None))])
-        rows = self._game_menu_rows(g)
+        rows = self._art_picker_rows(g) if gm.get('art_picker') else self._game_menu_rows(g)
         sel = max(0, min(gm['i'], len(rows) - 1))
         area = QRectF(x0, y, cw, bottom - y)
 
