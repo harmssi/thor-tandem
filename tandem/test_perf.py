@@ -130,6 +130,14 @@ class PerfEngineTest(unittest.TestCase):
         self.assertEqual(env_b12['DM_VK_CS_WAIT_MS'], '12')
         self.assertEqual(env_b12['DM_VK_IMG_PSI'], '0')
         self.assertEqual(env_b12['DM_VK_PSO_SLOTS'], '4')
+        self.assertEqual(env_b12['DM_VK_PSO_ASYNC_ALL'], '1')
+        self.assertEqual(env_b12['DM_VK_PUSH_DELTA'], '1')
+        self.assertEqual(env_b12['DM_VK_PREWARM'], '6')
+        if (thor_perf.os.cpu_count() or 0) >= 8:
+            self.assertEqual(env_b12['DM_VK_AFF_ALL'], '56')
+            self.assertEqual(env_b12['DM_VK_AFF_ENC'], '64')
+            self.assertEqual(env_b12['DM_VK_AFF_REPLAY'], '128')
+            self.assertEqual(env_b12['DM_VK_AFF_BG'], '7')
         mem16 = self.root / 'meminfo16'
         mem16.write_text('MemTotal:       16000000 kB\nMemAvailable:   12000000 kB\n')
         env_b16 = thor_perf.game_env({}, {}, 'steam', engine_label='BananaNative', meminfo=mem16)

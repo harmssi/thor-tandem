@@ -1365,7 +1365,7 @@ class Tandem:
                     except OSError as error:
                         thor_perf.set_tandem_isolation(False)
                         return {'error': f'Start fehlgeschlagen: {error}'}
-                    if game.get('s') not in ('term', 'app'):
+                    if game.get('s') not in ('term', 'app', 'banananative') and label not in ('BananaNative', 'PeanutsNative'):
                         thor_perf.pin_game_tree(self.proc.pid, 'big')
                     if game.get('direct') or game['s'] not in ('steam', 'app'): (STATE / 'running').write_text(f'{self.proc.pid} {start_time(self.proc.pid)}')
             played = self.saved.setdefault('played', {}).setdefault(gid, {'secs': 0})
@@ -1597,7 +1597,7 @@ class Tandem:
                     proc.wait(timeout=delay)
                     break
                 except subprocess.TimeoutExpired:
-                    if self.run and self.run.get('id') == gid and self.run.get('s') not in ('term', 'app'):
+                    if self.run and self.run.get('id') == gid and self.run.get('s') not in ('term', 'app', 'banananative') and self.run.get('emu') not in ('BananaNative', 'PeanutsNative'):
                         thor_perf.pin_game_tree(proc.pid, 'big')
             else:
                 proc.wait()

@@ -396,6 +396,8 @@ def pin_game_tree(root_pid=None, mode='big'):
                     if len(fields) >= 2 and fields[1].isdigit():
                         children.setdefault(int(fields[1]), []).append(pid)
                 cmd = (entry / 'cmdline').read_bytes().decode('utf-8', 'ignore').lower()
+                if 'nxhost_' in cmd:
+                    continue
                 if ('.exe' in cmd or 'wineserver' in cmd or 'fex' in cmd) and 'tandem' not in cmd and 'steamwebhelper' not in cmd:
                     exe_pids.add(pid)
             except OSError:
@@ -568,12 +570,22 @@ def game_env(base_env=None, opt=None, system='', fex_mode='fast', turnip_driver=
             env.setdefault('DM_VK_CS_ASYNC', '1')
             env.setdefault('DM_VK_CS_WAIT_MS', '12')
             env.setdefault('DM_VK_PSO_ASYNC', '4')
+            env.setdefault('DM_VK_PSO_ASYNC_ALL', '1')
             env.setdefault('DM_VK_IMG_PSI', '0')
+            env.setdefault('DM_VK_PUSH_DELTA', '1')
+            env.setdefault('DM_VK_PREWARM', '6')
+            env.setdefault('DM_VK_PREPARE_SLOTS', '6')
+            env.setdefault('DM_VK_PREWARM_MEM_MB', '512')
+            env.setdefault('DM_VK_PREWARM_OVERLAP', '1')
         env.setdefault('DM_VK_PSO_SLOTS', '4')
         if (os.cpu_count() or 0) >= 8:
-            env.setdefault('DM_VK_AFF_ALL', '120')
+            # 4-tier non-overlapping Snapdragon 8 Gen 2 core isolation:
+            # Core 7 (128, X3 Prime) = vk-replay; Core 6 (64, A715 Gold) = vk-enc;
+            # Cores 3-5 (56, A715/A710 Gold) = guest threads; Cores 0-2 (7, A510 Silver) = background PSO compilers
+            env.setdefault('DM_VK_AFF_ALL', '56')
+            env.setdefault('DM_VK_AFF_ENC', '64')
             env.setdefault('DM_VK_AFF_REPLAY', '128')
-            env.setdefault('DM_VK_AFF_BG', '63')
+            env.setdefault('DM_VK_AFF_BG', '7')
 
     # 8. Big-Core topology hint for Wine/Proton when pinned to cores 3-7
     if opt.get('cores', 'big') == 'big' and (os.cpu_count() or 0) >= 8:
