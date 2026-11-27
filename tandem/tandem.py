@@ -45,9 +45,12 @@ def ra(*cores): return ('retroarch', cores, ())
 # Folder name (ES-DE layout) -> display name, hue for tiles without art, file extensions, emulators in order of
 # preference. Paths and install kinds follow the Armada Store catalog and docs (armadaos.dev/emulation).
 SYSTEMS = {
-    'gb': ('Game Boy', 40, 'gb sgb zip 7z', [('RetroArch', ra('gambatte', 'sameboy', 'mgba'))]),
-    'gbc': ('Game Boy Color', 275, 'gbc gb zip 7z', [('RetroArch', ra('gambatte', 'sameboy', 'mgba'))]),
-    'gba': ('Game Boy Advance', 255, 'gba zip 7z', [('RetroArch', ra('mgba', 'vba_next', 'gpsp'))]),
+    'gb': ('Game Boy', 40, 'gb sgb zip 7z', [('RetroArch', ra('gambatte', 'sameboy', 'mgba')),
+                                             ('PokeDaisy', ('cmd', '.local/opt/pokedaisy/pokedaisy-run', ()))]),
+    'gbc': ('Game Boy Color', 275, 'gbc gb zip 7z', [('RetroArch', ra('gambatte', 'sameboy', 'mgba')),
+                                                     ('PokeDaisy', ('cmd', '.local/opt/pokedaisy/pokedaisy-run', ()))]),
+    'gba': ('Game Boy Advance', 255, 'gba zip 7z', [('RetroArch', ra('mgba', 'vba_next', 'gpsp')),
+                                                    ('PokeDaisy', ('cmd', '.local/opt/pokedaisy/pokedaisy-run', ()))]),
     'nes': ('NES', 0, 'nes fds unf unif zip 7z', [('RetroArch', ra('nestopia', 'fceumm', 'mesen'))]),
     'famicom': ('Famicom', 5, 'nes fds unf unif zip 7z', [('RetroArch', ra('nestopia', 'fceumm', 'mesen'))]),
     'fds': ('Famicom Disk System', 12, 'fds nes zip 7z', [('RetroArch', ra('nestopia', 'fceumm', 'mesen'))]),
@@ -58,7 +61,8 @@ SYSTEMS = {
     'pokemini': ('Pokémon Mini', 50, 'min zip 7z', [('RetroArch', ra('pokemini'))]),
     'gameandwatch': ('Game & Watch', 35, 'mgw zip 7z', [('RetroArch', ra('gw'))]),
     'nds': ('Nintendo DS', 200, 'nds app zip 7z', [('melonDS', app('melonDS*.AppImage')), ('melonDS', fp('net.kuribo64.melonDS')),
-                                                   ('RetroArch', ra('melondsds', 'desmume'))]),
+                                                   ('RetroArch', ra('melondsds', 'desmume')),
+                                                   ('PokeDaisy', ('cmd', '.local/opt/pokedaisy/pokedaisy-run', ()))]),
     'n3ds': ('Nintendo 3DS', 350, '3ds 3dsx cci cxi cia', [('Azahar', app('Azahar*.AppImage'))]),
     'gc': ('GameCube', 265, 'iso rvz gcm gcz ciso wia', [('Dolphin', fp('org.DolphinEmu.dolphin-emu', '-b', '-e'))]),
     'wii': ('Wii', 190, 'iso rvz wbfs wad gcz ciso wia', [('Dolphin', fp('org.DolphinEmu.dolphin-emu', '-b', '-e'))]),
@@ -141,7 +145,8 @@ DECK_SOCKET = Path(os.environ.get('XDG_RUNTIME_DIR') or STATE) / 'tandem-deck.so
 # Apps offered in the Apps tab when installed: (label, kind, target, args)
 APPS = [('Firefox', 'cmd', 'firefox', ()), ('Heroic', 'cmd', 'heroic', ('--no-sandbox',)), ('ES-DE', 'appimage', 'ES-DE*.AppImage', ()),
         ('Moonlight', 'flatpak', 'com.moonlight_stream.Moonlight', ()), ('Chiaki', 'flatpak', 'io.github.streetpea.Chiaki4deck', ()),
-        ('RetroArch', 'flatpak', RA_REF, ()), ('Prism Launcher', 'flatpak', 'org.prismlauncher.PrismLauncher', ())]
+        ('RetroArch', 'flatpak', RA_REF, ()), ('PokeDaisy', 'cmd', '.local/opt/pokedaisy/pokedaisy-run', ()),
+        ('Prism Launcher', 'flatpak', 'org.prismlauncher.PrismLauncher', ())]
 # Media apps: mpv (Flathub io.mpv.Mpv) plays full screen on top, the app's deck (ui/decks/<deck>.py) browses and steers it
 # over mpv's IPC socket and gets the controller's navigation. The socket is in /tmp: mpv's sandbox sees the host's /tmp.
 MEDIA_SOCKET = Path(f'/tmp/tandem-mpv-{os.getuid()}.sock')
@@ -222,7 +227,7 @@ def app_icon(kind, target):
             try: text = Path(desktop).read_text(errors='ignore')
             except OSError: continue
             exe, icon = re.search(r'^Exec=(\S+)', text, re.M), re.search(r'^Icon=(.+)$', text, re.M)
-            if exe and icon and os.path.basename(exe[1]) == target: name = icon[1].strip(); break
+            if exe and icon and os.path.basename(exe[1]) == os.path.basename(target): name = icon[1].strip(); break
     if not name: return None
     if name.startswith('/'): return name if Path(name).suffix.lower() in IMAGES and os.path.isfile(name) else None
     for theme in ('/usr/share/icons/hicolor', HOME / '.local/share/flatpak/exports/share/icons/hicolor', '/var/lib/flatpak/exports/share/icons/hicolor'):
@@ -275,7 +280,8 @@ def resolve(kind, target, args):
     if kind == 'cmd':
         if '/' in target:
             cand = target if target.startswith('/') else str(HOME / target)
-            return ([cand, *args], None) if os.access(cand, os.X_OK) else (None, 'Peanuts Native ist nicht installiert')
+            miss = 'PokeDaisy ist nicht installiert' if 'pokedaisy' in target.lower() else 'Peanuts Native ist nicht installiert'
+            return ([cand, *args], None) if os.access(cand, os.X_OK) else (None, miss)
         path = which(target)
         return ([path, *args], None) if path else (None, f'{target} ist nicht installiert')
     if kind == 'appimage':
@@ -421,6 +427,8 @@ def emulator(system, prefer=None):
         if hit: return hit['emu'], hit['cmd']
     reasons = []
     for label, (kind, target, args) in emus:
+        if label == 'PokeDaisy':
+            continue  # Pokémon-specific engine (selected automatically in command() or via explicit prefer)
         cmd, why = resolve(kind, target, args)
         if cmd: return label, cmd
         reasons.append(f'{label}: {why}')
@@ -1046,14 +1054,15 @@ def hide_steam(tandem):
 X_QUIET = None  # kept alive for Xlib
 
 
-def x_window(action, window):
+def x_window(action, window, display=None):
     """Hide ('unmap'), show ('map') or politely close ('close' via WM_DELETE_WINDOW) another program's X11 window."""
     import ctypes
     try:
         x = ctypes.CDLL('libX11.so.6')
         x.XOpenDisplay.restype = ctypes.c_void_p
-        display = x.XOpenDisplay((os.environ.get('DISPLAY') or ':0').encode())
-        if not display: return False
+        dpy_name = (display or os.environ.get('DISPLAY') or ':0').encode()
+        dpy = x.XOpenDisplay(dpy_name)
+        if not dpy: return False
         # Xlib's own reaction to an error (a window that is gone by now) is to end the whole program: replace it.
         global X_QUIET
         X_QUIET = X_QUIET or ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p)(lambda *_: 0)
@@ -1061,25 +1070,25 @@ def x_window(action, window):
         if action == 'close':
             x.XInternAtom.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int]
             x.XInternAtom.restype = ctypes.c_ulong
-            wm_proto = x.XInternAtom(display, b'WM_PROTOCOLS', 0)
-            wm_del = x.XInternAtom(display, b'WM_DELETE_WINDOW', 0)
+            wm_proto = x.XInternAtom(dpy, b'WM_PROTOCOLS', 0)
+            wm_del = x.XInternAtom(dpy, b'WM_DELETE_WINDOW', 0)
             ev = (ctypes.c_long * 24)(33, 0, 1, 0, window, wm_proto, 32, wm_del, 0)  # ClientMessage = 33, format = 32
             x.XSendEvent.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.c_long, ctypes.c_void_p]
-            x.XSendEvent(display, window, 0, 0, ctypes.byref(ev))
+            x.XSendEvent(dpy, window, 0, 0, ctypes.byref(ev))
         else:
             call = x.XUnmapWindow if action == 'unmap' else x.XMapWindow
             call.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
-            call(display, window)
+            call(dpy, window)
         x.XFlush.argtypes = x.XCloseDisplay.argtypes = [ctypes.c_void_p]
         x.XSync.argtypes = [ctypes.c_void_p, ctypes.c_int]
-        x.XSync(display, 0); x.XCloseDisplay(display)  # XSync: errors arrive while the quiet handler is in place
+        x.XSync(dpy, 0); x.XCloseDisplay(dpy)  # XSync: errors arrive while the quiet handler is in place
         return True
     except OSError: return False
 
 
-def x_windows_matching(*needles):
-    """X11 window IDs on the top gamescope server whose WM_CLASS or WM_NAME contains any needle (case-insensitive)."""
-    env = {**os.environ, 'DISPLAY': os.environ.get('DISPLAY') or ':0'}
+def x_windows_matching(*needles, display=None):
+    """X11 window IDs on a gamescope server whose WM_CLASS or WM_NAME contains any needle (case-insensitive)."""
+    env = {**os.environ, 'DISPLAY': display or os.environ.get('DISPLAY') or ':0'}
     try: raw = subprocess.run(['xprop', '-root', 'GAMESCOPE_FOCUSABLE_WINDOWS'], env=env, capture_output=True, text=True, timeout=3).stdout
     except (OSError, subprocess.SubprocessError): return []
     seen, found = set(), []
@@ -1216,6 +1225,10 @@ class Tandem:
         if game['s'] == 'steam': return 'Steam', ['steam', '-silent', f'steam://rungameid/{game.get("gameid") or game["appid"]}']  # no Steam window, only the game
         if game['s'] == 'port': return 'Port', [str(PORTS_DIR / PORTS[game['port']][1] / 'run'), PORTS[game['port']][2]]
         prefer = (self.saved.get('gameopt', {}).get(game['id']) or {}).get('emu')
+        if not prefer and game.get('s') in ('gb', 'gbc', 'gba', 'nds') and game.get('path') and companion.is_pokemon_rom(game['path']):
+            pd_cmd, _ = resolve('cmd', '.local/opt/pokedaisy/pokedaisy-run', ())
+            if pd_cmd:
+                return 'PokeDaisy', [*pd_cmd, game['path']]
         label, cmd = emulator(game['s'], prefer)
         return (label, cmd + [game['path']]) if label else (None, cmd)
 
@@ -1330,6 +1343,15 @@ class Tandem:
                         if game['s'] == 'wiiu': cemu_pad_window()
                         else: companion.setup_dual_emu(game['s'], label)
                     if game['s'] == 'port': env = {**os.environ, 'TANDEM_DECK_SOCKET': str(DECK_SOCKET)}
+                    if label == 'PokeDaisy':
+                        if game.get('path'):
+                            companion.sync_pokedaisy_save(game['path'], home=HOME)
+                        env = {**os.environ, 'DISPLAY': os.environ.get('DISPLAY') or ':0',
+                               'WAYLAND_DISPLAY': os.environ.get('WAYLAND_DISPLAY') or 'gamescope-0',
+                               'XDG_RUNTIME_DIR': os.environ.get('XDG_RUNTIME_DIR') or f'/run/user/{os.getuid()}',
+                               'SDL_VIDEO_MINIMIZE_ON_FOCUS_LOSS': '0',
+                               'DISABLE_GAMESCOPE_WSI': '1',
+                               'POCKET_DUAL_SCREEN': '1'}
                     if label in ('BananaNative', 'PeanutsNative'):
                         env = {**os.environ, 'DISPLAY': os.environ.get('DISPLAY') or ':0',
                                'WAYLAND_DISPLAY': os.environ.get('WAYLAND_DISPLAY') or 'gamescope-0',
@@ -1632,9 +1654,13 @@ class Tandem:
             steam, had_prof, had_fps = self.run.get('appid'), bool(self.run.get('profile')), bool(self.run.get('fps'))
             had_scale = self.run.get('scale', 'linear') != 'linear'
             is_game = self.run.get('s') not in ('app', 'term')
+            finished_emu = self.run.get('emu')
+            finished_game = self.library.games.get(gid)
             self.run, self.proc = None, None
             (STATE / 'running').unlink(missing_ok=True)
             self.mirror_stop()
+        if finished_emu == 'PokeDaisy' and finished_game and finished_game.get('path') and not self.dry:
+            companion.sync_pokedaisy_save(finished_game['path'], home=HOME)
         if steam: self.steam_rest()
         cfg_end = load_config()
         if had_prof and not self.dry:
@@ -1783,7 +1809,13 @@ class Tandem:
                 if more and more != self.home_window and more not in windows:
                     x_window('unmap', more); windows.append(more)
             self.mirror_stop()  # Tandem's own bottom page is needed again
-            run['paused'], run['windows'] = True, windows
+            bottom_windows = []
+            dpys = _x11_displays()
+            if len(dpys) > 1 and run.get('emu') == 'PokeDaisy':
+                for bwid in x_windows_matching('pokedaisy', display=dpys[1]):
+                    if x_window('unmap', bwid, display=dpys[1]):
+                        bottom_windows.append((dpys[1], bwid))
+            run['paused'], run['windows'], run['bottom_windows'] = True, windows, bottom_windows
             self.ui = {'tab': 0, 'sys': None, 'i': 0}  # the first page, where the paused game stands in front
         if not self.dry:
             threading.Thread(target=sync_era_bgm_for, args=(self,), daemon=True).start()
@@ -1797,6 +1829,7 @@ class Tandem:
             if not self.dry:
                 telemetry.stop_all_bgm(suspend=True, dry=self.dry)
             for window in reversed(run['windows']): x_window('map', window)  # the game's main window last: it gets the screen
+            for bdpy, bwid in reversed(run.get('bottom_windows') or []): x_window('map', bwid, display=bdpy)
             try: self.send(signal.SIGCONT)
             except ProcessLookupError: pass
             run['paused'] = False

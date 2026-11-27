@@ -18,6 +18,8 @@ def all_candidates(home=None):
     candidates = [
         ('retroarch-saves', h / '.var/app/org.libretro.RetroArch/config/retroarch/saves'),
         ('retroarch-states', h / '.var/app/org.libretro.RetroArch/config/retroarch/states'),
+        ('pokedaisy-saves', h / '.local/share/pokedaisy/saves'),
+        ('pokedaisy-states', h / '.local/share/pokedaisy/states'),
         ('duckstation', h / '.local/share/duckstation/memcards'),
         ('armsx2', h / '.config/ARMSX2/memcards'),
         ('pcsx2', h / '.config/PCSX2/memcards'),
@@ -255,6 +257,8 @@ def keys_for_game(game, emu_label=''):
             'homm3': ['port-homm3'], 'kknd2': ['port-kknd2'], 'ra2': ['port-ra2'], 'yr': ['port-ra2'],
         }
         return pmap.get(p, [])
+    if lbl == 'PokeDaisy':
+        return ['pokedaisy-saves', 'pokedaisy-states', 'retroarch-saves', 'retroarch-states']
     smap = {
         'psx': ['duckstation', 'retroarch-saves', 'retroarch-states'],
         'ps2': ['armsx2', 'pcsx2'],

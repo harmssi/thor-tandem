@@ -2478,4 +2478,152 @@ class MomentTracker:
             shutil.rmtree(sess['work_dir'], ignore_errors=True)
 
 
+# ---- PokeDaisy Dual-Screen ROM Detection & Bidirectional Save Bridge -------------------------------------------------
+_PD_GBA_CODES = (b'BPR', b'BPG', b'BPE', b'AXV', b'AXP', b'MONE', b'PUVV')
+_PD_NDS_CODES = (b'ADA', b'APA', b'CPU', b'IPK', b'IPG', b'IRB', b'IRA', b'IRE', b'IRD')
+_PD_GB_SPINOFFS = (b'POKECARD', b'POKEPINBALL', b'POKEMON PC', b'POKEMONPC', b'POKEMON-CG', b'POKEMON PINB')
+
+
+def is_pokemon_rom(path):
+    """True if `path` is an uncompressed GB/GBC/GBA/NDS main-series Pokémon cartridge supported by PokeDaisy."""
+    p = Path(str(path or ''))
+    ext = p.suffix.lower()
+    if ext not in ('.gb', '.gbc', '.gba', '.nds') or not p.is_file():
+        return False
+    try:
+        with open(p, 'rb') as f:
+            head = f.read(0x150)
+    except OSError:
+        return False
+    if ext == '.gba':
+        return len(head) >= 0xB0 and any(head[0xAC:0xAC + len(c)] == c for c in _PD_GBA_CODES)
+    if ext == '.nds':
+        return len(head) >= 0x10 and any(head[0x0C:0x0C + 3] == c for c in _PD_NDS_CODES)
+    if len(head) < 0x144:
+        return False
+    title = head[0x134:0x144]
+    if any(title.startswith(sp) for sp in _PD_GB_SPINOFFS):
+        return False
+    return title.startswith((b'POKE', b'PM_', b'PK'))
+
+
+def _same_battery_save(a, b):
+    """Compare two battery saves ignoring mGBA's trailing 16/48-byte RTC clock footer when the 512B-aligned SRAM matches."""
+    na, nb = len(a) - (len(a) % 512), len(b) - (len(b) % 512)
+    if not na or na != nb:
+        return a == b
+    return a[:na] == b[:nb]
+
+
+def _backup_save_before_overwrite(target, backup_dir):
+    if not target.is_file():
+        return
+    try:
+        data = target.read_bytes()
+        if not data:
+            return
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime('%Y%m%d-%H%M%S')
+        out = backup_dir / f'{target.stem}.bridge-backup-{stamp}{target.suffix}'
+        tmp = out.with_suffix(out.suffix + '.tmp')
+        tmp.write_bytes(data)
+        os.replace(tmp, out)
+    except OSError:
+        pass
+
+
+def sync_pokedaisy_save(rom_path, home=None, extra_backup_dirs=()):
+    """Non-destructively sync battery saves between PokeDaisy (`~/.local/share/pokedaisy/saves/<rom_name>.sav`)
+    and RetroArch/melonDS (`.srm` / `.sav`), seeding from SD backups if no active save exists yet."""
+    p = Path(str(rom_path or ''))
+    if not p.name or p.suffix.lower() not in ('.gb', '.gbc', '.gba', '.nds'):
+        return {'ok': False, 'action': 'unsupported'}
+    h = Path(home) if home else HOME
+    pd_saves = h / '.local/share/pokedaisy/saves'
+    pd_backups = pd_saves / 'pokedaisy-backups'
+    pd_sav = pd_saves / f'{p.name}.sav'
+    pd_stem_sav = pd_saves / f'{p.stem}.sav'
+    active_pd = pd_sav if pd_sav.is_file() else (pd_stem_sav if pd_stem_sav.is_file() else pd_sav)
+
+    ext = p.suffix.lower()
+    ra_bases = [
+        h / '.var/app/org.libretro.RetroArch/config/retroarch/saves',
+        h / '.config/retroarch/saves',
+    ]
+    core_dirs = (
+        ('mGBA',) if ext == '.gba'
+        else ('Gambatte', 'SameBoy', 'mGBA') if ext in ('.gb', '.gbc')
+        else ('melonDS DS', 'DeSmuME', '')
+    )
+    live_peers = []
+    for rb in ra_bases:
+        for cd in core_dirs:
+            d = (rb / cd) if cd else rb
+            for cand in (d / f'{p.stem}.srm', d / f'{p.stem}.sav'):
+                if cand.is_file() and cand.stat().st_size >= 512:
+                    live_peers.append(cand)
+        for cand in (rb / f'{p.stem}.srm', rb / f'{p.stem}.sav'):
+            if cand.is_file() and cand not in live_peers and cand.stat().st_size >= 512:
+                live_peers.append(cand)
+    if ext == '.nds':
+        for md in (h / '.local/share/melonDS', h / '.local/share/melonds', p.parent):
+            cand = md / f'{p.stem}.sav'
+            if cand.is_file() and cand != active_pd and cand not in live_peers and cand.stat().st_size >= 512:
+                live_peers.append(cand)
+
+    seed_peers = []
+    if not active_pd.is_file() and not live_peers:
+        bdirs = list(extra_backup_dirs)
+        if not bdirs:
+            for pat in ('/run/media/*/*/Backup/ra-saves-*/*', '/media/*/*/Backup/ra-saves-*/*'):
+                bdirs.extend(Path(x) for x in sorted(glob.glob(pat)))
+        for bd in bdirs:
+            bd = Path(bd)
+            for cand in (bd / f'{p.stem}.sav', bd / f'{p.stem}.srm'):
+                if cand.is_file() and cand.stat().st_size >= 512:
+                    seed_peers.append(cand)
+
+    newest_peer = max(live_peers or seed_peers, key=lambda f: f.stat().st_mtime, default=None)
+    pd_saves.mkdir(parents=True, exist_ok=True)
+
+    if not active_pd.is_file():
+        if not newest_peer:
+            return {'ok': True, 'action': 'none', 'pd_save': str(pd_sav)}
+        shutil.copy2(newest_peer, pd_sav)
+        return {'ok': True, 'action': 'seeded_to_pokedaisy', 'source': str(newest_peer), 'pd_save': str(pd_sav)}
+
+    if not live_peers:
+        return {'ok': True, 'action': 'pokedaisy_only', 'pd_save': str(active_pd)}
+
+    try:
+        pd_bytes = active_pd.read_bytes()
+        peer_bytes = newest_peer.read_bytes()
+    except OSError as e:
+        return {'ok': False, 'action': 'error', 'error': str(e)}
+
+    if _same_battery_save(pd_bytes, peer_bytes):
+        return {'ok': True, 'action': 'in_sync', 'pd_save': str(active_pd), 'peer': str(newest_peer)}
+
+    pd_mtime = active_pd.stat().st_mtime
+    peer_mtime = newest_peer.stat().st_mtime
+    if peer_mtime > pd_mtime + 1.0:
+        _backup_save_before_overwrite(active_pd, pd_backups)
+        tmp = active_pd.with_suffix(active_pd.suffix + '.tmp')
+        tmp.write_bytes(peer_bytes)
+        os.replace(tmp, active_pd)
+        shutil.copystat(newest_peer, active_pd)
+        return {'ok': True, 'action': 'updated_pokedaisy_from_peer', 'source': str(newest_peer), 'pd_save': str(active_pd)}
+
+    if pd_mtime > peer_mtime + 1.0:
+        _backup_save_before_overwrite(newest_peer, pd_backups)
+        tmp = newest_peer.with_suffix(newest_peer.suffix + '.tmp')
+        tmp.write_bytes(pd_bytes)
+        os.replace(tmp, newest_peer)
+        shutil.copystat(active_pd, newest_peer)
+        return {'ok': True, 'action': 'updated_peer_from_pokedaisy', 'target': str(newest_peer), 'pd_save': str(active_pd)}
+
+    return {'ok': True, 'action': 'in_sync', 'pd_save': str(active_pd)}
+
+
+
 

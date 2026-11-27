@@ -1791,5 +1791,101 @@ class ThorStorageTests(unittest.TestCase):
                             'cloud_saves': True, 'panel_hz': 120, 'auto_travel': False, 'ai_workdir': ''})
 
 
+class PokeDaisyIntegrationTests(unittest.TestCase):
+    def test_pokemon_rom_detection_smart_emu_and_save_bridge(self):
+        import companion, saves
+        pk_root = TMP / 'pd-roms'
+        # 1) Authentic GBA FireRed header (BPRD at 0xAC) vs non-Pokémon GBA ROM
+        fr_rom = pk_root / 'gba/Pokemon - Feuerrote Edition (Germany).gba'
+        zelda_rom = pk_root / 'gba/Zelda Minish Cap.gba'
+        gbc_rom = pk_root / 'gbc/Pokemon - Kristall-Edition (Germany).gbc'
+        pinball_rom = pk_root / 'gbc/Pokemon Pinball.gbc'
+        nds_rom = pk_root / 'nds/Pokemon Platin.nds'
+
+        fr_hdr = bytearray(0x150)
+        fr_hdr[0xAC:0xB0] = b'BPRD'
+        touch_bin(fr_rom, bytes(fr_hdr))
+
+        z_hdr = bytearray(0x150)
+        z_hdr[0xAC:0xB0] = b'BZMP'
+        touch_bin(zelda_rom, bytes(z_hdr))
+
+        c_hdr = bytearray(0x150)
+        c_hdr[0x134:0x142] = b'PM_CRYSTAL_GER'
+        touch_bin(gbc_rom, bytes(c_hdr))
+
+        pb_hdr = bytearray(0x150)
+        pb_hdr[0x134:0x143] = b'POKEMON PINBALL'
+        touch_bin(pinball_rom, bytes(pb_hdr))
+
+        ds_hdr = bytearray(0x150)
+        ds_hdr[0x0C:0x10] = b'CPUD'
+        touch_bin(nds_rom, bytes(ds_hdr))
+
+        self.assertTrue(companion.is_pokemon_rom(fr_rom))
+        self.assertFalse(companion.is_pokemon_rom(zelda_rom))
+        self.assertTrue(companion.is_pokemon_rom(gbc_rom))
+        self.assertFalse(companion.is_pokemon_rom(pinball_rom))
+        self.assertTrue(companion.is_pokemon_rom(nds_rom))
+
+        # 2) Install fake PokeDaisy runner + RetroArch core and verify Smart Emulator auto-selection + override
+        pd_runner = HOME / '.local/opt/pokedaisy/pokedaisy-run'
+        touch(pd_runner, '#!/bin/sh\nexit 0\n')
+        pd_runner.chmod(0o755)
+        ra_dir = TMP / 'home/.var/lib/flatpak/app/org.libretro.RetroArch'
+        ra_dir.mkdir(parents=True, exist_ok=True)
+        ra_core = HOME / '.var/app/org.libretro.RetroArch/config/retroarch/cores/mgba_libretro.so'
+        touch(ra_core, 'so')
+        keep_fp = tandem.FLATPAK_DIRS
+        tandem.FLATPAK_DIRS = [TMP / 'home/.var/lib/flatpak/app']
+        try:
+            lib = tandem.Library([str(pk_root)], HOME / '.local/share/Steam')
+            lib.scan()
+            t = tandem.Tandem(lib, dry=True)
+            fr_game = next(g for g in lib.games.values() if 'Feuerrote' in g['t'])
+            z_game = next(g for g in lib.games.values() if 'Minish' in g['t'])
+
+            lbl_fr, cmd_fr = t.command(fr_game)
+            self.assertEqual(lbl_fr, 'PokeDaisy')
+            self.assertEqual(cmd_fr[-1], str(fr_rom))
+
+            lbl_z, _ = t.command(z_game)
+            self.assertEqual(lbl_z, 'RetroArch')
+
+            # Explicit per-game override back to RetroArch (mgba) must be honored
+            t.gameopt({'id': fr_game['id'], 'emu': 'ra:mgba'})
+            lbl_override, _ = t.command(fr_game)
+            self.assertEqual(lbl_override, 'RetroArch')
+        finally:
+            tandem.FLATPAK_DIRS = keep_fp
+            pd_runner.unlink(missing_ok=True)
+            ra_core.unlink(missing_ok=True)
+
+        # 3) Non-destructive bidirectional Save Bridge (seed from backup -> sync newer save with safety backup)
+        sd_bak = TMP / 'sd-ra-backup/mGBA'
+        raw_srm = b'SAVE_GEN1_' + (b'\xAA' * (131072 - 10))
+        touch_bin(sd_bak / 'Pokemon - Feuerrote Edition (Germany).sav', raw_srm)
+        r1 = companion.sync_pokedaisy_save(fr_rom, home=HOME, extra_backup_dirs=[sd_bak])
+        self.assertEqual(r1['action'], 'seeded_to_pokedaisy')
+        pd_sav = Path(r1['pd_save'])
+        self.assertEqual(pd_sav.read_bytes(), raw_srm)
+
+        # Create live RetroArch .srm older than updated PokeDaisy .sav -> PokeDaisy updates RetroArch with backup!
+        ra_srm = HOME / '.var/app/org.libretro.RetroArch/config/retroarch/saves/mGBA/Pokemon - Feuerrote Edition (Germany).srm'
+        touch_bin(ra_srm, raw_srm)
+        old_t = time.time() - 120
+        os.utime(ra_srm, (old_t, old_t))
+        newer_pd = b'SAVE_GEN2_' + (b'\xBB' * (131072 - 10))
+        pd_sav.write_bytes(newer_pd)
+        r2 = companion.sync_pokedaisy_save(fr_rom, home=HOME)
+        self.assertEqual(r2['action'], 'updated_peer_from_pokedaisy')
+        self.assertEqual(ra_srm.read_bytes(), newer_pd)
+        backups = list((HOME / '.local/share/pokedaisy/saves/pokedaisy-backups').glob('*.bridge-backup-*'))
+        self.assertTrue(len(backups) >= 1)
+
+        # Cloud-save candidate keys for PokeDaisy include pokedaisy-saves
+        self.assertIn('pokedaisy-saves', saves.keys_for_game({'s': 'gba', 't': 'Feuerrote'}, 'PokeDaisy'))
+
+
 if __name__ == '__main__':
     unittest.main()
