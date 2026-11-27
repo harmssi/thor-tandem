@@ -886,7 +886,9 @@ def check_turnip_driver(network=False):
             rels = json.loads(urllib.request.urlopen(req, timeout=12).read().decode('utf-8'))
             for r in (rels or ()):
                 assets = r.get('assets') or []
-                z = next((a for a in assets if str(a.get('name', '')).endswith('.zip')), None)
+                z = next((a for a in assets if str(a.get('name', '')).endswith('.zip') and '-emu-' not in str(a.get('name', '')).lower()), None)
+                if z is None:
+                    z = next((a for a in assets if str(a.get('name', '')).endswith('.zip')), None)
                 if z:
                     latest_ver = str(r.get('tag_name') or r.get('name') or '')
                     zip_url = str(z.get('browser_download_url') or '')
