@@ -26,7 +26,19 @@ The interface speaks English or German (Settings › Look › Language; the inst
 
 ![Dual-Screen PC & Retro Library on AYN Thor](docs/screenshots/steam-library-dual.png)
 
-## New in 1.8.0 — iiSU × Cocoon Unified Square Visual Edition (`0 MB` Extra Bloat · Pure Native `QPainter`)
+## New in 1.9.0 — Dual-Screen PokeDaisy Engine, BananaNative 12 GB Perf & Turnip v1.0.0
+
+- **Native Dual-Screen PokeDaisy Engine & Bidirectional Save Bridge (`tandem.py`, `companion.py`, `saves.py`):**
+  - Integrates **PokeDaisy (`v1.6.2.2-thor`)** as a first-class dual-screen engine for GB, GBC, GBA, and NDS Pokémon cartridges (auto-detected by ROM header, with 1-tap per-game override back to RetroArch/melonDS) plus a standalone **PokeDaisy** app entry (Library, Save Editor & Trade view):
+    - **Top OLED (`:0`, `1920×1080` @ 120 Hz):** Uninterrupted 16:9 `EXPAND` widescreen gameplay (`6×`/`7×` integer scale), Field HUD, sub-millisecond `nanosleep` frame pacing, and `L3` Quick Ring Menu (`PC Anywhere`, `Fly` / Free Flight, `Repel`, `Bike`, `Wild Encounters`, `Save/Load State`, `Fast-Forward`).
+    - **Bottom OLED (`:1`, `1240×1080` Touchscreen):** Always-on live German Touch Companion (`413×360` → crisp `3×` integer scale: `TEAM`, `DEX`, `KARTE` with direct touch-Fly, `BEUTEL`, `GUIDE`, and automatic `BATTLE` coach on battle entry) via zero-copy `/dev/shm` shared memory without ever pausing or minimizing the top screen.
+  - **Lossless Bidirectional Save Sync:** Automatically seeds and syncs `.sav` / `.srm` battery saves between PokeDaisy (`~/.local/share/pokedaisy/saves/`), RetroArch, melonDS, and Tandem's rolling SD/SSH save backup system (with conflict backups in `pokedaisy-backups/`).
+- **BananaNative / Ocarina of Time 12 GB Thor Tuning (`thor_perf.py`, `tandem.py`):**
+  - 4-tier SM8550 CPU core isolation (`vk-replay` on Prime Core 7, dedicated background PSO compiler cores), incremental push descriptors, async mesh/effect compute PSOs with 12 ms setup guard, `MALLOC_ARENA_MAX=2` glibc arena cap, LSFG dip resilience, and PSI exposure-target protection.
+- **Turnip `v1.0.0` Linux Bundle Filter & macOS/Test Audio Guard (`thor_updater.py`, `telemetry.py`):**
+  - Skips Android-only `-Emu-` archives on `Droid-Deck/Drivers` releases so `DD-Turnip-v1.0.0` installs cleanly on ArmadaOS, and strictly blocks local BGM/UI audio playback during headless offscreen unit tests and on macOS.
+
+Earlier in 1.8.0 — iiSU × Cocoon Unified Square Visual Edition (`0 MB` Extra Bloat · Pure Native `QPainter`):
 
 - **Unified `1:1` Square Cocoon × iiSU Tile Grid Across All Tabs & Zoom Levels (`ui/tandem_ui.py`, `ui/iisu_fx.py`):**
   - Strictly symmetrical **`1:1` square squircle tiles** across `Start`, `Systems`, `Steam`, `Apps`, and every console view at all zoom levels (`3 · 4 · 5 · 6` columns), featuring full-bleed cover framing (zero blurred sidebars), native Cocoon platform frames/badges, and luminous two-tone platform-hue gradient rims.
